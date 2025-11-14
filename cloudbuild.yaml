@@ -1,10 +1,18 @@
 steps:
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
-    entrypoint: "bash"
+    entrypoint: "gcloud"
     args:
       [
-        "-c",
-        "gcloud config set app/cloud_build_timeout 1600 && gcloud app deploy",
+        "run",
+        "deploy",
+        "athena-core-api",
+        "--source",
+        ".",
+        "--region",
+        "us-central1",
+        "--platform",
+        "managed",
+        "--no-allow-unauthenticated",
       ]
 timeout: "1600s"
 options:
