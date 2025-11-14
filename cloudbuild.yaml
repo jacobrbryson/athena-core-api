@@ -42,3 +42,5 @@ substitutions:
   _AR_HOSTNAME: us-central1-docker.pkg.dev
   # Default region for deployment. CHANGE THIS if your service is in a different region!
   _REGION: us-central1
+options:
+  logging: CLOUD_LOGGING_ONLY
