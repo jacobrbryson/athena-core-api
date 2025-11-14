@@ -1,7 +1,11 @@
 const express = require("express");
 
 const getOrCreateSession = require("../controllers/session");
-const { getChatHandler, addChatHandler } = require("../controllers/chat");
+const { getMessage, addMessage } = require("../controllers/message");
+const { getTopics } = require("../controllers/sessionTopic");
+const {
+	getLearningMoments,
+} = require("../controllers/sessionLearningMoment");
 
 /**
  * Router factory
@@ -12,11 +16,14 @@ module.exports = (clients) => {
 	const router = express.Router();
 
 	router.get("/public/session", getOrCreateSession);
-	router.get("/public/chat", getChatHandler);
-
-	// Pass clients into addChatHandler
-	router.post("/public/chat", (req, res) =>
-		addChatHandler(req, res, clients)
+	router.get("/public/session/:sessionId/topic", getTopics);
+	router.get(
+		"/public/session/:sessionId/learning-moment",
+		getLearningMoments
+	);
+	router.get("/public/message", getMessage);
+	router.post("/public/message", (req, res) =>
+		addMessage(req, res, clients)
 	);
 
 	// Optional catch-all

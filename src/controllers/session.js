@@ -1,47 +1,41 @@
-const pool = require("../helpers/db");
-const { v4: uuidv4 } = require("uuid");
+const sessionService = require("../services/session");
+const { extractIp } = require("../helpers/utils");
 
 async function getOrCreateSession(req, res) {
 	try {
-		// Get IP address
-		const ipAddress =
-			req.headers["x-forwarded-for"]?.split(",")[0].trim() ||
-			req.socket.remoteAddress;
+		const ipAddress = extractIp(req);
 
-		// Check if a sessionId was provided in query params
 		const sessionId = req.query.sessionId;
 
 		if (sessionId) {
-			// Check if session exists with this ID and IP
-			const [rows] = await pool.query(
-				"SELECT * FROM session WHERE uuid = ? AND ip_address = ?",
-				[sessionId, ipAddress]
+			const session = await sessionService.getSessionByUuidAndIp(
+				sessionId,
+				ipAddress
 			);
 
-			if (rows.length > 0) {
-				// Session exists, return it
-				return res.json({
+			if (session) {
+				res.json({
 					success: true,
-					sessionId,
-					ip: ipAddress,
-					existing: true,
+					session: {
+						uuid: session.uuid,
+						wisdom_points: session.wisdom_points,
+						age: session.age,
+					},
 				});
+
+				return;
 			}
-			// Optional: could also allow same sessionId from different IP?
 		}
 
-		// If no session or not found, create a new one
-		const newSessionId = uuidv4();
-		await pool.query(
-			"INSERT INTO session (uuid, ip_address) VALUES (?, ?)",
-			[newSessionId, ipAddress]
-		);
+		const newSessionId = await sessionService.addSession(ipAddress);
 
 		res.json({
 			success: true,
-			sessionId: newSessionId,
-			ip: ipAddress,
-			existing: false,
+			session: {
+				uuid: newSessionId,
+				wisdom_points: 0,
+				age: 5,
+			},
 		});
 	} catch (error) {
 		console.error("Error creating/getting session:", error);
