@@ -4,6 +4,7 @@ const http = require("http");
 const jsonParser = require("./middleware/jsonParser");
 const createRouter = require("./routes");
 const { startWebSocketServer } = require("./websocket/wsServer");
+const config = require("./config");
 
 const app = express();
 app.use(jsonParser);
@@ -13,6 +14,6 @@ const clients = startWebSocketServer(server);
 
 app.use("/", createRouter(clients));
 
-server.listen(3001, () => {
+server.listen(config.API_PORT, () => {
 	console.log("API + WS server running on port 3001");
 });
