@@ -15,8 +15,7 @@
 		"check-format": "prettier --check .",
 		"test": "jest --runInBand",
 		"test:watch": "jest --watch",
-		"clean": "rm -rf dist",
-		"prestart": "npm run check-format"
+		"clean": "rm -rf dist"
 	},
 	"dependencies": {
 		"@google/genai": "^1.29.0",

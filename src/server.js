@@ -14,6 +14,6 @@ const clients = startWebSocketServer(server);
 
 app.use("/", createRouter(clients));
 
-server.listen(8080, () => {
+server.listen(config.API_PORT, () => {
 	console.log("API + WS server running on port 3001");
 });
