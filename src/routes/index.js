@@ -15,16 +15,11 @@ const {
 module.exports = (clients) => {
 	const router = express.Router();
 
-	router.get("/public/session", getOrCreateSession);
-	router.get("/public/session/:sessionId/topic", getTopics);
-	router.get(
-		"/public/session/:sessionId/learning-moment",
-		getLearningMoments
-	);
-	router.get("/public/message", getMessage);
-	router.post("/public/message", (req, res) =>
-		addMessage(req, res, clients)
-	);
+	router.get("/session", getOrCreateSession);
+	router.get("/session/:sessionId/topic", getTopics);
+	router.get("/session/:sessionId/learning-moment", getLearningMoments);
+	router.get("/message", getMessage);
+	router.post("/message", (req, res) => addMessage(req, res, clients));
 
 	// Optional catch-all
 	router.use((req, res) => {
