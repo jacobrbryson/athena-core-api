@@ -4,4 +4,5 @@ module.exports = {
 		process.env.PUBLIC_SESSION_MESSAGE_DAILY_LIMIT || 100,
 	PUBLIC_IP_MESSAGE_DAILY_LIMIT:
 		process.env.PUBLIC_IP_MESSAGE_DAILY_LIMIT || 300,
+	JWT_SECRET: process.env.JWT_SECRET || "",
 };

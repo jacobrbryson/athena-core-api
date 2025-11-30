@@ -6,6 +6,7 @@ const { getTopics } = require("../controllers/sessionTopic");
 const {
 	getLearningMoments,
 } = require("../controllers/sessionLearningMoment");
+const profileRouter = require("./profile");
 
 /**
  * Router factory
@@ -20,6 +21,7 @@ module.exports = (clients) => {
 	router.get("/session/:sessionId/learning-moment", getLearningMoments);
 	router.get("/message", getMessage);
 	router.post("/message", (req, res) => addMessage(req, res, clients));
+	router.use("/profile", profileRouter);
 
 	// Optional catch-all
 	router.use((req, res) => {
