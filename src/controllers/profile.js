@@ -3,7 +3,8 @@ const profileService = require("../services/profile");
 const config = require("../config");
 
 function decodeAuthToken(req) {
-	const authHeader = req.headers.authorization || "";
+	const authHeader =
+		req.headers["x-user-authorization"] || req.headers.authorization || "";
 	if (!authHeader.startsWith("Bearer ")) {
 		return { googleId: null, payload: null };
 	}
