@@ -5,6 +5,8 @@ const config = require("../config");
 function decodeAuthToken(req) {
 	const authHeader =
 		req.headers["x-user-authorization"] || req.headers.authorization || "";
+
+	console.log(req.headers);
 	if (!authHeader.startsWith("Bearer ")) {
 		return { googleId: null, payload: null };
 	}
