@@ -5,4 +5,7 @@ module.exports = {
 	PUBLIC_IP_MESSAGE_DAILY_LIMIT:
 		process.env.PUBLIC_IP_MESSAGE_DAILY_LIMIT || 300,
 	JWT_SECRET: process.env.JWT_SECRET || "",
+	RECAPTCHA_SECRET: process.env.RECAPTCHA_SECRET || "",
+	RECAPTCHA_PROJECT_ID: process.env.RECAPTCHA_PROJECT_ID || "",
+	RECAPTCHA_SITE_KEY: process.env.RECAPTCHA_SITE_KEY || "",
 };

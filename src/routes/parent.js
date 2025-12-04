@@ -1,0 +1,29 @@
+const express = require("express");
+const {
+	getChildren,
+	addChild,
+	updateChild,
+	deleteChild,
+	approveChild,
+	denyChild,
+	blockChild,
+	getBlocklist,
+	unblockChild,
+} = require("../controllers/parent");
+const { requireAuth } = require("../middleware/auth");
+
+const router = express.Router();
+
+router.use(requireAuth);
+
+router.get("/children", getChildren);
+router.post("/children", addChild);
+router.put("/children/:childId", updateChild);
+router.delete("/children/:childId", deleteChild);
+router.post("/children/:childId/approve", approveChild);
+router.post("/children/:childId/deny", denyChild);
+router.post("/children/:childId/block", blockChild);
+router.get("/blocklist", getBlocklist);
+router.post("/blocklist/:childProfileId/unblock", unblockChild);
+
+module.exports = router;

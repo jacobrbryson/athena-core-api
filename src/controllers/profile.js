@@ -1,26 +1,7 @@
-const jwt = require("jsonwebtoken");
+const { RecaptchaEnterpriseServiceClient } = require("@google-cloud/recaptcha-enterprise");
 const profileService = require("../services/profile");
+const { inviteParentByEmail } = require("../services/parent");
 const config = require("../config");
-
-function decodeAuthToken(req) {
-	const authHeader =
-		req.headers["x-user-authorization"] || req.headers.authorization || "";
-
-	if (!authHeader.startsWith("Bearer ")) {
-		return { googleId: null, payload: null };
-	}
-
-	try {
-		const token = authHeader.slice("Bearer ".length);
-		const decoded = jwt.verify(token, config.JWT_SECRET);
-		const googleId =
-			decoded.googleId || decoded.google_id || decoded.sub || null;
-		return { googleId, payload: decoded };
-	} catch (err) {
-		console.warn("Profile controller: Failed to verify JWT", err.message);
-		return { googleId: null, payload: null };
-	}
-}
 
 function buildProfileFromJwt(payload = {}) {
 	const fullName =
@@ -38,12 +19,7 @@ function buildProfileFromJwt(payload = {}) {
 
 async function getProfile(req, res) {
 	try {
-		const { googleId, payload } = decodeAuthToken(req);
-		if (!googleId) {
-			return res
-				.status(401)
-				.json({ success: false, message: "Unauthorized" });
-		}
+		const { googleId, tokenPayload: payload } = req.user;
 
 		let profile = await profileService.getProfileByGoogleId(googleId);
 
@@ -64,12 +40,7 @@ async function getProfile(req, res) {
 
 async function createProfile(req, res) {
 	try {
-		const { googleId, payload } = decodeAuthToken(req);
-		if (!googleId) {
-			return res
-				.status(401)
-				.json({ success: false, message: "Unauthorized" });
-		}
+		const { googleId, tokenPayload: payload } = req.user;
 		const payloadBody = req.body || {};
 
 		const existing = await profileService.getProfileByGoogleId(googleId);
@@ -101,12 +72,7 @@ async function createProfile(req, res) {
 
 async function updateProfile(req, res) {
 	try {
-		const { googleId, payload } = decodeAuthToken(req);
-		if (!googleId) {
-			return res
-				.status(401)
-				.json({ success: false, message: "Unauthorized" });
-		}
+		const { googleId, tokenPayload: payload } = req.user;
 
 		const payloadBody = req.body || {};
 
@@ -150,8 +116,128 @@ async function updateProfile(req, res) {
 	}
 }
 
+async function verifyRecaptcha(token, action = "invite_parent") {
+	if (!token) {
+		throw new Error("Missing recaptcha token");
+	}
+
+	// If a secret is configured, use the simple siteverify flow first (bypasses Enterprise).
+	if (config.RECAPTCHA_SECRET) {
+		try {
+			const response = await fetch(
+				"https://www.google.com/recaptcha/api/siteverify",
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/x-www-form-urlencoded" },
+					body: `secret=${encodeURIComponent(
+						config.RECAPTCHA_SECRET
+					)}&response=${encodeURIComponent(token)}`,
+				}
+			);
+
+			const data = await response.json();
+			if (!data.success) {
+				console.warn("reCAPTCHA verification failed", data);
+				throw new Error("Invalid reCAPTCHA");
+			}
+
+			return true;
+		} catch (err) {
+			console.error("Error verifying reCAPTCHA", err);
+			throw new Error("Failed to verify reCAPTCHA");
+		}
+	}
+
+	// Otherwise, attempt Enterprise if project + site key are configured.
+	if (config.RECAPTCHA_PROJECT_ID && config.RECAPTCHA_SITE_KEY) {
+		try {
+			const client = new RecaptchaEnterpriseServiceClient();
+			const parent = client.projectPath(config.RECAPTCHA_PROJECT_ID);
+			const request = {
+				parent,
+				assessment: {
+					event: {
+						token,
+						siteKey: config.RECAPTCHA_SITE_KEY,
+					},
+				},
+			};
+
+			const [response] = await client.createAssessment(request);
+			const props = response.tokenProperties || {};
+
+			if (!props.valid) {
+				throw new Error(
+					`Invalid reCAPTCHA token: ${props.invalidReason || "unknown"}`
+				);
+			}
+
+			if (props.action && props.action !== action) {
+				throw new Error(
+					`reCAPTCHA action mismatch (expected ${action}, got ${props.action})`
+				);
+			}
+
+			return true;
+		} catch (err) {
+			console.error("reCAPTCHA Enterprise verification failed", err);
+			throw new Error(
+				"Failed to verify reCAPTCHA (Enterprise). Ensure GOOGLE_APPLICATION_CREDENTIALS is set, the API is enabled, and the service account has recaptchaenterprise.assessments.create."
+			);
+		}
+	}
+
+	throw new Error("reCAPTCHA is not configured on the server");
+}
+
+async function inviteParent(req, res) {
+	try {
+		const { googleId } = req.user;
+
+		const body = req.body || {};
+		const email = body.email;
+		const recaptchaToken = body.recaptcha_token || body.recaptchaToken;
+
+		const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+		if (typeof email !== "string" || !emailRegex.test(email.trim())) {
+			return res
+				.status(400)
+				.json({ success: false, message: "Invalid email address" });
+		}
+
+		await verifyRecaptcha(recaptchaToken, "invite_parent");
+
+		const result = await inviteParentByEmail(googleId, email);
+
+		return res.status(200).json(result);
+	} catch (err) {
+		console.error("Error inviting parent:", err);
+		const message =
+			err.message && err.message.toLowerCase().includes("captcha")
+				? err.message
+				: "Failed to send parent invite";
+		return res.status(500).json({ success: false, message });
+	}
+}
+
+async function getGuardians(req, res) {
+	try {
+		const { googleId } = req.user;
+
+		const guardians = await profileService.getGuardiansByGoogleId(googleId);
+		return res.status(200).json(guardians);
+	} catch (err) {
+		console.error("Error fetching guardians:", err);
+		return res
+			.status(500)
+			.json({ success: false, message: "Failed to fetch guardians" });
+	}
+}
+
 module.exports = {
 	getProfile,
 	createProfile,
 	updateProfile,
+	inviteParent,
+	getGuardians,
 };

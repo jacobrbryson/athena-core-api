@@ -16,6 +16,7 @@ function mapProfileRow(row) {
 	if (!row) return null;
 
 	return {
+		id: row.id,
 		uuid: row.uuid,
 		google_id: row.google_id,
 		email: row.email,
@@ -34,6 +35,8 @@ function mapProfileRow(row) {
 			row.is_teacher === null || row.is_teacher === undefined
 				? null
 				: Boolean(row.is_teacher),
+		invited_at: row.invited_at || null,
+		approved_at: row.approved_at || null,
 	};
 }
 
@@ -93,9 +96,25 @@ async function getProfileByGoogleId(googleId) {
 	if (normalized === null) return null;
 
 	const [rows] = await pool.query(
-		`SELECT uuid, google_id, email, full_name, picture, birthday, has_guardian, is_guardian, is_teacher 
+		`SELECT id, uuid, google_id, email, full_name, picture, birthday, has_guardian, is_guardian, is_teacher 
     FROM profile 
     WHERE google_id = ? 
+    ORDER BY created_at DESC 
+    LIMIT 1;`,
+		[normalized]
+	);
+
+	return mapProfileRow(rows[0]);
+}
+
+async function getProfileByEmail(email) {
+	if (typeof email !== "string" || !email.trim()) return null;
+	const normalized = email.trim().toLowerCase();
+
+	const [rows] = await pool.query(
+		`SELECT id, uuid, google_id, email, full_name, picture, birthday, has_guardian, is_guardian, is_teacher 
+    FROM profile 
+    WHERE LOWER(email) = ? 
     ORDER BY created_at DESC 
     LIMIT 1;`,
 		[normalized]
@@ -168,9 +187,41 @@ async function upsertProfile(googleId, payload) {
 	return updateProfile(googleId, payload);
 }
 
+async function getGuardiansByGoogleId(childGoogleId) {
+	const childProfile = await getProfileByGoogleId(childGoogleId);
+	if (!childProfile || !childProfile.id) {
+		throw new Error("Child profile not found");
+	}
+
+	const [rows] = await pool.query(
+		`SELECT 
+      p.id,
+      p.uuid,
+      p.google_id,
+      p.email,
+      p.full_name,
+      p.picture,
+      p.birthday,
+      p.has_guardian,
+      p.is_guardian,
+      p.is_teacher,
+      pc.invited_at,
+      pc.approved_at
+    FROM profile_child pc
+    JOIN profile p ON p.id = pc.parent_profile_id
+    WHERE pc.child_profile_id = ?
+    ORDER BY pc.created_at DESC;`,
+		[childProfile.id]
+	);
+
+	return rows.map(mapProfileRow).filter(Boolean);
+}
+
 module.exports = {
 	getProfileByGoogleId,
+	getProfileByEmail,
 	createProfile,
 	updateProfile,
 	upsertProfile,
+	getGuardiansByGoogleId,
 };
