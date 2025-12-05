@@ -10,6 +10,7 @@ const allowedProfileFields = {
 	has_guardian: "boolean",
 	is_guardian: "boolean",
 	is_teacher: "boolean",
+	profile_editing_locked: "boolean",
 };
 
 function mapProfileRow(row) {
@@ -23,6 +24,11 @@ function mapProfileRow(row) {
 		full_name: row.full_name,
 		picture: row.picture,
 		birthday: row.birthday,
+		profile_editing_locked:
+			row.profile_editing_locked === null ||
+			row.profile_editing_locked === undefined
+				? null
+				: Boolean(row.profile_editing_locked),
 		has_guardian:
 			row.has_guardian === null || row.has_guardian === undefined
 				? null
@@ -48,6 +54,10 @@ function sanitizeInsertPayload(payload = {}) {
 		picture: typeof payload.picture === "string" ? payload.picture : null,
 		birthday:
 			typeof payload.birthday === "string" ? payload.birthday : null,
+		profile_editing_locked:
+			typeof payload.profile_editing_locked === "boolean"
+				? payload.profile_editing_locked
+				: false,
 		has_guardian:
 			typeof payload.has_guardian === "boolean"
 				? payload.has_guardian
@@ -96,7 +106,7 @@ async function getProfileByGoogleId(googleId) {
 	if (normalized === null) return null;
 
 	const [rows] = await pool.query(
-		`SELECT id, uuid, google_id, email, full_name, picture, birthday, has_guardian, is_guardian, is_teacher 
+		`SELECT id, uuid, google_id, email, full_name, picture, birthday, profile_editing_locked, has_guardian, is_guardian, is_teacher 
     FROM profile 
     WHERE google_id = ? 
     ORDER BY created_at DESC 
@@ -112,7 +122,7 @@ async function getProfileByEmail(email) {
 	const normalized = email.trim().toLowerCase();
 
 	const [rows] = await pool.query(
-		`SELECT id, uuid, google_id, email, full_name, picture, birthday, has_guardian, is_guardian, is_teacher 
+		`SELECT id, uuid, google_id, email, full_name, picture, birthday, profile_editing_locked, has_guardian, is_guardian, is_teacher 
     FROM profile 
     WHERE LOWER(email) = ? 
     ORDER BY created_at DESC 
@@ -134,8 +144,8 @@ async function createProfile(googleId, payload) {
 
 	await pool.query(
 		`INSERT INTO profile 
-    (uuid, google_id, email, full_name, picture, birthday, has_guardian, is_guardian, is_teacher) 
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    (uuid, google_id, email, full_name, picture, birthday, profile_editing_locked, has_guardian, is_guardian, is_teacher) 
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		[
 			uuid,
 			normalized,
@@ -143,6 +153,7 @@ async function createProfile(googleId, payload) {
 			profile.full_name,
 			profile.picture,
 			profile.birthday,
+			profile.profile_editing_locked,
 			profile.has_guardian,
 			profile.is_guardian,
 			profile.is_teacher,
@@ -209,7 +220,7 @@ async function getGuardiansByGoogleId(childGoogleId) {
       pc.approved_at
     FROM profile_child pc
     JOIN profile p ON p.id = pc.parent_profile_id
-    WHERE pc.child_profile_id = ?
+    WHERE pc.child_profile_id = ? AND pc.deleted_at IS NULL
     ORDER BY pc.created_at DESC;`,
 		[childProfile.id]
 	);

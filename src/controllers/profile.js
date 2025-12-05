@@ -45,6 +45,13 @@ async function createProfile(req, res) {
 		const payloadBody = req.body || {};
 
 		const existing = await profileService.getProfileByGoogleId(googleId);
+		if (existing?.profile_editing_locked) {
+			return res.status(403).json({
+				success: false,
+				message:
+					"Profile editing has been disabled by your parent or guardian.",
+			});
+		}
 		const profilePayload = {
 			...buildProfileFromJwt(payload),
 			...payloadBody,
@@ -90,6 +97,14 @@ async function updateProfile(req, res) {
 				profilePayload
 			);
 			return res.status(201).json(profile);
+		}
+
+		if (existing.profile_editing_locked) {
+			return res.status(403).json({
+				success: false,
+				message:
+					"Profile editing has been disabled by your parent or guardian.",
+			});
 		}
 
 		const profilePayload = {

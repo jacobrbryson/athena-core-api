@@ -16,10 +16,10 @@ function publicProfile(profile) {
 
 function publicChild(child) {
 	return omitKeys(child, [
-		"id",
-		"relationship_id",
+		// keep id and relationship_id for UI selection
 		"parent_profile_id",
 		"child_profile_id",
+		"deleted_at",
 	]);
 }
 

@@ -9,6 +9,10 @@ const {
 	blockChild,
 	getBlocklist,
 	unblockChild,
+	getLearningGoals,
+	addLearningGoal,
+	deleteLearningGoal,
+	getChildActivity,
 } = require("../controllers/parent");
 const { requireAuth } = require("../middleware/auth");
 
@@ -23,6 +27,10 @@ router.delete("/children/:childId", deleteChild);
 router.post("/children/:childId/approve", approveChild);
 router.post("/children/:childId/deny", denyChild);
 router.post("/children/:childId/block", blockChild);
+router.get("/children/:childId/goals", getLearningGoals);
+router.post("/children/:childId/goals", addLearningGoal);
+router.delete("/children/:childId/goals/:goalId", deleteLearningGoal);
+router.get("/children/:childId/activity", getChildActivity);
 router.get("/blocklist", getBlocklist);
 router.post("/blocklist/:childProfileId/unblock", unblockChild);
 

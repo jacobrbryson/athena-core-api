@@ -22,10 +22,15 @@ async function addChild(req, res) {
 		return res.status(201).json(child);
 	} catch (err) {
 		console.error("Error adding child:", err);
-		if (err.message?.includes("Invalid child id")) {
+		if (
+			err.message?.includes("Invalid child id") ||
+			err.message?.includes("Invalid child email")
+		) {
 			return res.status(400).json({
 				success: false,
-				message: "Invalid child id",
+				message: err.message?.includes("email")
+					? "A valid child email is required to create a new child"
+					: "Invalid child id",
 			});
 		}
 		return res
@@ -175,6 +180,99 @@ async function unblockChild(req, res) {
 	}
 }
 
+async function getLearningGoals(req, res) {
+	try {
+		const { googleId } = req.user;
+		const { childId } = req.params;
+		const rawPage = parseInt(req.query.page, 10);
+		const rawPageSize =
+			parseInt(req.query.page_size, 10) || parseInt(req.query.pageSize, 10);
+		const paginate =
+			Number.isFinite(rawPage) || Number.isFinite(rawPageSize) || req.query.paginate === "true";
+		const includeDeleted = req.query.include_deleted === "true";
+		const activeOnly = req.query.active_only !== "false"; // default true
+
+		const goals = await parentService.getLearningGoalsForChild(
+			googleId,
+			childId,
+			{
+				page: rawPage,
+				pageSize: rawPageSize,
+				paginate,
+				includeDeleted,
+				activeOnly,
+			}
+		);
+		return res.status(200).json(goals);
+	} catch (err) {
+		console.error("Error fetching learning goals:", err);
+		return res
+			.status(500)
+			.json({ success: false, message: "Failed to fetch learning goals" });
+	}
+}
+
+async function addLearningGoal(req, res) {
+	try {
+		const { googleId } = req.user;
+		const { childId } = req.params;
+		const goal = await parentService.addLearningGoal(
+			googleId,
+			childId,
+			req.body || {}
+		);
+		return res.status(201).json(goal);
+	} catch (err) {
+		console.error("Error adding learning goal:", err);
+		if (err.message?.includes("topic is required")) {
+			return res.status(400).json({ success: false, message: err.message });
+		}
+		if (err.message?.includes("Invalid learning goal id")) {
+			return res.status(400).json({ success: false, message: err.message });
+		}
+		if (err.message?.includes("Child not found")) {
+			return res.status(404).json({ success: false, message: err.message });
+		}
+		return res
+			.status(500)
+			.json({ success: false, message: "Failed to add learning goal" });
+	}
+}
+
+async function deleteLearningGoal(req, res) {
+	try {
+		const { googleId } = req.user;
+		const { childId, goalId } = req.params;
+		await parentService.deleteLearningGoal(googleId, childId, goalId);
+		return res.status(204).send();
+	} catch (err) {
+		console.error("Error deleting learning goal:", err);
+		if (err.message?.includes("Invalid learning goal id")) {
+			return res.status(400).json({ success: false, message: err.message });
+		}
+		if (err.message?.includes("not found")) {
+			return res.status(404).json({ success: false, message: err.message });
+		}
+		return res
+			.status(500)
+			.json({ success: false, message: "Failed to delete learning goal" });
+	}
+}
+
+async function getChildActivity(req, res) {
+	try {
+		const { googleId } = req.user;
+		const { childId } = req.params;
+		const items = await parentService.getActivityForChild(googleId, childId);
+		return res.status(200).json(items);
+	} catch (err) {
+		console.error("Error fetching child activity:", err);
+		return res
+			.status(500)
+			.json({ success: false, message: "Failed to fetch activity" });
+	}
+}
+
 module.exports = {
 	getChildren,
 	addChild,
@@ -185,4 +283,8 @@ module.exports = {
 	blockChild,
 	getBlocklist,
 	unblockChild,
+	getLearningGoals,
+	addLearningGoal,
+	deleteLearningGoal,
+	getChildActivity,
 };
