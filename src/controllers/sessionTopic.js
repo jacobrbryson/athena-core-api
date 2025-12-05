@@ -1,6 +1,7 @@
 const sessionTopicService = require("../services/sessionTopic");
 const sessionService = require("../services/session");
 const { extractIp } = require("../helpers/utils");
+const { publicTopic } = require("../helpers/serialize");
 
 async function getTopics(req, res) {
 	try {
@@ -20,7 +21,9 @@ async function getTopics(req, res) {
 
 		const topics = await sessionTopicService.getSessionTopics(session.id);
 
-		res.json(topics);
+		const sanitizedTopics = topics.map(publicTopic);
+
+		res.json(sanitizedTopics);
 	} catch (err) {
 		console.error("Error fetching topics:", err);
 		res.status(500).json({ success: false, message: "DB error" });

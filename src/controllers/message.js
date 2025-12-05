@@ -9,7 +9,7 @@ async function getMessage(req, res) {
 		const ip = extractIp(req);
 		const uuid = req.query.sessionId;
 
-		if (!uuid)
+		if (typeof uuid !== "string" || !uuid.trim())
 			return res
 				.status(400)
 				.json({ success: false, message: "Missing session UUID" });
@@ -32,13 +32,19 @@ async function getMessage(req, res) {
 async function addMessage(req, res, clients) {
 	try {
 		const ip = extractIp(req);
-		const { sessionId, text: rawText } = req.body;
+		const { sessionId, text: rawText } = req.body || {};
 		const text = rawText?.trim();
 
-		if (!sessionId || !text)
+		if (typeof sessionId !== "string" || !sessionId.trim() || !text)
 			return res
 				.status(400)
 				.json({ success: false, message: "Missing UUID or message" });
+
+		if (typeof text !== "string") {
+			return res
+				.status(400)
+				.json({ success: false, message: "Message must be a string" });
+		}
 
 		const session = await sessionService.getSessionByUuidAndIp(
 			sessionId,
@@ -93,7 +99,7 @@ async function addMessage(req, res, clients) {
 				created_at: Date.now(),
 			},
 			session: {
-				sessionId: session.id,
+				sessionId: session.uuid,
 				is_busy: true,
 			},
 		});

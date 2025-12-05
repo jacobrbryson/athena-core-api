@@ -12,14 +12,31 @@ async function processAiResponse(session, message, clients) {
 		const response = await geminiService.generateResponse(prompt);
 
 		if (!response) {
-			// Optional: Send a 'No AI response' message via WS
 			console.warn(
 				`Gemini returned no response for session ${session.id}`
 			);
 			return;
 		}
 
-		const parsedResponse = JSON.parse(response);
+		let parsedResponse;
+		try {
+			parsedResponse = JSON.parse(response);
+		} catch (parseErr) {
+			console.error("Gemini returned invalid JSON", parseErr);
+			return;
+		}
+
+		const validResponse =
+			parsedResponse &&
+			typeof parsedResponse.response === "string" &&
+			typeof parsedResponse.action === "string" &&
+			typeof parsedResponse.new_proficiency === "number" &&
+			typeof parsedResponse.topic_name === "string";
+
+		if (!validResponse) {
+			console.error("Gemini response failed validation", parsedResponse);
+			return;
+		}
 
 		const aiChatUuid = await messageService.addMessage(
 			session.id,
@@ -30,7 +47,7 @@ async function processAiResponse(session, message, clients) {
 		const ws = clients.get(session.uuid);
 
 		if (parsedResponse.action == "NEW_TOPIC") {
-			const insertId = await sessionTopicService.addSessionTopic(
+			await sessionTopicService.addSessionTopic(
 				session.id,
 				parsedResponse.topic_name,
 				parsedResponse.new_proficiency
@@ -40,7 +57,6 @@ async function processAiResponse(session, message, clients) {
 					JSON.stringify({
 						rpc: "addSessionTopic",
 						topic: {
-							insertId,
 							topic_name: parsedResponse.topic_name,
 							proficiency: parsedResponse.new_proficiency,
 						},

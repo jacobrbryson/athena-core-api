@@ -5,6 +5,7 @@ const {
 	getProfileByGoogleId: getProfileByGoogleIdService,
 	getProfileByEmail,
 } = require("./profile");
+const { publicChild } = require("../helpers/serialize");
 
 const allowedChildFields = {
 	full_name: "string",
@@ -109,13 +110,28 @@ function extractChildIdentifiers(payload = {}) {
 	return { childUuid, childGoogleId };
 }
 
-async function getProfileByGoogleId(googleId) {
+async function withTransaction(fn) {
+	const conn = await pool.getConnection();
+	try {
+		await conn.beginTransaction();
+		const result = await fn(conn);
+		await conn.commit();
+		return result;
+	} catch (err) {
+		await conn.rollback();
+		throw err;
+	} finally {
+		conn.release();
+	}
+}
+
+async function getProfileByGoogleId(googleId, conn = pool) {
 	const normalized = normalizeGoogleId(googleId);
 	if (normalized === null) {
 		throw new Error("Invalid google_id");
 	}
 
-	const [rows] = await pool.query(
+	const [rows] = await conn.query(
 		`SELECT id, uuid, google_id FROM profile WHERE google_id = ? LIMIT 1;`,
 		[normalized]
 	);
@@ -127,21 +143,21 @@ async function getProfileByGoogleId(googleId) {
 	return rows[0];
 }
 
-async function syncHasGuardian(childProfileId) {
-	const [rows] = await pool.query(
+async function syncHasGuardian(childProfileId, conn = pool) {
+	const [rows] = await conn.query(
 		`SELECT COUNT(*) AS cnt FROM profile_child WHERE child_profile_id = ?`,
 		[childProfileId]
 	);
 	const count = rows?.[0]?.cnt || 0;
 	const hasGuardian = count > 0 ? 1 : 0;
-	await pool.query(
+	await conn.query(
 		`UPDATE profile SET has_guardian = ? WHERE id = ?`,
 		[hasGuardian, childProfileId]
 	);
 	return hasGuardian === 1;
 }
 
-async function getChildProfile(childUuid, childGoogleId) {
+async function getChildProfile(childUuid, childGoogleId, conn = pool) {
 	const conditions = [];
 	const values = [];
 
@@ -155,7 +171,7 @@ async function getChildProfile(childUuid, childGoogleId) {
 		values.push(childGoogleId);
 	}
 
-	const [rows] = await pool.query(
+	const [rows] = await conn.query(
 		`SELECT id, uuid, google_id, full_name, email, birthday, created_at, updated_at
     FROM profile
     WHERE ${conditions.join(" OR ")}
@@ -170,14 +186,62 @@ async function getChildProfile(childUuid, childGoogleId) {
 	return rows[0];
 }
 
-async function getChildRelationship(parentProfileId, relationshipId) {
-	const [rows] = await pool.query(
+async function resolveChildProfileId(childIdentifier, conn = pool) {
+	const numericId = Number(childIdentifier);
+	if (Number.isFinite(numericId)) return numericId;
+
+	const childUuid = normalizeUuid(childIdentifier);
+	if (!childUuid) {
+		throw new Error("Invalid child id");
+	}
+
+	const [rows] = await conn.query(
+		`SELECT id FROM profile WHERE uuid = ? LIMIT 1;`,
+		[childUuid]
+	);
+
+	if (!rows.length) {
+		throw new Error("Invalid child id");
+	}
+
+	return rows[0].id;
+}
+
+async function getChildRelationship(parentProfileId, relationshipId, conn = pool) {
+	const [rows] = await conn.query(
 		`SELECT ${childSelectColumns}
     FROM profile_child pc
     JOIN profile child ON child.id = pc.child_profile_id
     WHERE pc.id = ? AND pc.parent_profile_id = ?
     LIMIT 1;`,
 		[relationshipId, parentProfileId]
+	);
+
+	return mapChildRow(rows[0]);
+}
+
+async function getChildRelationshipForParent(
+	parentProfileId,
+	childIdentifier,
+	conn = pool
+) {
+	const relationshipId = Number(childIdentifier);
+	if (Number.isFinite(relationshipId)) {
+		return getChildRelationship(parentProfileId, relationshipId, conn);
+	}
+
+	const childUuid = normalizeUuid(childIdentifier);
+	if (!childUuid) {
+		throw new Error("Invalid child id");
+	}
+
+	const [rows] = await conn.query(
+		`SELECT ${childSelectColumns}
+    FROM profile_child pc
+    JOIN profile child ON child.id = pc.child_profile_id
+    WHERE child.uuid = ? AND pc.parent_profile_id = ?
+    LIMIT 1;`,
+		[childUuid, parentProfileId]
 	);
 
 	return mapChildRow(rows[0]);
@@ -195,57 +259,66 @@ async function getChildrenByGoogleId(googleId) {
 		[parentProfile.id]
 	);
 
-	return rows.map(mapChildRow).filter(Boolean);
+	return rows
+		.map(mapChildRow)
+		.filter(Boolean)
+		.map((child) => publicChild(child));
 }
 
 async function addChild(googleId, payload = {}) {
-	const parentProfile = await getProfileByGoogleId(googleId);
-	const { childUuid, childGoogleId } = extractChildIdentifiers(payload);
-	const childProfile = await getChildProfile(childUuid, childGoogleId);
-
-	const [existing] = await pool.query(
-		`SELECT id FROM profile_child WHERE parent_profile_id = ? AND child_profile_id = ? LIMIT 1;`,
-		[parentProfile.id, childProfile.id]
-	);
-
-	if (existing.length) {
-		throw new Error("Child is already linked to this parent");
-	}
-
-	const updates = extractUpdatableFields(payload);
-	if (Object.keys(updates).length) {
-		const { setClauses, values } = buildUpdateClauses(
-			updates,
-			allowedChildFields
+	return withTransaction(async (conn) => {
+		const parentProfile = await getProfileByGoogleId(googleId, conn);
+		const { childUuid, childGoogleId } = extractChildIdentifiers(payload);
+		const childProfile = await getChildProfile(
+			childUuid,
+			childGoogleId,
+			conn
 		);
 
-		await pool.query(
-			`UPDATE profile SET ${setClauses} WHERE id = ?`,
-			[...values, childProfile.id]
+		const [existing] = await conn.query(
+			`SELECT id FROM profile_child WHERE parent_profile_id = ? AND child_profile_id = ? LIMIT 1;`,
+			[parentProfile.id, childProfile.id]
 		);
-	}
 
-	const [result] = await pool.query(
-		`INSERT INTO profile_child (parent_profile_id, child_profile_id)
+		if (existing.length) {
+			throw new Error("Child is already linked to this parent");
+		}
+
+		const updates = extractUpdatableFields(payload);
+		if (Object.keys(updates).length) {
+			const { setClauses, values } = buildUpdateClauses(
+				updates,
+				allowedChildFields
+			);
+
+			await conn.query(
+				`UPDATE profile SET ${setClauses} WHERE id = ?`,
+				[...values, childProfile.id]
+			);
+		}
+
+		const [result] = await conn.query(
+			`INSERT INTO profile_child (parent_profile_id, child_profile_id)
     VALUES (?, ?);`,
-		[parentProfile.id, childProfile.id]
-	);
-	await syncHasGuardian(childProfile.id);
+			[parentProfile.id, childProfile.id]
+		);
+		await syncHasGuardian(childProfile.id, conn);
 
-	return getChildRelationship(parentProfile.id, result.insertId);
+		const relationship = await getChildRelationship(
+			parentProfile.id,
+			result.insertId,
+			conn
+		);
+		return publicChild(relationship);
+	});
 }
 
 async function updateChild(googleId, childRelationshipId, payload = {}) {
 	const parentProfile = await getProfileByGoogleId(googleId);
 
-	const relationshipId = Number(childRelationshipId);
-	if (!Number.isFinite(relationshipId)) {
-		throw new Error("Invalid child id");
-	}
-
-	const relationship = await getChildRelationship(
+	const relationship = await getChildRelationshipForParent(
 		parentProfile.id,
-		relationshipId
+		childRelationshipId
 	);
 	if (!relationship) {
 		throw new Error("Child not found for this parent");
@@ -266,33 +339,35 @@ async function updateChild(googleId, childRelationshipId, payload = {}) {
 		[...values, relationship.child_profile_id]
 	);
 
-	return getChildRelationship(parentProfile.id, relationshipId);
+	const updated = await getChildRelationship(
+		parentProfile.id,
+		relationship.relationship_id
+	);
+	return publicChild(updated);
 }
 
 async function deleteChild(googleId, childRelationshipId) {
-	const parentProfile = await getProfileByGoogleId(googleId);
+	return withTransaction(async (conn) => {
+		const parentProfile = await getProfileByGoogleId(googleId, conn);
 
-	const relationshipId = Number(childRelationshipId);
-	if (!Number.isFinite(relationshipId)) {
-		throw new Error("Invalid child id");
-	}
+		const relationship = await getChildRelationshipForParent(
+			parentProfile.id,
+			childRelationshipId,
+			conn
+		);
+		if (!relationship) {
+			throw new Error("Child not found for this parent");
+		}
 
-	const relationship = await getChildRelationship(
-		parentProfile.id,
-		relationshipId
-	);
-	if (!relationship) {
-		throw new Error("Child not found for this parent");
-	}
+		await conn.query(
+			`DELETE FROM profile_child WHERE id = ? AND parent_profile_id = ?`,
+			[relationship.relationship_id, parentProfile.id]
+		);
 
-	await pool.query(
-		`DELETE FROM profile_child WHERE id = ? AND parent_profile_id = ?`,
-		[relationshipId, parentProfile.id]
-	);
+		await syncHasGuardian(relationship.child_profile_id, conn);
 
-	await syncHasGuardian(relationship.child_profile_id);
-
-	return { success: true };
+		return { success: true };
+	});
 }
 
 async function isBlocked(parentProfileId, childProfileId) {
@@ -325,8 +400,6 @@ async function getBlocklist(googleId) {
 	);
 
 	return rows.map((row) => ({
-		parent_profile_id: row.parent_profile_id,
-		child_profile_id: row.child_profile_id,
 		child_uuid: row.child_uuid,
 		child_google_id: row.child_google_id,
 		full_name: row.full_name,
@@ -336,67 +409,66 @@ async function getBlocklist(googleId) {
 }
 
 async function blockChild(googleId, childRelationshipId) {
-	const parentProfile = await getProfileByGoogleId(googleId);
+	return withTransaction(async (conn) => {
+		const parentProfile = await getProfileByGoogleId(googleId, conn);
 
-	const relationshipId = Number(childRelationshipId);
-	if (!Number.isFinite(relationshipId)) {
-		throw new Error("Invalid child id");
-	}
+		const relationship = await getChildRelationshipForParent(
+			parentProfile.id,
+			childRelationshipId,
+			conn
+		);
+		if (!relationship) {
+			throw new Error("Child not found for this parent");
+		}
 
-	const relationship = await getChildRelationship(
-		parentProfile.id,
-		relationshipId
-	);
-	if (!relationship) {
-		throw new Error("Child not found for this parent");
-	}
+		const childEmail = normalizeEmail(relationship.email);
 
-	const childEmail = normalizeEmail(relationship.email);
-
-	await pool.query(
-		`INSERT INTO parent_child_blocklist (parent_profile_id, child_profile_id, child_email, blocked_at)
+		await conn.query(
+			`INSERT INTO parent_child_blocklist (parent_profile_id, child_profile_id, child_email, blocked_at)
      VALUES (?, ?, ?, NOW())
      ON DUPLICATE KEY UPDATE blocked_at = NOW(), child_email = VALUES(child_email);`,
-		[parentProfile.id, relationship.child_profile_id, childEmail]
-	);
+			[parentProfile.id, relationship.child_profile_id, childEmail]
+		);
 
-	await pool.query(
-		`DELETE FROM profile_child WHERE id = ? AND parent_profile_id = ?`,
-		[relationshipId, parentProfile.id]
-	);
+		await conn.query(
+			`DELETE FROM profile_child WHERE id = ? AND parent_profile_id = ?`,
+			[relationship.relationship_id, parentProfile.id]
+		);
 
-	await syncHasGuardian(relationship.child_profile_id);
+		await syncHasGuardian(relationship.child_profile_id, conn);
 
-	return { success: true, blocked: true };
+		return { success: true, blocked: true };
+	});
 }
 
 async function unblockChild(googleId, childProfileId, options = {}) {
-	const parentProfile = await getProfileByGoogleId(googleId);
-	const childProfileIdNumber = Number(childProfileId);
+	return withTransaction(async (conn) => {
+		const parentProfile = await getProfileByGoogleId(googleId, conn);
+		const childProfileIdNumber = await resolveChildProfileId(
+			childProfileId,
+			conn
+		);
 
-	if (!Number.isFinite(childProfileIdNumber)) {
-		throw new Error("Invalid child id");
-	}
-
-	await pool.query(
-		`DELETE FROM parent_child_blocklist WHERE parent_profile_id = ? AND child_profile_id = ?`,
-		[parentProfile.id, childProfileIdNumber]
-	);
-
-	if (options.addChild) {
-		await pool.query(
-			`INSERT INTO profile_child (parent_profile_id, child_profile_id, invited_at, approved_at, denied_at)
-       VALUES (?, ?, NOW(), NOW(), NULL)
-       ON DUPLICATE KEY UPDATE invited_at = VALUES(invited_at), approved_at = VALUES(approved_at), denied_at = NULL;`,
+		await conn.query(
+			`DELETE FROM parent_child_blocklist WHERE parent_profile_id = ? AND child_profile_id = ?`,
 			[parentProfile.id, childProfileIdNumber]
 		);
 
-		await syncHasGuardian(childProfileIdNumber);
+		if (options.addChild) {
+			await conn.query(
+				`INSERT INTO profile_child (parent_profile_id, child_profile_id, invited_at, approved_at, denied_at)
+       VALUES (?, ?, NOW(), NOW(), NULL)
+       ON DUPLICATE KEY UPDATE invited_at = VALUES(invited_at), approved_at = VALUES(approved_at), denied_at = NULL;`,
+				[parentProfile.id, childProfileIdNumber]
+			);
 
-		return { success: true, unblocked: true, added: true };
-	}
+			await syncHasGuardian(childProfileIdNumber, conn);
 
-	return { success: true, unblocked: true };
+			return { success: true, unblocked: true, added: true };
+		}
+
+		return { success: true, unblocked: true };
+	});
 }
 
 function normalizeEmail(email) {
@@ -415,7 +487,7 @@ async function ensureChildProfileByGoogleId(googleId) {
 	return profile;
 }
 
-async function ensureParentProfileByEmail(email) {
+async function ensureParentProfileByEmail(email, conn = pool) {
 	const normalizedEmail = normalizeEmail(email);
 	if (!normalizedEmail) {
 		throw new Error("Invalid parent email");
@@ -425,7 +497,7 @@ async function ensureParentProfileByEmail(email) {
 	if (existingByEmail) return existingByEmail;
 
 	const syntheticGoogleId = `invite:${normalizedEmail}`;
-	const [result] = await pool.query(
+	const [result] = await conn.query(
 		`INSERT INTO profile 
     (uuid, google_id, email, full_name, picture, birthday, has_guardian, is_guardian, is_teacher) 
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -442,7 +514,7 @@ async function ensureParentProfileByEmail(email) {
 		]
 	);
 
-	const [rows] = await pool.query(
+	const [rows] = await conn.query(
 		`SELECT id, uuid, google_id, email, full_name, birthday, created_at, updated_at 
     FROM profile WHERE id = ? LIMIT 1;`,
 		[result.insertId]
@@ -475,45 +547,55 @@ async function inviteParentByEmail(childGoogleId, parentEmail) {
 
 	return {
 		success: true,
-		parent_profile_id: parentProfile.id,
-		child_profile_id: childProfile.id,
+		child_uuid: childProfile.uuid,
 	};
 }
 
 async function respondToInvite(googleId, childRelationshipId, action) {
-	const parentProfile = await getProfileByGoogleId(googleId);
+	return withTransaction(async (conn) => {
+		const parentProfile = await getProfileByGoogleId(googleId, conn);
 
-	const relationshipId = Number(childRelationshipId);
-	if (!Number.isFinite(relationshipId)) {
-		throw new Error("Invalid child id");
-	}
+		const relationship = await getChildRelationshipForParent(
+			parentProfile.id,
+			childRelationshipId,
+			conn
+		);
+		if (!relationship) {
+			throw new Error("Child not found for this parent");
+		}
 
-	let approvedAt = null;
-	let deniedAt = null;
+		let approvedAt = null;
+		let deniedAt = null;
 
-	if (action === "approve") {
-		approvedAt = new Date();
-	} else if (action === "deny") {
-		deniedAt = new Date();
-	} else {
-		throw new Error("Invalid action");
-	}
+		if (action === "approve") {
+			approvedAt = new Date();
+		} else if (action === "deny") {
+			deniedAt = new Date();
+		} else {
+			throw new Error("Invalid action");
+		}
 
-	await pool.query(
-		`UPDATE profile_child 
+		await conn.query(
+			`UPDATE profile_child 
     SET approved_at = ?, denied_at = ?, invited_at = COALESCE(invited_at, NOW())
     WHERE id = ? AND parent_profile_id = ?`,
-		[approvedAt, deniedAt, relationshipId, parentProfile.id]
-	);
-
-	if (action === "approve") {
-		await pool.query(
-			`UPDATE profile SET has_guardian = 1 WHERE id = (SELECT child_profile_id FROM profile_child WHERE id = ?)`,
-			[relationshipId]
+			[approvedAt, deniedAt, relationship.relationship_id, parentProfile.id]
 		);
-	}
 
-	return getChildRelationship(parentProfile.id, relationshipId);
+		if (action === "approve") {
+			await conn.query(
+				`UPDATE profile SET has_guardian = 1 WHERE id = (SELECT child_profile_id FROM profile_child WHERE id = ?)`,
+				[relationship.relationship_id]
+			);
+		}
+
+		const updated = await getChildRelationship(
+			parentProfile.id,
+			relationship.relationship_id,
+			conn
+		);
+		return publicChild(updated);
+	});
 }
 
 module.exports = {

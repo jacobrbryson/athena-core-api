@@ -1,6 +1,7 @@
 const sessionLearningMomentService = require("../services/sessionLearningMoment");
 const sessionService = require("../services/session");
 const { extractIp } = require("../helpers/utils");
+const { publicLearningMoment } = require("../helpers/serialize");
 
 async function getLearningMoments(req, res) {
 	try {
@@ -23,7 +24,9 @@ async function getLearningMoments(req, res) {
 				session.id
 			);
 
-		res.json(topics);
+		const sanitizedMoments = topics.map(publicLearningMoment);
+
+		res.json(sanitizedMoments);
 	} catch (err) {
 		console.error("Error fetching topics:", err);
 		res.status(500).json({ success: false, message: "DB error" });

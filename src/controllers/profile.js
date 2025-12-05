@@ -2,6 +2,7 @@ const { RecaptchaEnterpriseServiceClient } = require("@google-cloud/recaptcha-en
 const profileService = require("../services/profile");
 const { inviteParentByEmail } = require("../services/parent");
 const config = require("../config");
+const { publicProfile } = require("../helpers/serialize");
 
 function buildProfileFromJwt(payload = {}) {
 	const fullName =
@@ -26,10 +27,10 @@ async function getProfile(req, res) {
 		if (!profile) {
 			const seeded = buildProfileFromJwt(payload);
 			profile = await profileService.createProfile(googleId, seeded);
-			return res.status(201).json(profile);
+			return res.status(201).json(publicProfile(profile));
 		}
 
-		return res.status(200).json(profile);
+		return res.status(200).json(publicProfile(profile));
 	} catch (err) {
 		console.error("Error fetching profile:", err);
 		return res
@@ -53,7 +54,9 @@ async function createProfile(req, res) {
 			? await profileService.updateProfile(googleId, profilePayload)
 			: await profileService.createProfile(googleId, profilePayload);
 
-		return res.status(existing ? 200 : 201).json(profile);
+		return res
+			.status(existing ? 200 : 201)
+			.json(publicProfile(profile));
 	} catch (err) {
 		console.error("Error creating profile:", err);
 
@@ -99,7 +102,7 @@ async function updateProfile(req, res) {
 			profilePayload
 		);
 
-		return res.json(updated);
+		return res.json(publicProfile(updated));
 	} catch (err) {
 		console.error("Error updating profile:", err);
 
@@ -225,7 +228,9 @@ async function getGuardians(req, res) {
 		const { googleId } = req.user;
 
 		const guardians = await profileService.getGuardiansByGoogleId(googleId);
-		return res.status(200).json(guardians);
+		return res
+			.status(200)
+			.json(guardians.map((guardian) => publicProfile(guardian)));
 	} catch (err) {
 		console.error("Error fetching guardians:", err);
 		return res

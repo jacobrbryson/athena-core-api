@@ -1,5 +1,7 @@
 const { WebSocketServer } = require("ws");
 const url = require("url");
+const { decodeUserToken } = require("../middleware/auth");
+const { normalizeIp } = require("../helpers/utils");
 
 const clients = new Map(); // sessionId => ws
 
@@ -15,7 +17,21 @@ function startWebSocketServer(server) {
 			return;
 		}
 
-		// ✅ Track client
+		const authHeader =
+			req.headers["x-user-authorization"] || req.headers.authorization;
+		const token =
+			authHeader && authHeader.startsWith("Bearer ")
+				? authHeader.slice("Bearer ".length)
+				: null;
+
+		const requestIp = normalizeIp(req.socket.remoteAddress);
+		const decoded = decodeUserToken(token, requestIp);
+		if (!decoded) {
+			console.warn("WS refused: invalid or mismatched token/IP");
+			ws.close();
+			return;
+		}
+
 		clients.set(sessionId, ws);
 
 		console.log(`WS connected for session ${sessionId}`);

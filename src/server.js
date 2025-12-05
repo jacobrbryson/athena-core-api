@@ -6,6 +6,7 @@ const { startWebSocketServer } = require("./websocket/wsServer");
 const config = require("./config");
 
 const app = express();
+app.set("trust proxy", 1);
 app.use(express.json());
 
 const server = http.createServer(app);
@@ -13,6 +14,7 @@ const clients = startWebSocketServer(server);
 
 app.use("/", createRouter(clients));
 
-server.listen(config.API_PORT, () => {
-	console.log("API + WS server running on port 3001");
+const port = process.env.PORT || config.API_PORT;
+server.listen(port, () => {
+	console.log(`API + WS server running on port ${port}`);
 });

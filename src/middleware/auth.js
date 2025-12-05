@@ -1,5 +1,14 @@
 const jwt = require("jsonwebtoken");
 const config = require("../config");
+const { extractIp, normalizeIp } = require("../helpers/utils");
+
+function ensureSecret() {
+	if (!config.JWT_SECRET) {
+		throw new Error(
+			"JWT_SECRET is not configured on the API server. Refusing to process auth."
+		);
+	}
+}
 
 function extractToken(req) {
 	const authHeader =
@@ -15,6 +24,7 @@ function extractToken(req) {
 function verifyToken(token) {
 	if (!token) return null;
 	try {
+		ensureSecret();
 		return jwt.verify(token, config.JWT_SECRET);
 	} catch (err) {
 		console.warn("Auth middleware: Failed to verify JWT", err.message);
@@ -22,11 +32,31 @@ function verifyToken(token) {
 	}
 }
 
+function decodeUserToken(token, expectedIp) {
+	const decoded = verifyToken(token);
+	if (!decoded) return null;
+	if (expectedIp) {
+		const tokenIp = normalizeIp(decoded.client_ip);
+		if (!tokenIp || tokenIp !== normalizeIp(expectedIp)) {
+			return null;
+		}
+	}
+	return decoded;
+}
+
 function requireAuth(req, res, next) {
 	const token = extractToken(req);
 	const decoded = verifyToken(token);
 
 	if (!decoded) {
+		return res
+			.status(401)
+			.json({ success: false, message: "Unauthorized" });
+	}
+
+	const tokenIp = normalizeIp(decoded.client_ip);
+	const requestIp = extractIp(req);
+	if (!tokenIp || tokenIp !== requestIp) {
 		return res
 			.status(401)
 			.json({ success: false, message: "Unauthorized" });
@@ -51,4 +81,5 @@ function requireAuth(req, res, next) {
 
 module.exports = {
 	requireAuth,
+	decodeUserToken,
 };
