@@ -645,10 +645,16 @@ async function getActivityForChild(googleId, childRelationshipId, options = {}) 
 	const limit = sanitizeLimit(options.limit, 200, 50);
 
 	const [rows] = await pool.query(
-		`SELECT id, activity, created_at
-     FROM child_activity
-     WHERE child_profile_id = ? AND parent_profile_id = ?
-     ORDER BY created_at DESC
+		`SELECT ca.id,
+            ca.activity,
+            ca.created_at,
+            ca.actor_profile_id,
+            actor.full_name AS actor_name,
+            actor.email AS actor_email
+     FROM child_activity ca
+     LEFT JOIN profile actor ON actor.id = ca.actor_profile_id
+     WHERE ca.child_profile_id = ? AND ca.parent_profile_id = ?
+     ORDER BY ca.created_at DESC
      LIMIT ?;`,
 		[relationship.child_profile_id, parentProfile.id, limit]
 	);
@@ -657,6 +663,9 @@ async function getActivityForChild(googleId, childRelationshipId, options = {}) 
 		id: row.id,
 		activity: row.activity,
 		time: row.created_at,
+		actor_profile_id: row.actor_profile_id,
+		actor_name: row.actor_name || null,
+		actor_email: row.actor_email || null,
 	}));
 }
 
