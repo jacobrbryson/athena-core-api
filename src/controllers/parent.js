@@ -191,6 +191,8 @@ async function getLearningGoals(req, res) {
 			Number.isFinite(rawPage) || Number.isFinite(rawPageSize) || req.query.paginate === "true";
 		const includeDeleted = req.query.include_deleted === "true";
 		const activeOnly = req.query.active_only !== "false"; // default true
+		const limit = parseInt(req.query.limit, 10);
+		const orderBy = req.query.order_by || req.query.orderBy;
 
 		const goals = await parentService.getLearningGoalsForChild(
 			googleId,
@@ -201,6 +203,8 @@ async function getLearningGoals(req, res) {
 				paginate,
 				includeDeleted,
 				activeOnly,
+				limit,
+				orderBy,
 			}
 		);
 		return res.status(200).json(goals);
@@ -243,7 +247,8 @@ async function deleteLearningGoal(req, res) {
 	try {
 		const { googleId } = req.user;
 		const { childId, goalId } = req.params;
-		await parentService.deleteLearningGoal(googleId, childId, goalId);
+		const markComplete = req.query.mark_complete === "true";
+		await parentService.deleteLearningGoal(googleId, childId, goalId, { markComplete });
 		return res.status(204).send();
 	} catch (err) {
 		console.error("Error deleting learning goal:", err);
@@ -263,7 +268,10 @@ async function getChildActivity(req, res) {
 	try {
 		const { googleId } = req.user;
 		const { childId } = req.params;
-		const items = await parentService.getActivityForChild(googleId, childId);
+		const limit = parseInt(req.query.limit, 10);
+		const items = await parentService.getActivityForChild(googleId, childId, {
+			limit: Number.isFinite(limit) ? limit : undefined,
+		});
 		return res.status(200).json(items);
 	} catch (err) {
 		console.error("Error fetching child activity:", err);

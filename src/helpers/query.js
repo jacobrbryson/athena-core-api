@@ -42,6 +42,34 @@ function buildUpdateClauses(updates, allowedFields) {
 	return { setClauses, values };
 }
 
+function sanitizePagination(
+	{ page, pageSize } = {},
+	{ defaultPageSize = 10, maxPageSize = 100 } = {}
+) {
+	const safePage = Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
+	const safePageSize = Number.isFinite(pageSize) && pageSize > 0
+		? Math.min(Math.floor(pageSize), maxPageSize)
+		: defaultPageSize;
+	const offset = (safePage - 1) * safePageSize;
+	return { page: safePage, pageSize: safePageSize, offset };
+}
+
+function sanitizeLimit(value, max = 200, fallback = null) {
+	const n = Number(value);
+	if (Number.isFinite(n) && n > 0) {
+		return Math.min(Math.floor(n), max);
+	}
+	return fallback;
+}
+
+function sanitizeOrderBy(orderBy, allowedMap = {}, fallback = "") {
+	if (orderBy && allowedMap[orderBy]) return allowedMap[orderBy];
+	return fallback;
+}
+
 module.exports = {
 	buildUpdateClauses,
+	sanitizePagination,
+	sanitizeLimit,
+	sanitizeOrderBy,
 };
