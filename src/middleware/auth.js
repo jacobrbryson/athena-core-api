@@ -44,6 +44,20 @@ function decodeUserToken(token, expectedIp) {
 	return decoded;
 }
 
+function extractForwardedClientIp(req) {
+	const forwarded = req.headers["x-forwarded-for"];
+	if (!forwarded) return null;
+
+	const list = Array.isArray(forwarded)
+		? forwarded
+		: String(forwarded)
+				.split(",")
+				.map((ip) => ip.trim())
+				.filter(Boolean);
+
+	return normalizeIp(list[0] || null);
+}
+
 function requireAuth(req, res, next) {
 	const token = extractToken(req);
 	const decoded = verifyToken(token);
@@ -56,7 +70,22 @@ function requireAuth(req, res, next) {
 
 	const tokenIp = normalizeIp(decoded.client_ip);
 	const requestIp = extractIp(req);
-	if (!tokenIp || tokenIp !== requestIp) {
+	const forwardedClientIp = extractForwardedClientIp(req);
+
+	const ipMatches =
+		tokenIp &&
+		(tokenIp === requestIp ||
+			(!!forwardedClientIp && tokenIp === forwardedClientIp));
+
+	if (!ipMatches) {
+		console.warn(
+			"Auth middleware: IP mismatch",
+			JSON.stringify({
+				tokenIp,
+				requestIp,
+				forwardedClientIp,
+			})
+		);
 		return res
 			.status(401)
 			.json({ success: false, message: "Unauthorized" });
