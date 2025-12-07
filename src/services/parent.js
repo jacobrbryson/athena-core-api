@@ -22,6 +22,28 @@ const {
 	getProfileByGoogleId,
 } = require("./parent-helpers");
 const pool = require("../helpers/db");
+const allowedGrades = new Set([
+	"pre-k",
+	"kindergarten",
+	"1",
+	"2",
+	"3",
+	"4",
+	"5",
+	"6",
+	"7",
+	"8",
+	"9",
+	"10",
+	"11",
+	"12",
+]);
+
+function normalizeGradeValue(value) {
+	if (typeof value !== "string") return null;
+	const trimmed = value.trim().toLowerCase();
+	return allowedGrades.has(trimmed) ? trimmed : null;
+}
 
 async function getChildrenByGoogleId(googleId) {
 	const parentProfile = await getProfileByGoogleId(googleId);
@@ -669,6 +691,86 @@ async function getActivityForChild(googleId, childRelationshipId, options = {}) 
 	}));
 }
 
+async function getGuardiansForChild(googleId, childRelationshipId) {
+	const parentProfile = await getProfileByGoogleId(googleId);
+	const relationship = await getChildRelationshipForParent(
+		parentProfile.id,
+		childRelationshipId
+	);
+	if (!relationship) {
+		throw new Error("Child not found for this parent");
+	}
+
+	const [rows] = await pool.query(
+		`SELECT 
+        p.full_name,
+        p.picture,
+        p.created_at AS profile_created_at,
+        pc.invited_at,
+        pc.approved_at,
+        pc.denied_at
+      FROM profile_child pc
+      JOIN profile p ON p.id = pc.parent_profile_id
+      WHERE pc.child_profile_id = ? AND pc.deleted_at IS NULL
+      ORDER BY pc.approved_at DESC, pc.invited_at DESC, pc.created_at DESC;`,
+		[relationship.child_profile_id]
+	);
+
+	return rows.map((row) => ({
+		full_name: row.full_name || null,
+		picture: row.picture || null,
+		created_at: row.profile_created_at || null,
+		relation: null,
+		invited_at: row.invited_at || null,
+		approved_at: row.approved_at || null,
+		status: row.approved_at ? "linked" : "invited",
+	}));
+}
+
+async function getSiblingsForChild(googleId, childRelationshipId) {
+	const parentProfile = await getProfileByGoogleId(googleId);
+	const relationship = await getChildRelationshipForParent(
+		parentProfile.id,
+		childRelationshipId
+	);
+	if (!relationship) {
+		throw new Error("Child not found for this parent");
+	}
+
+	const [rows] = await pool.query(
+		`SELECT 
+        pc.child_profile_id,
+        child.full_name,
+        child.birthday,
+        child.grade,
+        child.picture,
+        child.level,
+        child.level_progress
+      FROM profile_child pc
+      JOIN profile child ON child.id = pc.child_profile_id
+      WHERE pc.parent_profile_id = ? AND pc.deleted_at IS NULL
+      ORDER BY child.full_name ASC, child.created_at DESC;`,
+		[parentProfile.id]
+	);
+
+	return rows
+		.filter((row) => row.child_profile_id !== relationship.child_profile_id)
+		.map((row) => ({
+			full_name: row.full_name || null,
+			birthday:
+				typeof row.birthday === "string" && row.birthday.length >= 10
+					? row.birthday.slice(0, 10)
+					: null,
+			grade: normalizeGradeValue(row.grade) || null,
+			picture: row.picture || null,
+			level: Number.isFinite(row.level) ? Number(row.level) : null,
+			level_progress: Number.isFinite(row.level_progress)
+				? Math.max(0, Math.min(100, Number(row.level_progress)))
+				: null,
+			relation: null,
+		}));
+}
+
 module.exports = {
 	getChildrenByGoogleId,
 	addChild,
@@ -683,4 +785,6 @@ module.exports = {
 	addLearningGoal,
 	deleteLearningGoal,
 	getActivityForChild,
+	getGuardiansForChild,
+	getSiblingsForChild,
 };

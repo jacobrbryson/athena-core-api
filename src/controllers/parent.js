@@ -281,6 +281,66 @@ async function getChildActivity(req, res) {
 	}
 }
 
+async function getChildGuardians(req, res) {
+	try {
+		const { googleId } = req.user;
+		const { childId } = req.params;
+		const guardians = await parentService.getGuardiansForChild(
+			googleId,
+			childId
+		);
+		return res.status(200).json(guardians);
+	} catch (err) {
+		console.error("Error fetching child guardians:", err);
+		if (err.message?.includes("Invalid child id")) {
+			return res.status(400).json({
+				success: false,
+				message: "Invalid child id",
+			});
+		}
+		if (err.message?.includes("Child not found")) {
+			return res.status(404).json({
+				success: false,
+				message: "Child not found for this parent",
+			});
+		}
+		return res.status(500).json({
+			success: false,
+			message: "Failed to fetch child guardians",
+		});
+	}
+}
+
+async function getChildSiblings(req, res) {
+	try {
+		const { googleId } = req.user;
+		const { childId } = req.params;
+		const siblings = await parentService.getSiblingsForChild(
+			googleId,
+			childId
+		);
+		return res.status(200).json(siblings);
+	} catch (err) {
+		console.error("Error fetching child siblings:", err);
+		if (err.message?.includes("Invalid child id")) {
+			return res.status(400).json({
+				success: false,
+				message: "Invalid child id",
+			});
+		}
+		if (err.message?.includes("Child not found")) {
+			return res.status(404).json({
+				success: false,
+				message: "Child not found for this parent",
+			});
+		}
+		return res.status(500).json({
+			success: false,
+			message: "Failed to fetch child siblings",
+		});
+	}
+}
+
 module.exports = {
 	getChildren,
 	addChild,
@@ -295,4 +355,6 @@ module.exports = {
 	addLearningGoal,
 	deleteLearningGoal,
 	getChildActivity,
+	getChildGuardians,
+	getChildSiblings,
 };
