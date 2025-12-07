@@ -18,6 +18,7 @@ const {
 	ensureChildProfileByGoogleId,
 	logChildActivity,
 	getProfileDisplayName,
+	getProfileByEmail,
 	childSelectColumns,
 	getProfileByGoogleId,
 } = require("./parent-helpers");

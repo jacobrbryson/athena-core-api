@@ -246,9 +246,9 @@ async function inviteParent(req, res) {
 	} catch (err) {
 		console.error("Error inviting parent:", err);
 		const message =
-			err.message && err.message.toLowerCase().includes("captcha")
+			typeof err?.message === "string" && err.message.toLowerCase().includes("captcha")
 				? err.message
-				: "Failed to send parent invite";
+				: err?.message || err?.error?.message || "Failed to send parent invite";
 		return res.status(500).json({ success: false, message });
 	}
 }

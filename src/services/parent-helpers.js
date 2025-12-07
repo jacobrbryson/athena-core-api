@@ -382,6 +382,7 @@ module.exports = {
 	allowedChildFields,
 	childSelectColumns,
 	getProfileByGoogleId,
+	getProfileByEmail,
 	normalizeEmail,
 	normalizeGoogleId,
 	normalizeUuid,
