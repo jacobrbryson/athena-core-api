@@ -7,14 +7,37 @@ const allowedProfileFields = {
 	full_name: "string",
 	birthday: "string",
 	picture: "string",
+	grade: "string",
 	has_guardian: "boolean",
 	is_guardian: "boolean",
 	is_teacher: "boolean",
 	profile_editing_locked: "boolean",
 };
+const allowedGrades = new Set([
+	"pre-k",
+	"kindergarten",
+	"1",
+	"2",
+	"3",
+	"4",
+	"5",
+	"6",
+	"7",
+	"8",
+	"9",
+	"10",
+	"11",
+	"12",
+]);
+const googleFields = {
+	google_id: "string",
+	picture: "string",
+};
 
 function mapProfileRow(row) {
 	if (!row) return null;
+
+	const grade = normalizeGrade(row.grade) ?? row.grade ?? null;
 
 	return {
 		id: row.id,
@@ -24,6 +47,7 @@ function mapProfileRow(row) {
 		full_name: row.full_name,
 		picture: row.picture,
 		birthday: row.birthday,
+		grade,
 		profile_editing_locked:
 			row.profile_editing_locked === null ||
 			row.profile_editing_locked === undefined
@@ -47,6 +71,7 @@ function mapProfileRow(row) {
 }
 
 function sanitizeInsertPayload(payload = {}) {
+	const normalizedGrade = normalizeGrade(payload.grade);
 	return {
 		email: typeof payload.email === "string" ? payload.email : null,
 		full_name:
@@ -54,6 +79,7 @@ function sanitizeInsertPayload(payload = {}) {
 		picture: typeof payload.picture === "string" ? payload.picture : null,
 		birthday:
 			typeof payload.birthday === "string" ? payload.birthday : null,
+		grade: normalizedGrade,
 		profile_editing_locked:
 			typeof payload.profile_editing_locked === "boolean"
 				? payload.profile_editing_locked
@@ -78,7 +104,12 @@ function extractUpdatableFields(payload = {}) {
 		allowedProfileFields
 	)) {
 		const value = payload[field];
-		if (typeof value === expectedType) {
+		if (field === "grade" && typeof value === "string") {
+			const grade = normalizeGrade(value);
+			if (grade !== null) {
+				updates[field] = grade;
+			}
+		} else if (typeof value === expectedType) {
 			updates[field] = value;
 		}
 	}
@@ -106,7 +137,7 @@ async function getProfileByGoogleId(googleId) {
 	if (normalized === null) return null;
 
 	const [rows] = await pool.query(
-		`SELECT id, uuid, google_id, email, full_name, picture, birthday, profile_editing_locked, has_guardian, is_guardian, is_teacher 
+		`SELECT id, uuid, google_id, email, full_name, picture, birthday, grade, profile_editing_locked, has_guardian, is_guardian, is_teacher 
     FROM profile 
     WHERE google_id = ? 
     ORDER BY created_at DESC 
@@ -122,7 +153,7 @@ async function getProfileByEmail(email) {
 	const normalized = email.trim().toLowerCase();
 
 	const [rows] = await pool.query(
-		`SELECT id, uuid, google_id, email, full_name, picture, birthday, profile_editing_locked, has_guardian, is_guardian, is_teacher 
+		`SELECT id, uuid, google_id, email, full_name, picture, birthday, grade, profile_editing_locked, has_guardian, is_guardian, is_teacher 
     FROM profile 
     WHERE LOWER(email) = ? 
     ORDER BY created_at DESC 
@@ -144,8 +175,8 @@ async function createProfile(googleId, payload) {
 
 	await pool.query(
 		`INSERT INTO profile 
-    (uuid, google_id, email, full_name, picture, birthday, profile_editing_locked, has_guardian, is_guardian, is_teacher) 
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    (uuid, google_id, email, full_name, picture, birthday, grade, profile_editing_locked, has_guardian, is_guardian, is_teacher) 
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		[
 			uuid,
 			normalized,
@@ -153,6 +184,7 @@ async function createProfile(googleId, payload) {
 			profile.full_name,
 			profile.picture,
 			profile.birthday,
+			profile.grade,
 			profile.profile_editing_locked,
 			profile.has_guardian,
 			profile.is_guardian,
@@ -198,6 +230,31 @@ async function upsertProfile(googleId, payload) {
 	return updateProfile(googleId, payload);
 }
 
+async function updateGoogleIdAndPicture(profileId, googleId, picture) {
+	const normalizedId = normalizeGoogleId(googleId);
+	if (normalizedId === null) {
+		throw new Error("Invalid google_id");
+	}
+
+	if (!profileId || !Number.isFinite(Number(profileId))) {
+		throw new Error("Invalid profile id");
+	}
+
+	const updates = { google_id: normalizedId };
+	if (typeof picture === "string" && picture.trim()) {
+		updates.picture = picture;
+	}
+
+	const { setClauses, values } = buildUpdateClauses(updates, googleFields);
+
+	await pool.query(
+		`UPDATE profile SET ${setClauses} WHERE id = ?`,
+		[...values, profileId]
+	);
+
+	return getProfileByGoogleId(normalizedId);
+}
+
 async function getGuardiansByGoogleId(childGoogleId) {
 	const childProfile = await getProfileByGoogleId(childGoogleId);
 	if (!childProfile || !childProfile.id) {
@@ -213,6 +270,7 @@ async function getGuardiansByGoogleId(childGoogleId) {
       p.full_name,
       p.picture,
       p.birthday,
+      p.grade,
       p.has_guardian,
       p.is_guardian,
       p.is_teacher,
@@ -234,5 +292,12 @@ module.exports = {
 	createProfile,
 	updateProfile,
 	upsertProfile,
+	updateGoogleIdAndPicture,
 	getGuardiansByGoogleId,
 };
+
+function normalizeGrade(value) {
+	if (typeof value !== "string") return null;
+	const trimmed = value.trim().toLowerCase();
+	return allowedGrades.has(trimmed) ? trimmed : null;
+}

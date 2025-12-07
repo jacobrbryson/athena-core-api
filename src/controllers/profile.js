@@ -26,6 +26,21 @@ async function getProfile(req, res) {
 
 		if (!profile) {
 			const seeded = buildProfileFromJwt(payload);
+			if (seeded.email) {
+				const profileByEmail = await profileService.getProfileByEmail(
+					seeded.email
+				);
+
+				if (profileByEmail) {
+					profile = await profileService.updateGoogleIdAndPicture(
+						profileByEmail.id,
+						googleId,
+						seeded.picture
+					);
+					return res.status(200).json(publicProfile(profile));
+				}
+			}
+
 			profile = await profileService.createProfile(googleId, seeded);
 			return res.status(201).json(publicProfile(profile));
 		}

@@ -10,12 +10,29 @@ const allowedChildFields = {
 	full_name: "string",
 	email: "string",
 	birthday: "string",
+	grade: "string",
 	profile_editing_locked: "boolean",
 	level: "number",
 	level_progress: "number",
 	wisdom_points: "number",
 	mood: "string",
 };
+const allowedGrades = new Set([
+	"pre-k",
+	"kindergarten",
+	"1",
+	"2",
+	"3",
+	"4",
+	"5",
+	"6",
+	"7",
+	"8",
+	"9",
+	"10",
+	"11",
+	"12",
+]);
 
 const childSelectColumns = `
   pc.id AS relationship_id,
@@ -33,6 +50,7 @@ const childSelectColumns = `
   child.email,
   child.birthday,
   child.picture,
+  child.grade,
   child.level,
   child.level_progress,
   child.wisdom_points,
@@ -89,6 +107,8 @@ async function getProfileByGoogleId(googleId, conn = pool) {
 function mapChildRow(row) {
 	if (!row) return null;
 
+	const grade = normalizeGrade(row.grade) ?? row.grade ?? null;
+
 	return {
 		id: row.relationship_id,
 		relationship_id: row.relationship_id,
@@ -102,6 +122,7 @@ function mapChildRow(row) {
 		email: row.email,
 		birthday: row.birthday,
 		picture: row.picture,
+		grade,
 		level: row.level,
 		level_progress: row.level_progress,
 		wisdom_points: row.wisdom_points,
@@ -122,7 +143,10 @@ function extractUpdatableFields(payload = {}) {
 	const updates = {};
 	for (const [field, expectedType] of Object.entries(allowedChildFields)) {
 		const value = payload[field];
-		if (typeof value === expectedType) {
+		if (field === "grade" && typeof value === "string") {
+			const grade = normalizeGrade(value);
+			if (grade !== null) updates[field] = grade;
+		} else if (typeof value === expectedType) {
 			updates[field] = field === "birthday" ? value.slice(0, 10) : value;
 		}
 	}
@@ -260,23 +284,37 @@ async function ensureChildProfileByEmail(email, payload = {}, conn = pool) {
 		throw new Error("Invalid child email");
 	}
 
+	const grade = normalizeGrade(payload.grade);
 	const existing = await getProfileByEmail(normalizedEmail);
-	if (existing) return existing;
+	if (existing) {
+		// Allow backfilling grade on existing child record created before grade support.
+		if (existing && grade && !existing.grade) {
+			await conn.query(
+				`UPDATE profile SET grade = ? WHERE id = ?`,
+				[grade, existing.id]
+			);
+			return { ...existing, grade };
+		}
+		return existing;
+	}
 
 	const [result] = await conn.query(
 		`INSERT INTO profile 
-    (uuid, google_id, email, full_name, birthday, has_guardian, is_guardian, is_teacher, profile_editing_locked) 
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    (uuid, google_id, email, full_name, birthday, grade, has_guardian, is_guardian, is_teacher, profile_editing_locked) 
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		[
 			uuidv4(),
 			`child:${normalizedEmail}`,
 			normalizedEmail,
 			typeof payload.full_name === "string" ? payload.full_name : null,
 			typeof payload.birthday === "string" ? payload.birthday.slice(0, 10) : null,
+			grade,
 			true,
 			false,
 			false,
-			false,
+			typeof payload.profile_editing_locked === "boolean"
+				? payload.profile_editing_locked
+				: true,
 		]
 	);
 
@@ -332,6 +370,12 @@ async function getProfileDisplayName(profileId, conn = pool) {
 		[profileId]
 	);
 	return rows?.[0]?.full_name || rows?.[0]?.email || "Parent";
+}
+
+function normalizeGrade(value) {
+	if (typeof value !== "string") return null;
+	const trimmed = value.trim().toLowerCase();
+	return allowedGrades.has(trimmed) ? trimmed : null;
 }
 
 module.exports = {
