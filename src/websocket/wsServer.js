@@ -1,7 +1,7 @@
 const { WebSocketServer } = require("ws");
 const url = require("url");
 const { decodeUserToken } = require("../middleware/auth");
-const { normalizeIp } = require("../helpers/utils");
+const { extractIp } = require("../helpers/utils");
 
 const clients = new Map(); // sessionId => ws
 
@@ -24,7 +24,7 @@ function startWebSocketServer(server) {
 				? authHeader.slice("Bearer ".length)
 				: null;
 
-		const requestIp = normalizeIp(req.socket.remoteAddress);
+		const requestIp = extractIp(req);
 		const decoded = decodeUserToken(token, requestIp);
 		if (!decoded) {
 			console.warn("WS refused: invalid or mismatched token/IP");
