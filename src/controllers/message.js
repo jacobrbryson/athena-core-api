@@ -92,6 +92,21 @@ async function addMessage(req, res, clients) {
 
 		await sessionService.updateSession(session.id, { is_busy: true });
 
+		const sessionClients = clients.get(session.uuid);
+		if (sessionClients) {
+			const payload = JSON.stringify({
+				rpc: "sessionStatus",
+				session: {
+					is_busy: true,
+				},
+			});
+			for (const ws of sessionClients) {
+				if (ws.readyState === ws.OPEN) {
+					ws.send(payload);
+				}
+			}
+		}
+
 		res.json({
 			message: {
 				text,

@@ -44,7 +44,16 @@ async function processAiResponse(session, message, clients) {
 			parsedResponse.response
 		);
 
-		const ws = clients.get(session.uuid);
+		const sessionClients = clients.get(session.uuid);
+		const broadcast = (payload) => {
+			if (!sessionClients) return;
+			const serialized = JSON.stringify(payload);
+			for (const ws of sessionClients) {
+				if (ws.readyState === ws.OPEN) {
+					ws.send(serialized);
+				}
+			}
+		};
 
 		if (parsedResponse.action == "NEW_TOPIC") {
 			await sessionTopicService.addSessionTopic(
@@ -52,52 +61,40 @@ async function processAiResponse(session, message, clients) {
 				parsedResponse.topic_name,
 				parsedResponse.new_proficiency
 			);
-			if (ws && ws.readyState === ws.OPEN) {
-				ws.send(
-					JSON.stringify({
-						rpc: "addSessionTopic",
-						topic: {
-							topic_name: parsedResponse.topic_name,
-							proficiency: parsedResponse.new_proficiency,
-						},
-					})
-				);
-			}
+			broadcast({
+				rpc: "addSessionTopic",
+				topic: {
+					topic_name: parsedResponse.topic_name,
+					proficiency: parsedResponse.new_proficiency,
+				},
+			});
 		} else if (parsedResponse.action == "INCREASE_PROFICIENCY") {
 			sessionTopicService.updateSessionTopic(
 				session.id,
 				parsedResponse.topic_name,
 				parsedResponse.new_proficiency
 			);
-			if (ws && ws.readyState === ws.OPEN) {
-				ws.send(
-					JSON.stringify({
-						rpc: "updateSessionTopic",
-						topic: {
-							topic_name: parsedResponse.topic_name,
-							proficiency: parsedResponse.new_proficiency,
-						},
-					})
-				);
-			}
+			broadcast({
+				rpc: "updateSessionTopic",
+				topic: {
+					topic_name: parsedResponse.topic_name,
+					proficiency: parsedResponse.new_proficiency,
+				},
+			});
 		}
 
-		if (ws && ws.readyState === ws.OPEN) {
-			ws.send(
-				JSON.stringify({
-					rpc: "addMessage",
-					session: {
-						is_busy: false,
-					},
-					message: {
-						uuid: aiChatUuid,
-						is_human: false,
-						text: parsedResponse.response,
-						created_at: Date.now(),
-					},
-				})
-			);
-		}
+		broadcast({
+			rpc: "addMessage",
+			session: {
+				is_busy: false,
+			},
+			message: {
+				uuid: aiChatUuid,
+				is_human: false,
+				text: parsedResponse.response,
+				created_at: Date.now(),
+			},
+		});
 	} catch (err) {
 		console.error("Error during AI response processing:", err);
 		// IMPORTANT: Send an error status back to the client via WS if possible

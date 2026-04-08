@@ -3,7 +3,7 @@ const url = require("url");
 const { decodeUserToken } = require("../middleware/auth");
 const { extractIp } = require("../helpers/utils");
 
-const clients = new Map(); // sessionId => ws
+const clients = new Map(); // sessionId => Set<ws>
 
 function startWebSocketServer(server) {
 	const wss = new WebSocketServer({ server });
@@ -32,9 +32,13 @@ function startWebSocketServer(server) {
 			return;
 		}
 
-		clients.set(sessionId, ws);
+		const sessionClients = clients.get(sessionId) || new Set();
+		sessionClients.add(ws);
+		clients.set(sessionId, sessionClients);
 
-		console.log(`WS connected for session ${sessionId}`);
+		console.log(
+			`WS connected for session ${sessionId}. clients=${sessionClients.size}`
+		);
 
 		ws.send(
 			JSON.stringify({
@@ -44,8 +48,18 @@ function startWebSocketServer(server) {
 		);
 
 		ws.on("close", () => {
-			clients.delete(sessionId);
-			console.log(`WS disconnected: ${sessionId}`);
+			const currentClients = clients.get(sessionId);
+			if (currentClients) {
+				currentClients.delete(ws);
+				if (currentClients.size === 0) {
+					clients.delete(sessionId);
+				}
+			}
+			console.log(
+				`WS disconnected: ${sessionId}. clients=${
+					clients.get(sessionId)?.size || 0
+				}`
+			);
 		});
 	});
 
