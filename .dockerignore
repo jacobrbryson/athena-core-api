@@ -1,0 +1,13 @@
+# Keep secrets and local cruft OUT of the build context / image.
+# Docker does NOT honor .gitignore — this file is what protects .env.
+.env
+.env.*
+.git
+.gitignore
+node_modules
+npm-debug.log*
+*.log
+Dockerfile
+.dockerignore
+README.md
+readme.md

@@ -6,9 +6,15 @@ const { getTopics } = require("../controllers/sessionTopic");
 const {
 	getLearningMoments,
 } = require("../controllers/sessionLearningMoment");
+const { validateCode } = require("../controllers/childAuth");
+const { listModes } = require("../services/conversationMode");
 const profileRouter = require("./profile");
 const parentRouter = require("./parent");
 const catalogRouter = require("./catalog");
+const familyRouter = require("./family");
+const consentRouter = require("./consent");
+const memoryRouter = require("./memory");
+const integrationRouter = require("./integration");
 
 /**
  * Router factory
@@ -23,9 +29,27 @@ module.exports = (clients) => {
 	router.get("/session/:sessionId/learning-moment", getLearningMoments);
 	router.get("/message", getMessage);
 	router.post("/message", (req, res) => addMessage(req, res, clients));
+
+	// Public: conversation mode catalog (used by the chat mode switcher).
+	router.get("/modes", async (req, res) => {
+		try {
+			res.json(await listModes());
+		} catch (err) {
+			console.error("[modes]", err.message);
+			res.status(500).json({ success: false, message: "Failed to load modes" });
+		}
+	});
+
+	// Public: child login-code redeem (proxy mints the JWT after this passes).
+	router.post("/auth/child/validate", express.json(), validateCode);
+
 	router.use("/profile", profileRouter);
 	router.use("/parent", parentRouter);
 	router.use("/catalog", catalogRouter);
+	router.use("/family", familyRouter);
+	router.use("/consent", consentRouter);
+	router.use("/memory", memoryRouter);
+	router.use("/integrations", integrationRouter);
 
 	// Optional catch-all
 	router.use((req, res) => {

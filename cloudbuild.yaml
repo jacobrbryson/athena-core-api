@@ -22,25 +22,43 @@ steps:
       - "gcloud"
       - "run"
       - "deploy"
-      - "athena-core-api" # Your existing service name
+      - "athena-core-api"
       - "--image"
       - "$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-core-api:$COMMIT_SHA"
       - "--region"
       - "$_REGION"
       - "--platform"
       - "managed"
-      # If you need this API to be public (unauthenticated), uncomment the line below
-      # - '--allow-unauthenticated'
+      # core_api stays PRIVATE (invoker-only). Do NOT add --allow-unauthenticated.
+      # Only the proxy service identity should be able to reach it.
+
+      # --- Secrets: pulled from Secret Manager at deploy time, never baked into the image ---
+      # FAMILY_CHORES_PARTNER_SECRET gates the Family Chores partner endpoints
+      # (connect / disconnect / suggest-chores). Create it per SECURITY_SETUP.md.
+      - "--update-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest,DB_PASS=DB_PASS:latest,JWT_SECRET=JWT_SECRET:latest,RECAPTCHA_SECRET=RECAPTCHA_SECRET:latest,FAMILY_CHORES_PARTNER_SECRET=FAMILY_CHORES_PARTNER_SECRET:latest"
+
+      # --- Non-secret runtime config (use a custom ^@^ delimiter so values can contain commas) ---
+      - "--set-env-vars=^@^DB_HOST=$_DB_HOST@DB_USER=$_DB_USER@DB_NAME=$_DB_NAME@RECAPTCHA_PROJECT_ID=$_RECAPTCHA_PROJECT_ID@RECAPTCHA_SITE_KEY=$_RECAPTCHA_SITE_KEY@PUBLIC_SESSION_MESSAGE_DAILY_LIMIT=$_PUBLIC_SESSION_MESSAGE_DAILY_LIMIT@PUBLIC_IP_MESSAGE_DAILY_LIMIT=$_PUBLIC_IP_MESSAGE_DAILY_LIMIT@FAMILY_CHORES_ADMIN_ROLES=$_FAMILY_CHORES_ADMIN_ROLES"
 
 # The final image tag is saved in the Artifact Registry
 images:
   - "$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-core-api:$COMMIT_SHA"
 
-# Substitute variables
+# Substitute variables.
+# Secrets are NOT here — they live in Secret Manager (see SECURITY_SETUP.md).
 substitutions:
-  # Hostname for Artifact Registry (default location for Cloud Run artifacts)
   _AR_HOSTNAME: us-central1-docker.pkg.dev
-  # Default region for deployment. CHANGE THIS if your service is in a different region!
   _REGION: us-central1
+  # Non-secret config — override per environment if needed.
+  _DB_HOST: "134.209.79.220"
+  _DB_USER: "rbryson"
+  _DB_NAME: "athena"
+  _RECAPTCHA_PROJECT_ID: "athena-476423"
+  _RECAPTCHA_SITE_KEY: "6Lc2OiAsAAAAAHZXE64gzTrmdKvvxVMjqdxUa8O5"
+  _PUBLIC_SESSION_MESSAGE_DAILY_LIMIT: "100"
+  _PUBLIC_IP_MESSAGE_DAILY_LIMIT: "300"
+  # Family Chores roles allowed to connect Athena (matched against /me.role).
+  # Adjust to match Family Chores' real parent/admin role names.
+  _FAMILY_CHORES_ADMIN_ROLES: "parent,admin,owner,guardian"
 options:
   logging: CLOUD_LOGGING_ONLY

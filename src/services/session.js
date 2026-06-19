@@ -7,14 +7,39 @@ const { buildUpdateClauses } = require("../helpers/query");
  * @param {string} ipAddress The IP address of the user.
  * @returns {Promise<string>} The UUID of the new session.
  */
-async function addSession(ipAddress) {
+async function addSession(ipAddress, options = {}) {
 	const sessionId = uuidv4();
+	const mode =
+		typeof options.mode === "string" && options.mode.trim()
+			? options.mode.trim()
+			: "teach";
+	const profileId = Number.isFinite(Number(options.profileId))
+		? Number(options.profileId)
+		: null;
+	const familyId = Number.isFinite(Number(options.familyId))
+		? Number(options.familyId)
+		: null;
+
 	await pool.query(
-		"INSERT INTO session (uuid, ip_address) VALUES (?, ?)",
-		[sessionId, ipAddress]
+		"INSERT INTO session (uuid, ip_address, mode, profile_id, family_id) VALUES (?, ?, ?, ?, ?)",
+		[sessionId, ipAddress, mode, profileId, familyId]
 	);
 
 	return sessionId;
+}
+
+/** Resolve a profile.id (and its family) from a profile uuid, or null. */
+async function resolveProfileBinding(profileUuid) {
+	if (typeof profileUuid !== "string" || !profileUuid.trim()) return {};
+	const [rows] = await pool.query(
+		`SELECT p.id AS profile_id, cp.family_id
+     FROM profile p
+     LEFT JOIN child_profiles cp ON cp.profile_id = p.id
+     WHERE p.uuid = ? LIMIT 1;`,
+		[profileUuid.trim()]
+	);
+	if (!rows.length) return {};
+	return { profileId: rows[0].profile_id, familyId: rows[0].family_id || null };
 }
 
 /**
@@ -33,6 +58,9 @@ async function getSessionByUuidAndIp(uuid, ip) {
 		s.age,
 		s.is_busy,
 		s.wisdom_points,
+		s.mode,
+		s.profile_id,
+		s.family_id,
     (
       SELECT COUNT(*) 
       FROM message m2 
@@ -68,6 +96,7 @@ async function updateSession(sessionId, updates) {
 		age: "number",
 		is_busy: "boolean",
 		wisdom_points: "number",
+		mode: "string",
 	};
 
 	try {
@@ -89,8 +118,27 @@ async function updateSession(sessionId, updates) {
 	}
 }
 
+/**
+ * Bind a previously-unbound session to a profile (and its family). Used to
+ * upgrade an anonymous/IP-bound session once we know the acting profile (e.g.
+ * a logged-in parent whose first session was created before their profile was
+ * resolved). The `profile_id IS NULL` guard means an already-bound session is
+ * never silently reassigned.
+ */
+async function bindSessionProfile(sessionId, profileId, familyId = null) {
+	if (!Number.isFinite(Number(profileId))) return { affectedRows: 0 };
+	const [result] = await pool.query(
+		`UPDATE session SET profile_id = ?, family_id = ?
+		 WHERE id = ? AND profile_id IS NULL`,
+		[Number(profileId), Number.isFinite(Number(familyId)) ? Number(familyId) : null, sessionId]
+	);
+	return result;
+}
+
 module.exports = {
 	addSession,
 	getSessionByUuidAndIp,
 	updateSession,
+	resolveProfileBinding,
+	bindSessionProfile,
 };

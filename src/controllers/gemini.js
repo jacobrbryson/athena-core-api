@@ -2,13 +2,36 @@ const sessionService = require("../services/session");
 const messageService = require("../services/message");
 const geminiService = require("../services/gemini");
 const sessionTopicService = require("../services/sessionTopic");
+const integrationService = require("../services/integration");
 
 const { generatePrompt } = require("./prompt");
 
 async function processAiResponse(session, message, clients) {
 	try {
 		const topics = await sessionTopicService.getSessionTopics(session.id);
-		const prompt = await generatePrompt(session, topics || [], message);
+
+		// If the user has linked an external app (e.g. Family Chores) and is
+		// asking about it, fetch a live snapshot to ground the reply. Failures
+		// here must never block the conversation.
+		let integrationContext = null;
+		if (
+			session.profile_id &&
+			integrationService.messageNeedsFamilyChores(message)
+		) {
+			try {
+				integrationContext =
+					await integrationService.buildFamilyChoresContext(
+						session.profile_id,
+						{ message }
+					);
+			} catch (e) {
+				console.warn("[gemini] Family Chores context failed:", e.message);
+			}
+		}
+
+		const prompt = await generatePrompt(session, topics || [], message, {
+			integrationContext,
+		});
 		const response = await geminiService.generateResponse(prompt);
 
 		if (!response) {
@@ -41,7 +64,8 @@ async function processAiResponse(session, message, clients) {
 		const aiChatUuid = await messageService.addMessage(
 			session.id,
 			false,
-			parsedResponse.response
+			parsedResponse.response,
+			session.mode
 		);
 
 		const sessionClients = clients.get(session.uuid);

@@ -9,6 +9,8 @@
 	"scripts": {
 		"dev": "nodemon src/server.js",
 		"start": "node src/server.js",
+		"migrate": "node db/migrate.js",
+		"migrate:status": "node db/migrate.js status",
 		"lint": "eslint .",
 		"lint:fix": "eslint . --fix",
 		"format": "prettier --write .",

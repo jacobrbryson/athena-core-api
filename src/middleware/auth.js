@@ -91,6 +91,26 @@ function requireAuth(req, res, next) {
 			.json({ success: false, message: "Unauthorized" });
 	}
 
+	// Child session tokens (issued for QR / friendly-code logins) carry a
+	// `kind: 'child'` claim and identify the child by profile uuid instead
+	// of a Google id.
+	if (decoded.kind === "child") {
+		const profileUuid = decoded.profile_uuid || decoded.profileUuid || null;
+		if (!profileUuid) {
+			return res
+				.status(401)
+				.json({ success: false, message: "Unauthorized" });
+		}
+		req.user = {
+			kind: "child",
+			profileUuid,
+			childProfileId: decoded.child_profile_id || null,
+			familyId: decoded.family_id || null,
+			tokenPayload: decoded,
+		};
+		return next();
+	}
+
 	const googleId =
 		decoded.googleId || decoded.google_id || decoded.sub || null;
 
@@ -101,6 +121,7 @@ function requireAuth(req, res, next) {
 	}
 
 	req.user = {
+		kind: "parent",
 		googleId,
 		tokenPayload: decoded,
 	};
@@ -108,7 +129,23 @@ function requireAuth(req, res, next) {
 	return next();
 }
 
+/**
+ * Parent-only guard. Runs requireAuth, then rejects child session tokens.
+ * Use for family management, consent, login-code, and permission routes.
+ */
+function requireParent(req, res, next) {
+	return requireAuth(req, res, () => {
+		if (req.user?.kind === "child") {
+			return res
+				.status(403)
+				.json({ success: false, message: "Parent account required" });
+		}
+		return next();
+	});
+}
+
 module.exports = {
 	requireAuth,
+	requireParent,
 	decodeUserToken,
 };

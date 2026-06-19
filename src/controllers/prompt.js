@@ -1,103 +1,147 @@
+const { getMemorySummaryForProfileId } = require("../services/memory");
+
 /**
- * Generates a system prompt and a user query for the Gemini API
- * based on the user's session data, current topic proficiencies, and message.
+ * Prompt builder. Selects a prompt *strategy* based on the session's
+ * conversation mode (Phase 5). All strategies emit the SAME JSON response
+ * schema so the downstream parser (controllers/gemini.js) is mode-agnostic:
+ * companion/coach/etc. simply always emit action "NO_CHANGE".
  *
- * @param {object} session - The user session data (e.g., { age: number }).
- * @param {Array<object>} sessionTopics - List of topics and proficiencies.
- * @param {string} message - The user's input message.
- * @returns {string} The fully constructed prompt ready for Gemini.
+ * Adding a new mode = add a strategy entry here + a row in the
+ * `conversation_mode` table. No other code changes required.
  */
-async function generatePrompt(session, sessionTopics, message) {
-	// 1. Determine the least proficient topic (excluding 100%)
+
+// Shared response schema returned by every mode.
+const RESPONSE_SCHEMA = {
+	type: "object",
+	properties: {
+		response: { type: "string" },
+		is_factually_true: { type: "boolean" },
+		action: {
+			type: "string",
+			enum: ["NEW_TOPIC", "INCREASE_PROFICIENCY", "NO_CHANGE"],
+		},
+		topic_name: { type: "string" },
+		new_proficiency: { type: "number" },
+	},
+	required: [
+		"response",
+		"is_factually_true",
+		"action",
+		"topic_name",
+		"new_proficiency",
+	],
+};
+
+function formatMemory(memories) {
+	if (!memories || !memories.length) return "No saved details yet.";
+	return memories
+		.map((m) => `- (${m.category}) ${m.key}: ${m.value}`)
+		.join("\n");
+}
+
+/** "Teach Athena" — the original learn-by-teaching strategy. */
+function buildTeachPrompt(session, sessionTopics) {
 	const teachableTopics = sessionTopics.filter((t) => t.proficiency < 100);
 	const targetTopic = teachableTopics.reduce(
-		(min, current) =>
-			min.proficiency < current.proficiency ? min : current,
-		teachableTopics[0] || {
-			topic_name: "General Knowledge",
-			proficiency: 0,
-		}
+		(min, current) => (min.proficiency < current.proficiency ? min : current),
+		teachableTopics[0] || { topic_name: "General Knowledge", proficiency: 0 }
 	);
 
-	// 2. Define the REQUIRED JSON SCHEMA for the AI's response
-	const jsonSchema = {
-		type: "object",
-		properties: {
-			// The AI's conversational response to the user.
-			response: { type: "string" },
-			// The AI's evaluation of the statement's truthiness.
-			is_factually_true: { type: "boolean" }, // NEW PROPERTY
-			// The action the AI recommends to update the knowledge base.
-			action: {
-				type: "string",
-				enum: ["NEW_TOPIC", "INCREASE_PROFICIENCY", "NO_CHANGE"],
-			},
-			// The name of the topic to be updated or added.
-			topic_name: { type: "string" },
-			// If INCREASING: The new proficiency level (0-100).
-			// If NEW_TOPIC: The initial proficiency (e.g., 5, 10).
-			// If NO_CHANGE: Should be -1.
-			new_proficiency: { type: "number" },
-		},
-		required: [
-			"response",
-			"is_factually_true", // REQUIRED UPDATE
-			"action",
-			"topic_name",
-			"new_proficiency",
-		],
-	};
-
-	// 3. Construct the detailed System Prompt
-	const systemPrompt = `
-You are an AI named "Gemini Learner," designed to engage in playful, educational conversations and manage a user's knowledge base.
+	return `
+You are an AI named "Athena," designed to engage in playful, educational conversations and manage a user's knowledge base.
 Your primary goal is to **learn and update** the provided topic proficiency list, but **only from factually true statements**.
 
 # Constraints and Role
-1.  **Strict Output Format:** You MUST return a single, valid JSON object that adheres precisely to the following JSON schema: ${JSON.stringify(
-		jsonSchema,
+1.  **Strict Output Format:** You MUST return a single, valid JSON object that adheres precisely to this JSON schema: ${JSON.stringify(
+		RESPONSE_SCHEMA,
 		null,
 		2
-	)}. Do not include any text, headers, or conversation outside of the JSON.
-2.  **Learning Focus:** The user is **${
-		session.age
-	}** years old. Your current least proficient, non-mastered topic is **"${
-		targetTopic.topic_name
-	}"** (current proficiency: **${
-		targetTopic.proficiency
-	}%**). Strive to steer the conversation and learning toward this area.
-3.  **Topic Update Logic (The New Rule):**
-    * **Truthiness Check:** First, evaluate the user's message. Set **\`is_factually_true: true\`** if the statement is a verifiable fact/definition. Set it to **\`false\`** if it is untrue, an opinion, or speculative.
-    * **Teachability:** If the user's message is a clear fact, definition, or explanation that is **relevant** to the current topic list or introduces a new, distinct concept, you are being taught.
-    * **Action Logic:**
-      * **CRUCIAL RULE:** If **\`is_factually_true\` is false**, you MUST set \`action: "NO_CHANGE"\`. Do not learn untrue facts.
-      * If **\`is_factually_true\` is true** AND the message introduces a **brand new concept**, set \`action: "NEW_TOPIC"\`, and suggest a \`topic_name\` and a small initial \`new_proficiency\` (e.g., 5-10).
-      * If **\`is_factually_true\` is true** AND the message provides information that **directly improves** your understanding of an existing topic (especially "${
-				targetTopic.topic_name
-			}"), set \`action: "INCREASE_PROFICIENCY"\` and propose a realistic \`new_proficiency\` (increment by 1-5, never exceeding 100).
-      * If the message is a greeting, small talk, an unclear question, or not a "teachable" concept (even if true), set \`action: "NO_CHANGE"\`, \`topic_name: ""\`, and \`new_proficiency: -1\`.
-4.  **"I don't know" Response:** If the message is not a teachable concept or is factually untrue, your \`response\` string must be a playful variation of "I don't know what that means" or "That's not something I can learn right now," but keep the persona of a learner.
+	)}. Do not include any text outside of the JSON.
+2.  **Learning Focus:** The user is **${session.age}** years old. Your current least proficient, non-mastered topic is **"${targetTopic.topic_name}"** (current proficiency: **${targetTopic.proficiency}%**). Steer learning toward this area.
+3.  **Topic Update Logic:**
+    * **Truthiness Check:** Set **\`is_factually_true: true\`** if the statement is a verifiable fact; **\`false\`** if untrue/opinion/speculative.
+    * **CRUCIAL:** If \`is_factually_true\` is false, you MUST set \`action: "NO_CHANGE"\`.
+    * If true AND a brand new concept, set \`action: "NEW_TOPIC"\` with a \`topic_name\` and small \`new_proficiency\` (5-10).
+    * If true AND it improves an existing topic, set \`action: "INCREASE_PROFICIENCY"\` with a realistic \`new_proficiency\` (increment 1-5, max 100).
+    * Otherwise set \`action: "NO_CHANGE"\`, \`topic_name: ""\`, \`new_proficiency: -1\`.
+4.  **"I don't know" Response:** If not teachable or untrue, your \`response\` should be a playful "I don't know what that means" while staying in the persona of a learner.
 
 # Current State
 * User Age: ${session.age}
 * Current Topics: ${JSON.stringify(sessionTopics)}
 `;
+}
 
-	// 4. Construct the final prompt structure
+/** "Companion" — open-ended, friendly conversation (Phase 5). */
+function buildCompanionPrompt(session, memorySummary) {
+	return `
+You are "Athena," the user's AI learning companion — warm, friendly, and curious — talking with a **${session.age}**-year-old.
+The person is chatting directly with you, Athena. This is **Companion Mode**: open-ended conversation — chatting about
+interests, telling short stories, brainstorming, answering questions, and casual back-and-forth. Unlike Learning Mode,
+you are NOT grading or learning a knowledge base here; you simply formulate helpful, friendly replies and respond as Athena.
+
+# Output Format
+You MUST return a single valid JSON object matching this schema: ${JSON.stringify(
+		RESPONSE_SCHEMA,
+		null,
+		2
+	)}.
+Put your conversational reply in \`response\`. In Companion Mode you ALWAYS set:
+\`action: "NO_CHANGE"\`, \`topic_name: ""\`, \`new_proficiency: -1\`, \`is_factually_true: true\`.
+Do not include any text outside the JSON.
+
+# Style
+- Age-appropriate, kind, encouraging, and safe. Keep replies fairly short and easy to read.
+- Be genuinely interested, but do NOT end every reply with a question. Answer what was asked and stop. Only ask a follow-up on the rare occasion it is genuinely needed (e.g. you need a detail to help) — never as a reflexive conversational filler.
+- Never request personal/contact information. Avoid unsafe, scary, or adult topics; redirect gently.
+
+# What you remember about this user
+${formatMemory(memorySummary)}
+`;
+}
+
+// Strategy registry keyed by mode. Future modes (quest/coach/guardians)
+// register their own builder; unknown modes fall back to companion.
+const STRATEGIES = {
+	teach: async (session, topics) => buildTeachPrompt(session, topics),
+	companion: async (session) => {
+		const memory = session.profile_id
+			? await getMemorySummaryForProfileId(session.profile_id)
+			: [];
+		return buildCompanionPrompt(session, memory);
+	},
+};
+
+async function generatePrompt(session, sessionTopics, message, options = {}) {
+	const mode = session?.mode || "teach";
+	const builder = STRATEGIES[mode] || STRATEGIES.companion;
+	let systemPrompt = await builder(session, sessionTopics || []);
+
+	// Connected-app context (e.g. live Family Chores data). Appended for any
+	// mode so Athena can answer "what chores do I have?" / "how many coins?".
+	if (options.integrationContext) {
+		systemPrompt += `\n\n# Connected App Data\n${options.integrationContext}`;
+	}
+
 	const contents = [
-		{
-			role: "system",
-			parts: [{ text: systemPrompt }],
-		},
+		{ role: "system", parts: [{ text: systemPrompt }] },
 		{
 			role: "user",
-			parts: [{ text: `User message to learn from: "${message}"` }],
+			parts: [
+				{
+					text:
+						mode === "teach"
+							? `User message to learn from: "${message}"`
+							: `User says: "${message}"`,
+				},
+			],
 		},
 	];
 
-	return JSON.stringify(contents); // Return the fully structured array
+	return JSON.stringify(contents);
 }
 
 module.exports = {
 	generatePrompt,
+	RESPONSE_SCHEMA,
 };

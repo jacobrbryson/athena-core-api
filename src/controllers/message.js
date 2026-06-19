@@ -88,7 +88,7 @@ async function addMessage(req, res, clients) {
 			});
 		}
 
-		await messageService.addMessage(session.id, true, text);
+		await messageService.addMessage(session.id, true, text, session.mode);
 
 		await sessionService.updateSession(session.id, { is_busy: true });
 

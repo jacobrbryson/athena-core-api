@@ -65,6 +65,21 @@ async function generateResponse(contents, systemPrompt = null) {
 	}
 }
 
+/**
+ * Low-level generateContent passthrough used for the tool-calling phase.
+ * Unlike generateResponse (which forces JSON output), this returns the raw
+ * SDK response so callers can inspect functionCalls / candidate content and
+ * drive a manual function-calling loop. `config` is passed straight through
+ * (e.g. `{ tools: [{ functionDeclarations }] }`).
+ */
+async function generateContentRaw(contents, config = {}) {
+	if (!Array.isArray(contents)) {
+		throw new Error("generateContentRaw requires a contents array.");
+	}
+	return ai.models.generateContent({ model: MODEL, contents, config });
+}
+
 module.exports = {
 	generateResponse,
+	generateContentRaw,
 };
