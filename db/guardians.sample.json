@@ -1,0 +1,18 @@
+[
+  {
+    "guardian_id": "10000001",
+    "guardian_secret": "AB12CD",
+    "display_name": "Sample Lake Norman Guardian",
+    "adventure_key": "lake_norman_guardians",
+    "participant_type": "guardian",
+    "is_active": true
+  },
+  {
+    "guardian_id": "20000002",
+    "guardian_secret": "GH34IJ",
+    "display_name": "Sample Rescue Ratatouille Civilian Team",
+    "adventure_key": "rescue_ratatouille",
+    "participant_type": "civilian_group",
+    "is_active": true
+  }
+]

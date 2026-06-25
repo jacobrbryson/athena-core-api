@@ -1,0 +1,18 @@
+[
+  {
+    "guardian_id": "12345678",
+    "guardian_secret": "A1B2C3",
+    "display_name": "Test Guardian",
+    "adventure_key": "lake_norman_guardians",
+    "participant_type": "guardian",
+    "is_active": true
+  },
+  {
+    "guardian_id": "87654321",
+    "guardian_secret": "Z9Y8X7",
+    "display_name": "Civilian Team",
+    "adventure_key": "rescue_ratatouille",
+    "participant_type": "civilian_group",
+    "is_active": true
+  }
+]

@@ -7,6 +7,7 @@ const {
 	getLearningMoments,
 } = require("../controllers/sessionLearningMoment");
 const { validateCode } = require("../controllers/childAuth");
+const { validateGuardian } = require("../controllers/guardianAuth");
 const { listModes } = require("../services/conversationMode");
 const profileRouter = require("./profile");
 const parentRouter = require("./parent");
@@ -42,6 +43,11 @@ module.exports = (clients) => {
 
 	// Public: child login-code redeem (proxy mints the JWT after this passes).
 	router.post("/auth/child/validate", express.json(), validateCode);
+
+	// Public: Guardian credential validation (proxy mints the JWT after this
+	// passes). Returns a generic error on failure — never reveals which part
+	// of the credential was wrong.
+	router.post("/auth/guardian/validate", express.json(), validateGuardian);
 
 	router.use("/profile", profileRouter);
 	router.use("/parent", parentRouter);

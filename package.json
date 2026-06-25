@@ -11,6 +11,8 @@
 		"start": "node src/server.js",
 		"migrate": "node db/migrate.js",
 		"migrate:status": "node db/migrate.js status",
+		"seed:guardians": "node db/seed-guardians.js",
+		"seed:guardians:test": "node db/seed-guardians.js db/guardians.test.json",
 		"lint": "eslint .",
 		"lint:fix": "eslint . --fix",
 		"format": "prettier --write .",
