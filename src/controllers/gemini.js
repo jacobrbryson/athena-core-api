@@ -6,7 +6,7 @@ const integrationService = require("../services/integration");
 
 const { generatePrompt } = require("./prompt");
 
-async function processAiResponse(session, message, clients) {
+async function processAiResponse(session, message, clients, ctx = {}) {
 	try {
 		const topics = await sessionTopicService.getSessionTopics(session.id);
 
@@ -31,6 +31,8 @@ async function processAiResponse(session, message, clients) {
 
 		const prompt = await generatePrompt(session, topics || [], message, {
 			integrationContext,
+			guardian: ctx.guardian,
+			onboarding: ctx.onboarding,
 		});
 		const response = await geminiService.generateResponse(prompt);
 

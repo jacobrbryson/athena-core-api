@@ -1,2 +1,8 @@
 .env
 node_modules
+
+# Campaign ops — never commit player data or one-off scripts
+db/guardians.lake-norman-2025.json
+db/seed-lake-norman-2025.js
+db/reset-campaign.js
+db/issue-guardian-token.js

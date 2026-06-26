@@ -7,7 +7,7 @@ const {
 	getLearningMoments,
 } = require("../controllers/sessionLearningMoment");
 const { validateCode } = require("../controllers/childAuth");
-const { validateGuardian } = require("../controllers/guardianAuth");
+const { validateGuardian, redeemGuardianToken } = require("../controllers/guardianAuth");
 const { listModes } = require("../services/conversationMode");
 const profileRouter = require("./profile");
 const parentRouter = require("./parent");
@@ -48,6 +48,10 @@ module.exports = (clients) => {
 	// passes). Returns a generic error on failure — never reveals which part
 	// of the credential was wrong.
 	router.post("/auth/guardian/validate", express.json(), validateGuardian);
+
+	// Public: redeem a single-use QR login token (proxy mints the JWT after this
+	// passes). Same generic-error contract as /validate.
+	router.post("/auth/guardian/redeem-token", express.json(), redeemGuardianToken);
 
 	router.use("/profile", profileRouter);
 	router.use("/parent", parentRouter);

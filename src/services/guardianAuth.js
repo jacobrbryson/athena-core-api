@@ -1,5 +1,87 @@
 const pool = require("../helpers/db");
 const { verifySecret } = require("../helpers/secret");
+const { hashToken } = require("../helpers/loginToken");
+
+/**
+ * Resolve the Athena profile.id for a guardian's email address.
+ * Returns null if the guardian has no email or no matching profile exists.
+ * Never throws — a missing link is not an auth failure.
+ */
+async function resolveLinkedProfileId(email) {
+	if (!email) return null;
+	try {
+		const [rows] = await pool.query(
+			`SELECT id FROM profile WHERE email = ? AND deleted_at IS NULL LIMIT 1;`,
+			[email.toLowerCase().trim()]
+		);
+		return rows[0] ? rows[0].id : null;
+	} catch (err) {
+		console.error("[guardianAuth] resolveLinkedProfileId failed:", err.message);
+		return null;
+	}
+}
+
+/**
+ * Determine the effective adventure for a guardian login.
+ *
+ * Rules:
+ *  1. Load all adventures the guardian is enrolled in.
+ *  2. For any enrolled adventure that is still 'pending', atomically flip it
+ *     to 'active' — this guardian becomes the trigger (first login wins).
+ *  3. If rescue_ratatouille is now active and the guardian is enrolled in it,
+ *     override the returned adventure_key so the session lands there.
+ *  4. Otherwise return the credential's primary adventure_key unchanged.
+ *
+ * Never throws — a state resolution failure falls back to the primary key.
+ */
+async function resolveActiveAdventure(guardianId, primaryAdventureKey) {
+	try {
+		// Load all enrolled adventure keys for this guardian.
+		const [enrolled] = await pool.query(
+			`SELECT adventure_key FROM guardian_adventure WHERE guardian_id = ?;`,
+			[guardianId]
+		);
+		const enrolledKeys = enrolled.map((r) => r.adventure_key);
+
+		// Load the current state for each enrolled adventure in one query.
+		if (!enrolledKeys.length) return primaryAdventureKey;
+		const placeholders = enrolledKeys.map(() => "?").join(",");
+		const [states] = await pool.query(
+			`SELECT adventure_key, state FROM adventure_state WHERE adventure_key IN (${placeholders});`,
+			enrolledKeys
+		);
+		const stateMap = Object.fromEntries(states.map((r) => [r.adventure_key, r.state]));
+
+		// Attempt to trigger any pending adventure this guardian is enrolled in.
+		for (const key of enrolledKeys) {
+			if (stateMap[key] === "pending") {
+				const [result] = await pool.query(
+					`UPDATE adventure_state
+           SET state = 'active', activated_at = NOW(), activated_by_guardian_id = ?
+           WHERE adventure_key = ? AND state = 'pending';`,
+					[guardianId, key]
+				);
+				if (result.affectedRows === 1) {
+					stateMap[key] = "active";
+					console.log(`[guardianAuth] Adventure '${key}' activated by guardian ${guardianId}`);
+				}
+			}
+		}
+
+		// Override to ratatouille if enrolled and it is now active (and not ended).
+		if (
+			enrolledKeys.includes("rescue_ratatouille") &&
+			stateMap["rescue_ratatouille"] === "active"
+		) {
+			return "rescue_ratatouille";
+		}
+
+		return primaryAdventureKey;
+	} catch (err) {
+		console.error("[guardianAuth] resolveActiveAdventure failed:", err.message);
+		return primaryAdventureKey;
+	}
+}
 
 /**
  * Guardian authentication service.
@@ -54,7 +136,7 @@ async function logAttempt({ guardianId, success, ip, userAgent }) {
  */
 async function validateCredentials({ guardianId, guardianSecret, ip, userAgent }) {
 	const id = typeof guardianId === "string" ? guardianId.trim() : "";
-	const secret = typeof guardianSecret === "string" ? guardianSecret.trim() : "";
+	const secret = typeof guardianSecret === "string" ? guardianSecret.trim().toUpperCase() : "";
 
 	// Shape validation first. Still logged as a failed attempt.
 	if (!GUARDIAN_ID_RE.test(id) || !GUARDIAN_SECRET_RE.test(secret)) {
@@ -63,7 +145,7 @@ async function validateCredentials({ guardianId, guardianSecret, ip, userAgent }
 	}
 
 	const [rows] = await pool.query(
-		`SELECT id, guardian_id, guardian_secret_hash, display_name,
+		`SELECT id, guardian_id, guardian_secret_hash, display_name, email, city,
             adventure_key, participant_type, is_active, last_login_at
      FROM guardian_credential
      WHERE guardian_id = ?
@@ -92,13 +174,142 @@ async function validateCredentials({ guardianId, guardianSecret, ip, userAgent }
 	);
 	await logAttempt({ guardianId: id, success: true, ip, userAgent });
 
+	const [effectiveAdventure, linkedProfileId] = await Promise.all([
+		resolveActiveAdventure(row.guardian_id, row.adventure_key),
+		resolveLinkedProfileId(row.email),
+	]);
+
 	return {
 		credential_id: row.id,
 		guardian_id: row.guardian_id,
 		display_name: row.display_name,
-		adventure_key: row.adventure_key,
+		email: row.email || null,
+		city: row.city || null,
+		adventure_key: effectiveAdventure,
 		participant_type: row.participant_type,
 		is_first_login: isFirstLogin,
+		linked_profile_id: linkedProfileId,
+	};
+}
+
+/**
+ * Redeem a QR login token.
+ *
+ * Tries two paths in order:
+ *
+ *  1. Single-use token (guardian_login_token) — issued by issue-guardian-token.js
+ *     for one-off manual links. Consumed atomically on first redeem; expires.
+ *
+ *  2. Permanent QR token (guardian_credential.qr_token_hash) — generated once at
+ *     seed time and encoded into printed QR codes. Reusable, never expires, never
+ *     changes so the printed URL stays valid across campaign resets.
+ *
+ * Only the SHA-256 hash of the token is stored in either case; the plaintext
+ * lives only in the QR code. Same generic error and attempt logging as the
+ * password flow.
+ *
+ * @returns {Promise<object>} the guardian identity on success.
+ * @throws {Error} with message === GENERIC_ERROR on any failure.
+ */
+async function redeemLoginToken({ token, ip, userAgent }) {
+	const raw = typeof token === "string" ? token.trim() : "";
+	if (!raw) {
+		await logAttempt({ guardianId: null, success: false, ip, userAgent });
+		throw new Error(GENERIC_ERROR);
+	}
+
+	const tokenHash = hashToken(raw);
+
+	// Atomically consume the token. Only an unused, unexpired token is claimed,
+	// and only the single winning redeemer sees affectedRows === 1.
+	const [consume] = await pool.query(
+		`UPDATE guardian_login_token
+       SET used_at = NOW()
+     WHERE token_hash = ? AND used_at IS NULL AND expires_at > NOW();`,
+		[tokenHash]
+	);
+
+	if (consume && consume.affectedRows === 1) {
+		// Single-use token matched — load the credential it points at.
+		const [rows] = await pool.query(
+			`SELECT c.id, c.guardian_id, c.display_name, c.email, c.city,
+              c.adventure_key, c.participant_type, c.is_active, c.last_login_at
+       FROM guardian_login_token t
+       JOIN guardian_credential c ON c.id = t.credential_id
+       WHERE t.token_hash = ?
+       LIMIT 1;`,
+			[tokenHash]
+		);
+		const row = rows[0];
+		if (!row || !row.is_active) {
+			await logAttempt({ guardianId: row?.guardian_id ?? null, success: false, ip, userAgent });
+			throw new Error(GENERIC_ERROR);
+		}
+		return await _buildIdentity(row, { ip, userAgent });
+	}
+
+	// --- Path 2: permanent QR token (guardian_credential.qr_token_hash) ---
+	// Printed QR codes embed a permanent token that never changes across resets.
+	const [rows] = await pool.query(
+		`SELECT id, guardian_id, display_name, email, city,
+            adventure_key, participant_type, is_active, last_login_at,
+            qr_token_first_used_at
+     FROM guardian_credential
+     WHERE qr_token_hash = ?
+     LIMIT 1;`,
+		[tokenHash]
+	);
+	const row = rows[0];
+
+	if (!row || !row.is_active) {
+		await logAttempt({ guardianId: null, success: false, ip, userAgent });
+		throw new Error(GENERIC_ERROR);
+	}
+
+	// First use: sign in and stamp the timestamp.
+	// Subsequent scans: don't issue a session — tell the client to redirect to
+	// the manual gate so the Guardian enters their secret (unless the device
+	// already has a valid session, which the frontend handles before calling us).
+	if (row.qr_token_first_used_at !== null) {
+		await logAttempt({ guardianId: row.guardian_id, success: false, ip, userAgent });
+		const err = new Error('qr_gate_redirect');
+		err.redirectGuardianId = row.guardian_id;
+		throw err;
+	}
+
+	await pool.query(
+		`UPDATE guardian_credential SET qr_token_first_used_at = NOW() WHERE id = ?;`,
+		[row.id]
+	);
+
+	return await _buildIdentity(row, { ip, userAgent });
+}
+
+/** Shared post-auth identity builder used by all redeem paths. */
+async function _buildIdentity(row, { ip, userAgent }) {
+	const isFirstLogin = row.last_login_at == null;
+
+	await pool.query(
+		`UPDATE guardian_credential SET last_login_at = NOW() WHERE id = ?;`,
+		[row.id]
+	);
+	await logAttempt({ guardianId: row.guardian_id, success: true, ip, userAgent });
+
+	const [effectiveAdventure, linkedProfileId] = await Promise.all([
+		resolveActiveAdventure(row.guardian_id, row.adventure_key),
+		resolveLinkedProfileId(row.email),
+	]);
+
+	return {
+		credential_id: row.id,
+		guardian_id: row.guardian_id,
+		display_name: row.display_name,
+		email: row.email || null,
+		city: row.city || null,
+		adventure_key: effectiveAdventure,
+		participant_type: row.participant_type,
+		is_first_login: isFirstLogin,
+		linked_profile_id: linkedProfileId,
 	};
 }
 
@@ -107,5 +318,6 @@ module.exports = {
 	GUARDIAN_ID_RE,
 	GUARDIAN_SECRET_RE,
 	validateCredentials,
+	redeemLoginToken,
 	logAttempt,
 };

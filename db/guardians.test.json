@@ -2,7 +2,7 @@
   {
     "guardian_id": "12345678",
     "guardian_secret": "A1B2C3",
-    "display_name": "Test Guardian",
+    "display_name": "John Doe",
     "adventure_key": "lake_norman_guardians",
     "participant_type": "guardian",
     "is_active": true
