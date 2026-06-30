@@ -40,6 +40,7 @@ Connection is read from the same env vars as the app (`DB_HOST`, `DB_USER`,
 | `0007_guardian_player_profile` | Adds `email` and `city` columns to `guardian_credential`. Adds `guardian_adventure` join table so a player can be enrolled in multiple adventures. Back-fills existing credentials into `guardian_adventure`. |
 | `0008_adventure_state` | Per-adventure lifecycle table (`adventure_state`). `lake_norman_guardians` is seeded as `active`; `rescue_ratatouille` starts as `pending` and is activated atomically by the first enrolled player who signs in. |
 | `0009_guardian_permanent_qr` | Adds `qr_token_hash` to `guardian_credential`. Permanent, reusable QR tokens whose plaintext never changes — safe to print on physical cards. The `/q/` route checks this after the single-use token table so both flows co-exist. |
+| `0012_adventure_schedule` | Adds campaign start scheduling and configures Rescue Ratatouille for July 6–12, 2026 (America/New_York). |
 
 See [`docs/architecture/family-system.md`](../../../docs/architecture/family-system.md)
 for the data-model rationale and the deprecation path for `profile_child`.
@@ -139,12 +140,12 @@ SET state        = 'active',
 WHERE adventure_key = 'rescue_ratatouille';
 ```
 
-To set a **scheduled end date** (informational — the app does not yet auto-end
-based on this, but it is available for future use):
+To set a campaign schedule (stored in UTC; the end is exclusive):
 
 ```sql
 UPDATE adventure_state
-SET scheduled_end_at = '2025-07-10 23:59:59'
+SET scheduled_start_at = '2026-07-06 04:00:00',
+    scheduled_end_at   = '2026-07-13 04:00:00'
 WHERE adventure_key = 'rescue_ratatouille';
 ```
 

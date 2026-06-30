@@ -26,11 +26,10 @@ async function resolveLinkedProfileId(email) {
  *
  * Rules:
  *  1. Load all adventures the guardian is enrolled in.
- *  2. For any enrolled adventure that is still 'pending', atomically flip it
- *     to 'active' — this guardian becomes the trigger (first login wins).
- *  3. If rescue_ratatouille is now active and the guardian is enrolled in it,
- *     override the returned adventure_key so the session lands there.
- *  4. Otherwise return the credential's primary adventure_key unchanged.
+ *  2. End campaigns whose scheduled window has elapsed.
+ *  3. Activate pending campaigns only inside their scheduled window.
+ *  4. Route enrolled players to Rescue Ratatouille only while it is active
+ *     and inside that window; otherwise retain their primary adventure.
  *
  * Never throws — a state resolution failure falls back to the primary key.
  */
@@ -47,31 +46,61 @@ async function resolveActiveAdventure(guardianId, primaryAdventureKey) {
 		if (!enrolledKeys.length) return primaryAdventureKey;
 		const placeholders = enrolledKeys.map(() => "?").join(",");
 		const [states] = await pool.query(
-			`SELECT adventure_key, state FROM adventure_state WHERE adventure_key IN (${placeholders});`,
+			`SELECT adventure_key, state,
+              (scheduled_start_at IS NULL OR scheduled_start_at <= UTC_TIMESTAMP()) AS has_started,
+              (scheduled_end_at IS NOT NULL AND scheduled_end_at <= UTC_TIMESTAMP()) AS has_ended
+       FROM adventure_state
+       WHERE adventure_key IN (${placeholders});`,
 			enrolledKeys
 		);
-		const stateMap = Object.fromEntries(states.map((r) => [r.adventure_key, r.state]));
+		const stateMap = Object.fromEntries(states.map((r) => [r.adventure_key, r]));
 
-		// Attempt to trigger any pending adventure this guardian is enrolled in.
+		// End campaigns as soon as their exclusive scheduled end time passes.
 		for (const key of enrolledKeys) {
-			if (stateMap[key] === "pending") {
+			const adventure = stateMap[key];
+			if (adventure && adventure.state !== "ended" && adventure.has_ended) {
+				await pool.query(
+					`UPDATE adventure_state
+           SET state = 'ended', ended_at = UTC_TIMESTAMP()
+           WHERE adventure_key = ? AND state <> 'ended'
+             AND scheduled_end_at IS NOT NULL
+             AND scheduled_end_at <= UTC_TIMESTAMP();`,
+					[key]
+				);
+				adventure.state = "ended";
+			}
+		}
+
+		// Trigger pending campaigns only after their start and before their end.
+		for (const key of enrolledKeys) {
+			const adventure = stateMap[key];
+			if (
+				adventure &&
+				adventure.state === "pending" &&
+				adventure.has_started &&
+				!adventure.has_ended
+			) {
 				const [result] = await pool.query(
 					`UPDATE adventure_state
-           SET state = 'active', activated_at = NOW(), activated_by_guardian_id = ?
-           WHERE adventure_key = ? AND state = 'pending';`,
+           SET state = 'active', activated_at = UTC_TIMESTAMP(), activated_by_guardian_id = ?
+           WHERE adventure_key = ? AND state = 'pending'
+             AND (scheduled_start_at IS NULL OR scheduled_start_at <= UTC_TIMESTAMP())
+             AND (scheduled_end_at IS NULL OR scheduled_end_at > UTC_TIMESTAMP());`,
 					[guardianId, key]
 				);
 				if (result.affectedRows === 1) {
-					stateMap[key] = "active";
+					adventure.state = "active";
 					console.log(`[guardianAuth] Adventure '${key}' activated by guardian ${guardianId}`);
 				}
 			}
 		}
 
-		// Override to ratatouille if enrolled and it is now active (and not ended).
+		const ratatouille = stateMap.rescue_ratatouille;
 		if (
 			enrolledKeys.includes("rescue_ratatouille") &&
-			stateMap["rescue_ratatouille"] === "active"
+			ratatouille?.state === "active" &&
+			ratatouille.has_started &&
+			!ratatouille.has_ended
 		) {
 			return "rescue_ratatouille";
 		}
@@ -320,4 +349,5 @@ module.exports = {
 	validateCredentials,
 	redeemLoginToken,
 	logAttempt,
+	resolveActiveAdventure,
 };
