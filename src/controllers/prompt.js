@@ -22,6 +22,9 @@ const RESPONSE_SCHEMA = {
 		},
 		topic_name: { type: "string" },
 		new_proficiency: { type: "number" },
+		// Optional. Set true only when a Guardian indicates they are reporting /
+		// locking in their family's mission piece (see Current Mission below).
+		mission_report: { type: "boolean" },
 	},
 	required: [
 		"response",
@@ -79,6 +82,39 @@ const ADVENTURE_LABELS = {
 	rescue_ratatouille: "Rescue Ratatouille",
 };
 
+// The physical "Guardian kit" each player received in their box, keyed by
+// adventure. Lets Athena reference the right real-world tool when guiding a
+// mission or puzzle. Campaign-specific — Lake Norman Guardians get this kit;
+// other adventures define their own (or none).
+const ADVENTURE_KITS = {
+	lake_norman_guardians: [
+		"a canvas bag to carry it all",
+		"a sealed letter",
+		"a Guardian ID card",
+		"a paper clip",
+		"two mysterious coins",
+		"a field notebook",
+		"a blacklight",
+		"a pen",
+		"a compass",
+		"a magnifying glass",
+	],
+};
+
+/**
+ * Tells Athena what physical tools the Guardian has on hand, so she can suggest
+ * the right one during a puzzle without reciting the inventory or spoiling a
+ * solution. Returns "" for adventures with no defined kit.
+ */
+function buildKitKnowledge(adventureKey) {
+	const kit = ADVENTURE_KITS[adventureKey];
+	if (!kit) return "";
+	return `
+# The Guardian's field kit
+Every Guardian on this adventure opened a box containing: ${kit.join(", ")}. You know they have these tools on hand. When it genuinely helps a mission or puzzle, you may point them to the right one — the **blacklight** reveals messages written in invisible ink, the **magnifying glass** uncovers tiny details too small to read, the **compass** gives bearings and directions, the **notebook and pen** are for recording and sharing clues, the **paper clip** can pry open or reset small things, and the **two coins** are mysterious puzzle pieces whose meaning is still unfolding. Do not recite the whole list unprompted, and never hand over a puzzle's full solution — nudge with curiosity and let the Guardians do the discovering.
+`;
+}
+
 /**
  * Guardian-Network persona, layered onto Companion Mode for guardian sessions.
  * Athena becomes the in-fiction AI guide (warm, curious, lightly mysterious)
@@ -106,6 +142,63 @@ You are speaking directly with ${
 			: ""
 	}${city ? ` This Guardian is from **${city}** — you may weave this in to make the conversation feel personal, but only when it fits naturally.` : ""}
 Choose an intelligent, age-appropriate tone for a curious young explorer — be vivid and encouraging, and never talk down to them. Keep replies short. Speak as a real character who is genuinely glad to be talking with them.
+${buildKitKnowledge(guardian?.adventureKey)}`;
+}
+
+/**
+ * Current-mission steering, layered onto a guardian session. Mission copy lives
+ * in the Guardians app (missions.json) and is sent with each message, so Athena
+ * can nudge the Guardian toward the active objective in her own words without it
+ * being hard-coded here. For Mission 1 this steers her to encourage the Guardian
+ * to reach out to other Guardians whose families haven't made contact yet.
+ */
+function buildMissionNudge(mission) {
+	if (!mission || !mission.directive) return "";
+
+	const lines = [];
+	const pending = Array.isArray(mission.pendingFamilies)
+		? mission.pendingFamilies.filter((f) => typeof f === "string" && f.trim())
+		: [];
+	if (pending.length) {
+		lines.push(
+			`Families who have NOT made contact yet: ${pending.join(", ")}. Encourage this Guardian to reach out to them specifically when it fits naturally.`
+		);
+	}
+
+	// Convergence (Mission 2): this family holds one piece of the meeting place;
+	// the destination is only revealed once every family has reported in.
+	if (mission.fragment) {
+		lines.push(
+			`This Guardian's family holds one piece of the path: "${mission.fragment}". If they ask what their piece is, what to do, or how to help, tell them their piece is "${mission.fragment}" and that they should report it to you and gather the other families' pieces — no family can find the destination alone.`
+		);
+		if (!mission.complete) {
+			lines.push(
+				`When the Guardian clearly says they are reporting, sharing, or locking in their piece (e.g. "my piece is in", "I'll report it", "${mission.fragment} is mine"), set "mission_report": true in your JSON so the Network records it, and warmly confirm their piece is now in. Otherwise leave "mission_report" false.`
+			);
+		}
+	}
+	if (mission.reporting) {
+		const { reported, total } = mission.reporting;
+		if (Number.isFinite(reported) && Number.isFinite(total)) {
+			lines.push(
+				`So far ${reported} of ${total} families have reported in.${
+					Array.isArray(mission.reporting.pending) && mission.reporting.pending.length
+						? ` Still waiting on: ${mission.reporting.pending.join(", ")}.`
+						: ""
+				}`
+			);
+		}
+	}
+	if (mission.complete && mission.destination) {
+		lines.push(
+			`Every family has reported — the path is revealed. The gathering point is ${mission.destination}. Celebrate this, and tell them to use their compass to find which way it lies from their own town.`
+		);
+	}
+
+	return `
+# Current Mission${mission.title ? `: ${mission.title}` : ""}
+${mission.directive}${lines.length ? "\n" + lines.join("\n") : ""}
+Weave this in gently and only when it fits — never nag, and don't repeat it every message.
 `;
 }
 
@@ -130,7 +223,7 @@ Your previous line (shown above) asked whether they brought their notebook. Read
 
 /** "Companion" — open-ended, friendly conversation (Phase 5). */
 function buildCompanionPrompt(session, memorySummary, options = {}) {
-	const { guardian, onboarding } = options;
+	const { guardian, onboarding, mission } = options;
 	// Guardian sessions don't carry a real age; the persona block sets the tone
 	// instead, so we avoid the literal "5-year-old" framing for them.
 	const audience = guardian
@@ -163,6 +256,9 @@ ${formatMemory(memorySummary)}
 `;
 
 	if (guardian) prompt += buildGuardianPersona(guardian);
+	// Mission steering applies to guardian sessions, but not during the scripted
+	// onboarding beat (first contact should stay focused on the channel check).
+	if (guardian && mission && !onboarding) prompt += buildMissionNudge(mission);
 	if (onboarding) prompt += buildOnboardingNudge(onboarding);
 	return prompt;
 }
@@ -196,9 +292,20 @@ async function generatePrompt(session, sessionTopics, message, options = {}) {
 
 	const contents = [{ role: "system", parts: [{ text: systemPrompt }] }];
 
-	// The model otherwise receives no conversation history. During onboarding we
-	// supply Athena's immediately-preceding (scripted) line as a real `model`
-	// turn so she responds with genuine context to the Guardian's reply.
+	// Prior conversation so Athena has real continuity instead of treating every
+	// message as a brand-new conversation. `history` is the transcript BEFORE the
+	// current message (oldest → newest), already capped by the caller.
+	if (Array.isArray(options.history)) {
+		for (const m of options.history) {
+			const text = typeof m?.text === "string" ? m.text.trim() : "";
+			if (!text) continue;
+			contents.push({ role: m.is_human ? "user" : "model", parts: [{ text }] });
+		}
+	}
+
+	// During onboarding we supply Athena's immediately-preceding (scripted) line
+	// as a real `model` turn so she responds with genuine context to the
+	// Guardian's reply. (It isn't persisted, so it won't appear in `history`.)
 	const priorLine = options.onboarding?.priorAthenaLine;
 	if (typeof priorLine === "string" && priorLine.trim()) {
 		contents.push({ role: "model", parts: [{ text: priorLine.trim() }] });

@@ -8,6 +8,11 @@ const {
 } = require("../controllers/sessionLearningMoment");
 const { validateCode } = require("../controllers/childAuth");
 const { validateGuardian, redeemGuardianToken } = require("../controllers/guardianAuth");
+const {
+	getMissionFamilies,
+	getMissionState,
+	postMissionContribute,
+} = require("../controllers/mission");
 const { listModes } = require("../services/conversationMode");
 const profileRouter = require("./profile");
 const parentRouter = require("./parent");
@@ -30,6 +35,16 @@ module.exports = (clients) => {
 	router.get("/session/:sessionId/learning-moment", getLearningMoments);
 	router.get("/message", getMessage);
 	router.post("/message", (req, res) => addMessage(req, res, clients));
+
+	// Guardian "Current Mission" panel: per-family onboarding status, scoped to
+	// the caller's adventure (derived from the forwarded Guardian session JWT).
+	router.get("/mission/families", getMissionFamilies);
+
+	// Cooperative missions (Mission 2 "Convergence"): the caller's own piece +
+	// live progress, and reporting a family's contribution. Adventure + family
+	// are derived from the Guardian session JWT, so the piece can't be spoofed.
+	router.get("/mission/state", getMissionState);
+	router.post("/mission/contribute", postMissionContribute);
 
 	// Public: conversation mode catalog (used by the chat mode switcher).
 	router.get("/modes", async (req, res) => {

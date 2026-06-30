@@ -1,6 +1,7 @@
 const messageService = require("../services/message");
 const sessionService = require("../services/session");
 const { extractIp } = require("../helpers/utils");
+const { decodeGuardianFromRequest } = require("../helpers/guardianToken");
 const { processAiResponse } = require("./gemini");
 const config = require("../config");
 
@@ -33,9 +34,52 @@ function parseMessageContext(body = {}) {
 			  }
 			: undefined;
 
+	// Active-mission steering, sourced from the Guardians app's missions.json.
+	// `pendingFamilies` lets Athena name the families still to reach out to.
+	let mission;
+	if (body.mission && typeof body.mission === "object") {
+		const directive = trimStr(body.mission.directive, 800);
+		if (directive) {
+			const pendingFamilies = Array.isArray(body.mission.pendingFamilies)
+				? body.mission.pendingFamilies
+						.map((f) => trimStr(f, 80))
+						.filter(Boolean)
+						.slice(0, 20)
+				: [];
+			mission = {
+				id: trimStr(body.mission.id, 80),
+				title: trimStr(body.mission.title, 120),
+				directive,
+				pendingFamilies,
+			};
+
+			// Convergence (Mission 2) extras: the family's own piece, progress,
+			// and — once complete — the revealed destination.
+			const fragment = trimStr(body.mission.fragment, 120);
+			if (fragment) mission.fragment = fragment;
+			if (body.mission.reporting && typeof body.mission.reporting === "object") {
+				const reported = Number(body.mission.reporting.reported);
+				const total = Number(body.mission.reporting.total);
+				const pending = Array.isArray(body.mission.reporting.pending)
+					? body.mission.reporting.pending
+							.map((f) => trimStr(f, 80))
+							.filter(Boolean)
+							.slice(0, 20)
+					: [];
+				if (Number.isFinite(reported) && Number.isFinite(total)) {
+					mission.reporting = { reported, total, pending };
+				}
+			}
+			mission.complete = Boolean(body.mission.complete);
+			const destination = trimStr(body.mission.destination, 160);
+			if (destination) mission.destination = destination;
+		}
+	}
+
 	return {
 		guardian: guardian && (guardian.displayName || guardian.adventureKey) ? guardian : undefined,
 		onboarding,
+		mission,
 	};
 }
 
@@ -110,6 +154,10 @@ async function addMessage(req, res, clients) {
 		}
 
 		const ctx = parseMessageContext(req.body);
+		// Verified guardian identity (from the forwarded session token) — used to
+		// attribute in-chat mission reporting to the right family. Never trusted
+		// from the body.
+		ctx.guardianAuth = decodeGuardianFromRequest(req);
 
 		// The onboarding "communication check" invites very short replies
 		// ("hi", "ok"), so relax the usual minimum for those turns only.

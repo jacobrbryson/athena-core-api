@@ -3,8 +3,12 @@ const messageService = require("../services/message");
 const geminiService = require("../services/gemini");
 const sessionTopicService = require("../services/sessionTopic");
 const integrationService = require("../services/integration");
+const missionService = require("../services/mission");
 
 const { generatePrompt } = require("./prompt");
+
+// How many prior messages to feed back as conversation history.
+const MAX_HISTORY = 20;
 
 async function processAiResponse(session, message, clients, ctx = {}) {
 	try {
@@ -29,10 +33,23 @@ async function processAiResponse(session, message, clients, ctx = {}) {
 			}
 		}
 
+		// Conversation history for continuity. getMessages returns the transcript
+		// oldest→newest including the message just saved (the current turn), so we
+		// drop that trailing entry and keep the most recent MAX_HISTORY before it.
+		let history = [];
+		try {
+			const all = await messageService.getMessages(session.id);
+			history = all.slice(0, -1).slice(-MAX_HISTORY);
+		} catch (e) {
+			console.warn("[gemini] history fetch failed:", e.message);
+		}
+
 		const prompt = await generatePrompt(session, topics || [], message, {
 			integrationContext,
 			guardian: ctx.guardian,
 			onboarding: ctx.onboarding,
+			mission: ctx.mission,
+			history,
 		});
 		const response = await geminiService.generateResponse(prompt);
 
@@ -69,6 +86,28 @@ async function processAiResponse(session, message, clients, ctx = {}) {
 			parsedResponse.response,
 			session.mode
 		);
+
+		// In-chat mission reporting: when Athena flags that the Guardian reported
+		// their cooperative-mission piece, record it for their family (idempotent;
+		// the stored fragment is backend-authored, so it can't be spoofed). The
+		// Guardian + adventure come from the verified session token, the mission id
+		// from the client steering context. Never blocks the reply.
+		if (parsedResponse.mission_report === true && ctx.guardianAuth && ctx.mission?.id) {
+			try {
+				const familyKey = missionService.familyKeyFor({
+					displayName: ctx.guardianAuth.display_name,
+					guardianId: ctx.guardianAuth.guardian_id,
+				});
+				await missionService.recordContribution(
+					ctx.mission.id,
+					ctx.guardianAuth.adventure_key,
+					familyKey,
+					ctx.guardianAuth.guardian_id
+				);
+			} catch (e) {
+				console.warn("[gemini] mission contribution failed:", e.message);
+			}
+		}
 
 		const sessionClients = clients.get(session.uuid);
 		const broadcast = (payload) => {
