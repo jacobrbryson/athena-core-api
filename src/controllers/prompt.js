@@ -156,6 +156,14 @@ function buildMissionNudge(mission) {
 	if (!mission || !mission.directive) return "";
 
 	const lines = [];
+	const awaitingDecryption =
+		mission.id === "mission-2-convergence" && mission.decrypted !== true;
+
+	if (awaitingDecryption) {
+		lines.push(
+			`The encrypted message has not been decrypted yet. Focus only on the intercepted message and helping the Guardian choose "Decrypt Message for Athena" in the Current Mission panel. Do not mention a map, pieces, coordinates, a destination, or other families yet.`
+		);
+	}
 	const pending = Array.isArray(mission.pendingFamilies)
 		? mission.pendingFamilies.filter((f) => typeof f === "string" && f.trim())
 		: [];
@@ -167,7 +175,7 @@ function buildMissionNudge(mission) {
 
 	// Convergence (Mission 2): this family holds one piece of the meeting place;
 	// the destination is only revealed once every family has reported in.
-	if (mission.fragment) {
+	if (mission.fragment && !awaitingDecryption) {
 		lines.push(
 			`This Guardian's family holds one piece of the path: "${mission.fragment}". If they ask what their piece is, what to do, or how to help, tell them their piece is "${mission.fragment}" and that they should report it to you and gather the other families' pieces — no family can find the destination alone.`
 		);
@@ -177,7 +185,7 @@ function buildMissionNudge(mission) {
 			);
 		}
 	}
-	if (mission.reporting) {
+	if (mission.reporting && !awaitingDecryption) {
 		const { reported, total } = mission.reporting;
 		if (Number.isFinite(reported) && Number.isFinite(total)) {
 			lines.push(
@@ -199,6 +207,25 @@ function buildMissionNudge(mission) {
 # Current Mission${mission.title ? `: ${mission.title}` : ""}
 ${mission.directive}${lines.length ? "\n" + lines.join("\n") : ""}
 Weave this in gently and only when it fits — never nag, and don't repeat it every message.
+`;
+}
+
+/**
+ * The welcome/channel-check remains the first priority. Once Athena has answered
+ * it, she can reveal the encrypted-message beat without replacing or diluting
+ * the scripted onboarding response.
+ */
+function buildPostWelcomeMissionNudge(mission) {
+	if (
+		mission?.id !== "mission-2-convergence" ||
+		mission.decrypted === true ||
+		!mission.directive
+	) {
+		return "";
+	}
+	return `
+# After the welcome
+First follow the onboarding instructions above completely. Only after that response, add one short, intrigued sentence: you have just intercepted an encrypted message and need this Guardian's help. Direct them to choose "Decrypt Message for Athena" in the Current Mission panel. Do not mention a map, pieces, coordinates, a destination, or other families.
 `;
 }
 
@@ -257,9 +284,13 @@ ${formatMemory(memorySummary)}
 
 	if (guardian) prompt += buildGuardianPersona(guardian);
 	// Mission steering applies to guardian sessions, but not during the scripted
-	// onboarding beat (first contact should stay focused on the channel check).
+	// onboarding beat. The decryption mission gets a narrow post-welcome handoff
+	// that explicitly preserves the channel check before introducing the message.
 	if (guardian && mission && !onboarding) prompt += buildMissionNudge(mission);
-	if (onboarding) prompt += buildOnboardingNudge(onboarding);
+	if (onboarding) {
+		prompt += buildOnboardingNudge(onboarding);
+		if (guardian && mission) prompt += buildPostWelcomeMissionNudge(mission);
+	}
 	return prompt;
 }
 

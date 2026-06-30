@@ -146,6 +146,47 @@ describe("generatePrompt — Guardian onboarding", () => {
 		expect(system).not.toContain("Current Mission");
 	});
 
+	test("decryption mission is introduced only after the welcome beat", async () => {
+		const contents = await build("hello", {
+			guardian: { displayName: "Thomas", adventureKey: "lake_norman_guardians" },
+			onboarding: { priorAthenaLine: "Say hello.", firstContact: true },
+			mission: {
+				id: "mission-2-convergence",
+				title: "Decryption",
+				directive: "Help decrypt the intercepted message.",
+				decrypted: false,
+			},
+		});
+		const system = contents.find((c) => c.role === "system").parts[0].text;
+
+		expect(system).toContain("First contact");
+		expect(system).toContain("First follow the onboarding instructions above completely");
+		expect(system).toContain("intercepted an encrypted message");
+		expect(system).toContain('"Decrypt Message for Athena"');
+		expect(system).toContain("Do not mention a map");
+	});
+
+	test("pre-decryption mission steering hides the map and family progress", async () => {
+		const contents = await build("what should I do?", {
+			guardian: { displayName: "Lucy", adventureKey: "lake_norman_guardians" },
+			mission: {
+				id: "mission-2-convergence",
+				title: "Decryption",
+				directive: "Help decrypt the intercepted message.",
+				fragment: "35",
+				reporting: { reported: 0, total: 4, pending: ["The Morgan Family"] },
+				decrypted: false,
+				complete: false,
+			},
+		});
+		const system = contents.find((c) => c.role === "system").parts[0].text;
+
+		expect(system).toContain('"Decrypt Message for Athena"');
+		expect(system).not.toContain('family holds one piece of the path: "35"');
+		expect(system).not.toContain("0 of 4 families");
+		expect(system).not.toContain("Still waiting on");
+	});
+
 	test("history is replayed as user/model turns before the current message", async () => {
 		const contents = await build("and what about Tuesday?", {
 			guardian: { displayName: "Thomas", adventureKey: "lake_norman_guardians" },

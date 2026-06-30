@@ -71,6 +71,7 @@ function parseMessageContext(body = {}) {
 				}
 			}
 			mission.complete = Boolean(body.mission.complete);
+			mission.decrypted = Boolean(body.mission.decrypted);
 			const destination = trimStr(body.mission.destination, 160);
 			if (destination) mission.destination = destination;
 		}
