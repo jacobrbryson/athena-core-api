@@ -32,6 +32,62 @@ async function getMissionFamilies(req, res) {
 	}
 }
 
+/** GET /api/v1/mission/current - server-authoritative live mission phase. */
+async function getCurrentMission(req, res) {
+	const guardian = decodeGuardian(req);
+	if (!guardian) {
+		return res
+			.status(401)
+			.json({ success: false, message: "Guardian session required" });
+	}
+
+	try {
+		const state = await missionService.getCampaignMissionPhase(
+			guardian.adventure_key
+		);
+		if (!state) {
+			return res.json({ success: true, adventure_key: guardian.adventure_key, mission: null });
+		}
+
+		const families =
+			state.phase === "check_in"
+				? await missionService.getFamilyOnboardingStatus(guardian.adventure_key)
+				: [];
+		const mission =
+			state.phase === "check_in"
+				? {
+						id: "mission-0-check-in",
+						number: 1,
+						title: "Gather the Guardians",
+						status: "Awaiting Guardians",
+						summary: "Get at least one Guardian from every family to check in with Athena.",
+				  }
+				: {
+						id: missionService.PORTICO_MISSION,
+						number: 2,
+						title: "The Portico Signal",
+						status: state.phase === "decrypting" ? "Decrypting" : "In Progress",
+						summary:
+							state.phase === "decrypting"
+								? "Athena is decrypting the recovered message. Check back later."
+								: "A Guardian-marked field signal has been recovered. Investigate it and report discoveries to Athena.",
+				  };
+
+		return res.json({
+			success: true,
+			adventure_key: guardian.adventure_key,
+			phase: state.phase,
+			mission,
+			families,
+		});
+	} catch (err) {
+		console.error("[mission] getCurrentMission failed:", err.message);
+		return res
+			.status(500)
+			.json({ success: false, message: "Failed to load mission status" });
+	}
+}
+
 /** The calling Guardian's family key (surname-derived), from their token. */
 function callerFamilyKey(guardian) {
 	return missionService.familyKeyFor({
@@ -173,4 +229,9 @@ async function postMissionContribute(req, res) {
 	}
 }
 
-module.exports = { getMissionFamilies, getMissionState, postMissionContribute };
+module.exports = {
+	getCurrentMission,
+	getMissionFamilies,
+	getMissionState,
+	postMissionContribute,
+};

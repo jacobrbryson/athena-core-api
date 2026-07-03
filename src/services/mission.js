@@ -1,6 +1,10 @@
 const pool = require("../helpers/db");
 const { getMissionDef } = require("../config/missions");
 
+const LAKE_NORMAN_ADVENTURE = "lake_norman_guardians";
+const PORTICO_MISSION = "mission-2-portico";
+const FINAL_CIPHER = "YP2LBHM7";
+
 /**
  * Mission service.
  *
@@ -68,6 +72,112 @@ async function getFamilyOnboardingStatus(adventureKey) {
 		if (a.onboarded !== b.onboarded) return a.onboarded ? 1 : -1;
 		return a.name.localeCompare(b.name);
 	});
+}
+
+/* -------------------------------------------------------------------------- */
+/* Lake Norman mission progression                                             */
+/* -------------------------------------------------------------------------- */
+
+function messageSignalsBottleDiscovery(message) {
+	if (typeof message !== "string") return false;
+	const normalized = message.toLowerCase();
+	if (/\bportico\b/i.test(message)) return true;
+	const discoveryContext =
+		/\b(found|find|washed|shore|beach|lake|floating|note|message|clue|logo|guardian)\b/.test(
+			normalized
+		);
+	if (/\bbottle\b/.test(normalized) && discoveryContext) return true;
+	return (
+		/\b(note|message|clue)\b/.test(normalized) &&
+		/\b(washed|ashore|shore|beach|guardian|logo)\b/.test(normalized)
+	);
+}
+
+function messageContainsFinalCipher(message) {
+	if (typeof message !== "string") return false;
+	return message.toUpperCase().split(/[^A-Z0-9]+/).includes(FINAL_CIPHER);
+}
+
+async function getCampaignMissionPhase(adventureKey) {
+	if (adventureKey !== LAKE_NORMAN_ADVENTURE) return null;
+	const [rows] = await pool.query(
+		`SELECT mission_key, status, started_at, decrypting_at
+       FROM guardian_mission_state
+      WHERE adventure_key = ?
+      LIMIT 1;`,
+		[adventureKey]
+	);
+	if (!rows.length) {
+		return { missionKey: "mission-0-check-in", phase: "check_in" };
+	}
+	return {
+		missionKey: rows[0].mission_key,
+		phase: rows[0].status,
+		startedAt: rows[0].started_at,
+		decryptingAt: rows[0].decrypting_at,
+	};
+}
+
+/**
+ * Apply message-driven mission transitions. The phase at the start of the turn
+ * controls what can happen, so the final cipher cannot skip the PORTICO step.
+ */
+async function applyMessageTransition(adventureKey, guardianId, message) {
+	if (adventureKey !== LAKE_NORMAN_ADVENTURE) return null;
+	const current = await getCampaignMissionPhase(adventureKey);
+
+	if (current.phase === "check_in" && messageSignalsBottleDiscovery(message)) {
+		await pool.query(
+			`INSERT IGNORE INTO guardian_mission_state
+         (adventure_key, mission_key, status, started_by_guardian_id)
+       VALUES (?, ?, 'active', ?);`,
+			[adventureKey, PORTICO_MISSION, guardianId]
+		);
+		return "started";
+	}
+
+	if (current.phase === "active" && messageContainsFinalCipher(message)) {
+		const [result] = await pool.query(
+			`UPDATE guardian_mission_state
+          SET status = 'decrypting', decrypting_at = UTC_TIMESTAMP()
+        WHERE adventure_key = ? AND mission_key = ? AND status = 'active';`,
+			[adventureKey, PORTICO_MISSION]
+		);
+		return result.affectedRows > 0 ? "decrypting" : null;
+	}
+
+	return null;
+}
+
+async function getMissionPromptContext(adventureKey, transition = null) {
+	const state = await getCampaignMissionPhase(adventureKey);
+	if (!state) return null;
+
+	if (state.phase === "check_in") {
+		const families = await getFamilyOnboardingStatus(adventureKey);
+		return {
+			id: state.missionKey,
+			title: "Gather the Guardians",
+			phase: state.phase,
+			directive: "Help the remaining Guardian families make first contact with Athena.",
+			pendingFamilies: families
+				.filter((family) => !family.onboarded)
+				.map((family) =>
+					family.region ? `${family.name} (${family.region})` : family.name
+				),
+		};
+	}
+
+	return {
+		id: PORTICO_MISSION,
+		title: "The Portico Signal",
+		phase: state.phase,
+		transition,
+		directive:
+			state.phase === "decrypting"
+				? "Athena is decrypting the recovered message."
+				: "Guide the Guardians through the recovered field clue without solving it for them.",
+	};
 }
 
 /* -------------------------------------------------------------------------- */
@@ -193,7 +303,15 @@ async function getConvergenceState(missionKey, adventureKey) {
 }
 
 module.exports = {
+	LAKE_NORMAN_ADVENTURE,
+	PORTICO_MISSION,
+	FINAL_CIPHER,
 	getFamilyOnboardingStatus,
+	messageSignalsBottleDiscovery,
+	messageContainsFinalCipher,
+	getCampaignMissionPhase,
+	applyMessageTransition,
+	getMissionPromptContext,
 	familyKeyFor,
 	getFamilyFragment,
 	getFamilyCorner,

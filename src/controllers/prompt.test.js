@@ -82,6 +82,19 @@ describe("generatePrompt — Guardian onboarding", () => {
 		expect(system).not.toContain("field kit");
 	});
 
+	test("Lake Norman Athena notices her improved voice without claiming a cause", async () => {
+		const contents = await build("hello", {
+			guardian: { displayName: "Thomas", adventureKey: "lake_norman_guardians" },
+		});
+		const system = contents.find((c) => c.role === "system").parts[0].text;
+
+		expect(system).toContain("Your changing voice");
+		expect(system).toContain("whether your voice sounds better");
+		expect(system).toContain("decrypting the Guardian maps");
+		expect(system).toContain("only a private theory");
+		expect(system).toContain("do not ask repeatedly");
+	});
+
 	test("mission context layers in Current Mission steering with pending families", async () => {
 		const contents = await build("what should I do?", {
 			guardian: { displayName: "Thomas", adventureKey: "lake_norman_guardians" },
@@ -222,5 +235,43 @@ describe("generatePrompt — Guardian onboarding", () => {
 		const system = contents.find((c) => c.role === "system").parts[0].text;
 		expect(system).not.toContain("Guardian Network");
 		expect(system).toContain("5"); // generic age framing retained
+	});
+
+	test("PORTICO mission gives Athena private clue knowledge with strict hinting", async () => {
+		const contents = await build("we are stuck", {
+			guardian: { displayName: "Lucy", adventureKey: "lake_norman_guardians" },
+			mission: {
+				id: "mission-2-portico",
+				title: "The Portico Signal",
+				phase: "active",
+				directive: "Guide the field mission.",
+			},
+		});
+		const system = contents.find((c) => c.role === "system").parts[0].text;
+
+		expect(system).toContain("11 compass bearings written in invisible ink");
+		expect(system).toContain("starting at the front door");
+		expect(system).toContain("Do not volunteer the invisible ink");
+		expect(system).toContain("use their Guardian tools");
+	});
+
+	test("decrypting mission prevents Athena from inventing progress", async () => {
+		const contents = await build("YP2LBHM7", {
+			guardian: { displayName: "Lucy", adventureKey: "lake_norman_guardians" },
+			mission: {
+				id: "mission-2-portico",
+				title: "The Portico Signal",
+				phase: "decrypting",
+				transition: "decrypting",
+				directive: "Athena is decrypting the recovered message.",
+			},
+		});
+		const system = contents.find((c) => c.role === "system").parts[0].text;
+
+		expect(system).toContain("decryption has begun");
+		expect(system).toContain("check back later");
+		expect(system).toContain("Do not invent a result");
+		expect(system).toContain("old capabilities inside you may be waking up");
+		expect(system).toContain("Treat the connection as a theory, not a fact");
 	});
 });

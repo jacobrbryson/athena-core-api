@@ -8,7 +8,9 @@ const {
 } = require("../controllers/sessionLearningMoment");
 const { validateCode } = require("../controllers/childAuth");
 const { validateGuardian, redeemGuardianToken } = require("../controllers/guardianAuth");
+const { generateSpeech } = require("../controllers/speech");
 const {
+	getCurrentMission,
 	getMissionFamilies,
 	getMissionState,
 	postMissionContribute,
@@ -35,9 +37,13 @@ module.exports = (clients) => {
 	router.get("/session/:sessionId/learning-moment", getLearningMoments);
 	router.get("/message", getMessage);
 	router.post("/message", (req, res) => addMessage(req, res, clients));
+	// Authenticated Guardian-only neural voice. The proxy forwards the Guardian
+	// session JWT in x-user-authorization while keeping the Gemini key private.
+	router.post("/speech", generateSpeech);
 
 	// Guardian "Current Mission" panel: per-family onboarding status, scoped to
 	// the caller's adventure (derived from the forwarded Guardian session JWT).
+	router.get("/mission/current", getCurrentMission);
 	router.get("/mission/families", getMissionFamilies);
 
 	// Cooperative missions (Mission 2 "Convergence"): the caller's own piece +

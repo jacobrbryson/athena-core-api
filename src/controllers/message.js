@@ -3,6 +3,7 @@ const sessionService = require("../services/session");
 const { extractIp } = require("../helpers/utils");
 const { decodeGuardianFromRequest } = require("../helpers/guardianToken");
 const { processAiResponse } = require("./gemini");
+const missionService = require("../services/mission");
 const config = require("../config");
 
 const trimStr = (v, max) =>
@@ -177,7 +178,33 @@ async function addMessage(req, res, clients) {
 			});
 		}
 
-		await messageService.addMessage(session.id, true, text, session.mode);
+		// Lake Norman mission state is server-owned. Apply any deterministic
+		// message transition first, then replace client steering with the durable
+		// phase and private backend briefing used for this same Athena response.
+		if (
+			ctx.guardianAuth?.adventure_key === missionService.LAKE_NORMAN_ADVENTURE
+		) {
+			try {
+				const transition = await missionService.applyMessageTransition(
+					ctx.guardianAuth.adventure_key,
+					ctx.guardianAuth.guardian_id,
+					text
+				);
+				ctx.mission = await missionService.getMissionPromptContext(
+					ctx.guardianAuth.adventure_key,
+					transition
+				);
+			} catch (err) {
+				console.warn("[message] mission state unavailable:", err.message);
+			}
+		}
+
+		const humanChatUuid = await messageService.addMessage(
+			session.id,
+			true,
+			text,
+			session.mode
+		);
 
 		await sessionService.updateSession(session.id, { is_busy: true });
 
@@ -198,6 +225,7 @@ async function addMessage(req, res, clients) {
 
 		res.json({
 			message: {
+				uuid: humanChatUuid,
 				text,
 				is_human: true,
 				created_at: Date.now(),

@@ -101,3 +101,71 @@ describe("mission service — convergence", () => {
 		expect(params).toEqual([MISSION, ADV, "morgan", "20250301", "-80"]);
 	});
 });
+
+describe("mission service - PORTICO progression", () => {
+	test("recognizes PORTICO and contextual bottle discoveries", () => {
+		expect(mission.messageSignalsBottleDiscovery("The word is portico!")).toBe(true);
+		expect(mission.messageSignalsBottleDiscovery("We found a note in a bottle")).toBe(
+			true
+		);
+		expect(mission.messageSignalsBottleDiscovery("A clue washed ashore")).toBe(true);
+		expect(mission.messageSignalsBottleDiscovery("I filled my water bottle")).toBe(
+			false
+		);
+	});
+
+	test("recognizes the final cipher as a complete token", () => {
+		expect(mission.messageContainsFinalCipher("We found YP2LBHM7!")).toBe(true);
+		expect(mission.messageContainsFinalCipher("yp2lbhm7")).toBe(true);
+		expect(mission.messageContainsFinalCipher("XYP2LBHM7X")).toBe(false);
+	});
+
+	test("starts Mission 2 from the check-in phase", async () => {
+		pool.query
+			.mockResolvedValueOnce([[]])
+			.mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+		const transition = await mission.applyMessageTransition(
+			ADV,
+			"20250101",
+			"I found PORTICO in the bottle"
+		);
+
+		expect(transition).toBe("started");
+		expect(pool.query).toHaveBeenCalledTimes(2);
+		expect(pool.query.mock.calls[1][1]).toEqual([
+			ADV,
+			"mission-2-portico",
+			"20250101",
+		]);
+	});
+
+	test("does not accept the final cipher before Mission 2 starts", async () => {
+		pool.query.mockResolvedValueOnce([[]]);
+		const transition = await mission.applyMessageTransition(
+			ADV,
+			"20250101",
+			"YP2LBHM7"
+		);
+
+		expect(transition).toBeNull();
+		expect(pool.query).toHaveBeenCalledTimes(1);
+	});
+
+	test("moves an active Mission 2 into decrypting", async () => {
+		pool.query
+			.mockResolvedValueOnce([
+				[{ mission_key: "mission-2-portico", status: "active" }],
+			])
+			.mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+		const transition = await mission.applyMessageTransition(
+			ADV,
+			"20250101",
+			"The last clue says YP2LBHM7."
+		);
+
+		expect(transition).toBe("decrypting");
+		expect(pool.query).toHaveBeenCalledTimes(2);
+	});
+});
