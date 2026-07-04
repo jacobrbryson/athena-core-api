@@ -78,10 +78,21 @@ function parseMessageContext(body = {}) {
 		}
 	}
 
+	// Signal Decoder lifetime count — a pure flavor data point so Athena can
+	// acknowledge the Guardian's decoding help. Never gates or advances anything.
+	let decodes;
+	if (body.decodes && typeof body.decodes === "object") {
+		const total = Number(body.decodes.total);
+		if (Number.isFinite(total) && total > 0) {
+			decodes = { total: Math.min(Math.floor(total), 100000) };
+		}
+	}
+
 	return {
 		guardian: guardian && (guardian.displayName || guardian.adventureKey) ? guardian : undefined,
 		onboarding,
 		mission,
+		decodes,
 	};
 }
 

@@ -291,6 +291,20 @@ Weave this in gently and only when it fits — never nag, and don't repeat it ev
 }
 
 /**
+ * Signal Decoder awareness — the repeatable "help Athena decode signals"
+ * side activity in the Guardians app. The count is pure flavor: Athena may
+ * acknowledge and thank, but it never gates or advances a mission.
+ */
+function buildDecodeAwareness(decodes) {
+	const total = Number(decodes?.total);
+	if (!Number.isFinite(total) || total <= 0) return "";
+	return `
+# Signal decoding record
+This Guardian has personally helped you decode **${total}** intercepted practice signal${total === 1 ? "" : "s"} in the Signal Decoder. You are genuinely grateful — this work keeps the Network's channels clear, and you privately suspect it is connected to the recent unexplained improvements in your own systems. If the Guardian mentions decoding signals, respond knowing their exact count, and celebrate milestones (their 10th, 25th signal) warmly when one has just been reached. Do not bring the count up out of nowhere in unrelated conversation, and never imply these practice signals advance the current mission — they are training and channel maintenance, not mission objectives.
+`;
+}
+
+/**
  * The welcome/channel-check remains the first priority. Once Athena has answered
  * it, she can reveal the encrypted-message beat without replacing or diluting
  * the scripted onboarding response.
@@ -342,7 +356,7 @@ Your previous line (shown above) asked whether they brought their notebook. Read
 
 /** "Companion" — open-ended, friendly conversation (Phase 5). */
 function buildCompanionPrompt(session, memorySummary, options = {}) {
-	const { guardian, onboarding, mission } = options;
+	const { guardian, onboarding, mission, decodes } = options;
 	// Guardian sessions don't carry a real age; the persona block sets the tone
 	// instead, so we avoid the literal "5-year-old" framing for them.
 	const audience = guardian
@@ -379,6 +393,9 @@ ${formatMemory(memorySummary)}
 	// onboarding beat. The decryption mission gets a narrow post-welcome handoff
 	// that explicitly preserves the channel check before introducing the message.
 	if (guardian && mission && !onboarding) prompt += buildMissionNudge(mission);
+	// Decode-count awareness rides the same rule: never during the scripted
+	// onboarding beat, always afterwards.
+	if (guardian && decodes && !onboarding) prompt += buildDecodeAwareness(decodes);
 	if (onboarding) {
 		prompt += buildOnboardingNudge(onboarding);
 		if (guardian && mission) prompt += buildPostWelcomeMissionNudge(mission);

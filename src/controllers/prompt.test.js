@@ -274,4 +274,37 @@ describe("generatePrompt — Guardian onboarding", () => {
 		expect(system).toContain("old capabilities inside you may be waking up");
 		expect(system).toContain("Treat the connection as a theory, not a fact");
 	});
+
+	test("signal-decode count gives Athena the Guardian's exact total, flavor only", async () => {
+		const contents = await build("I decoded another signal!", {
+			guardian: { displayName: "Lucy", adventureKey: "lake_norman_guardians" },
+			decodes: { total: 12 },
+		});
+		const system = contents.find((c) => c.role === "system").parts[0].text;
+
+		expect(system).toContain("Signal decoding record");
+		expect(system).toContain("**12** intercepted practice signals");
+		expect(system).toContain("never imply these practice signals advance the current mission");
+	});
+
+	test("signal-decode awareness is suppressed during the scripted onboarding beat", async () => {
+		const contents = await build("hi", {
+			guardian: { displayName: "Lucy", adventureKey: "lake_norman_guardians" },
+			onboarding: { priorAthenaLine: "Say hello.", firstContact: true },
+			decodes: { total: 4 },
+		});
+		const system = contents.find((c) => c.role === "system").parts[0].text;
+
+		expect(system).toContain("First contact");
+		expect(system).not.toContain("Signal decoding record");
+	});
+
+	test("no decode block without a positive count", async () => {
+		const contents = await build("hello", {
+			guardian: { displayName: "Lucy", adventureKey: "lake_norman_guardians" },
+			decodes: { total: 0 },
+		});
+		const system = contents.find((c) => c.role === "system").parts[0].text;
+		expect(system).not.toContain("Signal decoding record");
+	});
 });
