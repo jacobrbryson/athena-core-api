@@ -41,6 +41,7 @@ Connection is read from the same env vars as the app (`DB_HOST`, `DB_USER`,
 | `0008_adventure_state` | Per-adventure lifecycle table (`adventure_state`). `lake_norman_guardians` is seeded as `active`; `rescue_ratatouille` starts as `pending` and is activated atomically by the first enrolled player who signs in. |
 | `0009_guardian_permanent_qr` | Adds `qr_token_hash` to `guardian_credential`. Permanent, reusable QR tokens whose plaintext never changes — safe to print on physical cards. The `/q/` route checks this after the single-use token table so both flows co-exist. |
 | `0012_adventure_schedule` | Adds campaign start scheduling and configures Rescue Ratatouille for July 6–12, 2026 (America/New_York). |
+| `0014_guardian_trail_key` | Rescue Ratatouille Mission 1 key-use table (`guardian_trail_key`): per-guardian single-use decryption keys, order-of-use clue indices, pending→used two-step. Reset with `npm run reset:trail [guardian_id]` (trail only) or `npm run reset:experience [guardian_id]` (trail + first-login + QR first-use, for replaying the whole first-contact experience). |
 
 See [`docs/architecture/family-system.md`](../../../docs/architecture/family-system.md)
 for the data-model rationale and the deprecation path for `profile_child`.

@@ -169,3 +169,200 @@ describe("mission service - PORTICO progression", () => {
 		expect(pool.query).toHaveBeenCalledTimes(2);
 	});
 });
+
+describe("mission service — Ratatouille trail (key hunt)", () => {
+	const RAT = "rescue_ratatouille";
+	const GID = "12345678";
+	const row = (key_code, clue_index, status) => ({ key_code, clue_index, status });
+
+	test("trail state is null for adventures without a trail mission", async () => {
+		expect(await mission.getTrailState(ADV, GID)).toBeNull();
+		expect(pool.query).not.toHaveBeenCalled();
+	});
+
+	test("a valid first key claims the trailhead clue as pending", async () => {
+		pool.query
+			.mockResolvedValueOnce([[]]) // no rows yet
+			.mockResolvedValueOnce([{ affectedRows: 1 }]); // insert
+
+		const res = await mission.reportTrailKey(RAT, GID, "x1g7");
+		expect(res.ok).toBe(true);
+		expect(res.clueIndex).toBe(0);
+		expect(res.clue.text).toBe("THE TRAIL BEGINS AT THE FRONT DOOR.");
+		expect(res.challenges).toBe(3);
+		// The insert stored the normalized key and clue index 0.
+		expect(pool.query.mock.calls[1][1]).toEqual([
+			GID,
+			"mission-1-ratatouille-trail",
+			"X1G7",
+			0,
+		]);
+	});
+
+	test("ANY valid key unlocks the NEXT clue in order", async () => {
+		pool.query
+			.mockResolvedValueOnce([
+				[row("X1G7", 0, "used"), row("GYLL", 1, "used"), row("SM37", 2, "used")],
+			])
+			.mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+		const res = await mission.reportTrailKey(RAT, GID, "7PKT");
+		expect(res.ok).toBe(true);
+		expect(res.clueIndex).toBe(3);
+		expect(res.clue.text).toBe(
+			"FROM WINDY RUN: WALK 100 METERS AT BEARING 170 DEGREES — HUNTERS POINT."
+		);
+	});
+
+	test("unknown keys are rejected without touching the database", async () => {
+		expect(await mission.reportTrailKey(RAT, GID, "ZZZZ")).toEqual({
+			ok: false,
+			reason: "invalid",
+		});
+		expect(await mission.reportTrailKey(RAT, GID, "hello there")).toEqual({
+			ok: false,
+			reason: "invalid",
+		});
+		expect(pool.query).not.toHaveBeenCalled();
+	});
+
+	test("a used key can never be used twice", async () => {
+		pool.query.mockResolvedValueOnce([[row("X1G7", 0, "used")]]);
+		expect(await mission.reportTrailKey(RAT, GID, "X1G7")).toEqual({
+			ok: false,
+			reason: "used",
+		});
+	});
+
+	test("re-reporting the pending key resumes the same clue", async () => {
+		pool.query.mockResolvedValueOnce([[row("SM37", 0, "pending")]]);
+		const res = await mission.reportTrailKey(RAT, GID, "sm37");
+		expect(res.ok).toBe(true);
+		expect(res.clueIndex).toBe(0);
+		// No INSERT — only the row load.
+		expect(pool.query).toHaveBeenCalledTimes(1);
+	});
+
+	test("a second key is refused while another decryption is pending", async () => {
+		pool.query.mockResolvedValueOnce([[row("SM37", 0, "pending")]]);
+		expect(await mission.reportTrailKey(RAT, GID, "X1G7")).toEqual({
+			ok: false,
+			reason: "pending_other",
+		});
+	});
+
+	test("the final stretch demands an extra challenge", async () => {
+		const nineUsed = [
+			"X1G7",
+			"SM37",
+			"PX3P",
+			"C4A8",
+			"6KT8",
+			"XG1D",
+			"E34Z",
+			"VS8T",
+			"GYLL",
+		].map((k, i) => row(k, i, "used"));
+		pool.query
+			.mockResolvedValueOnce([nineUsed])
+			.mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+		const res = await mission.reportTrailKey(RAT, GID, "7PKT");
+		expect(res.clueIndex).toBe(9);
+		expect(res.challenges).toBe(4);
+		expect(res.clue.text).toBe(
+			"FROM FIRST ISLAND: WALK 350 METERS AT BEARING 200 DEGREES — FALLEN TREE."
+		);
+	});
+
+	test("completing a pending key flips it used and returns its clue", async () => {
+		pool.query
+			.mockResolvedValueOnce([[row("X1G7", 0, "pending")]])
+			.mockResolvedValueOnce([{ affectedRows: 1 }]);
+
+		const res = await mission.completeTrailKey(RAT, GID, "X1G7");
+		expect(res.ok).toBe(true);
+		expect(res.clue.index).toBe(0);
+	});
+
+	test("completing an unreported key is refused", async () => {
+		pool.query.mockResolvedValueOnce([[]]);
+		expect(await mission.completeTrailKey(RAT, GID, "X1G7")).toEqual({
+			ok: false,
+			reason: "not_reported",
+		});
+	});
+
+	test("trail state exposes ordered clues, pending decryption, and completion", async () => {
+		pool.query.mockResolvedValueOnce([
+			[row("X1G7", 0, "used"), row("SM37", 1, "used"), row("PX3P", 2, "pending")],
+		]);
+		const state = await mission.getTrailState(RAT, GID);
+		expect(state.keysTotal).toBe(10);
+		expect(state.keysUsed).toBe(2);
+		expect(state.complete).toBe(false);
+		expect(state.clues.map((c) => c.index)).toEqual([0, 1]);
+		expect(state.pending).toMatchObject({
+			keyCode: "PX3P",
+			clueIndex: 2,
+			challenges: 3,
+		});
+		expect(state.pending.clue.description).toBe("Windy Run");
+	});
+
+	test("a key typed in chat is accepted as a report", async () => {
+		pool.query
+			.mockResolvedValueOnce([[]])
+			.mockResolvedValueOnce([{ affectedRows: 1 }]);
+		const transition = await mission.applyTrailMessageTransition(
+			RAT,
+			GID,
+			"athena we found a card! it says x1g7"
+		);
+		expect(transition).toBe("key_accepted");
+	});
+
+	test("a duplicate key in chat reports the reuse", async () => {
+		pool.query.mockResolvedValueOnce([[row("X1G7", 0, "used")]]);
+		const transition = await mission.applyTrailMessageTransition(
+			RAT,
+			GID,
+			"X1G7 again!"
+		);
+		expect(transition).toBe("key_duplicate");
+	});
+
+	test("chat without a key produces no transition", async () => {
+		const transition = await mission.applyTrailMessageTransition(
+			RAT,
+			GID,
+			"where should we look?"
+		);
+		expect(transition).toBeNull();
+		expect(pool.query).not.toHaveBeenCalled();
+	});
+
+	test("prompt context carries progress, phase, and the latest clue", async () => {
+		pool.query.mockResolvedValueOnce([
+			[row("X1G7", 0, "used"), row("SM37", 1, "used")],
+		]);
+		const ctx = await mission.getTrailPromptContext(RAT, GID, "key_accepted");
+		expect(ctx).toMatchObject({
+			id: "mission-1-ratatouille-trail",
+			phase: "key_hunt",
+			transition: "key_accepted",
+			keysUsed: 2,
+			keysTotal: 10,
+			latestClueDescription: "Island Cove",
+		});
+	});
+
+	test("resetTrail clears the guardian's rows", async () => {
+		pool.query.mockResolvedValueOnce([{ affectedRows: 4 }]);
+		expect(await mission.resetTrail(GID)).toBe(4);
+		expect(pool.query.mock.calls[0][1]).toEqual([
+			GID,
+			"mission-1-ratatouille-trail",
+		]);
+	});
+});

@@ -5,6 +5,9 @@ const LAKE_NORMAN_ADVENTURE = "lake_norman_guardians";
 const PORTICO_MISSION = "mission-2-portico";
 const FINAL_CIPHER = "YP2LBHM7";
 
+const RATATOUILLE_ADVENTURE = "rescue_ratatouille";
+const TRAIL_MISSION = "mission-1-ratatouille-trail";
+
 /**
  * Mission service.
  *
@@ -181,6 +184,231 @@ async function getMissionPromptContext(adventureKey, transition = null) {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Rescue Ratatouille Mission 1 — "The Trail to Ratatouille"                  */
+/*                                                                            */
+/* Ten physical clue cards (Guardians logo + a four-character key) are hidden */
+/* around the property. Any valid unused key unlocks the NEXT trail leg, in   */
+/* strict order; each key works once. Unlocking is a two-step: reporting the  */
+/* key creates a 'pending' row, and completing the decryption challenges in   */
+/* the Guardians app flips it to 'used' and reveals the clue. Progress is per */
+/* guardian credential so the test account never disturbs the real team.     */
+/* -------------------------------------------------------------------------- */
+
+/** The trail definition for an adventure, or null if it doesn't apply. */
+function getTrailDef(adventureKey) {
+	const def = getMissionDef(TRAIL_MISSION, adventureKey);
+	return def && def.objective === "trail" ? def : null;
+}
+
+/** Uppercased key, or null if it can't be one (keys are 4 alphanumerics). */
+function normalizeTrailKey(raw) {
+	const key = typeof raw === "string" ? raw.trim().toUpperCase() : "";
+	return /^[A-Z0-9]{4}$/.test(key) ? key : null;
+}
+
+/**
+ * Challenges required to decrypt a clue. Three keeps a run fun and quick;
+ * the final stretch asks for one more so the ending feels earned.
+ */
+function trailChallengeCount(clueIndex, totalClues) {
+	return clueIndex >= totalClues - 2 ? 4 : 3;
+}
+
+/** The player-facing payload for one unlocked trail leg. */
+function trailCluePayload(def, index) {
+	const clue = def.clues[index];
+	if (!clue) return null;
+	const from = index > 0 ? def.clues[index - 1].description : null;
+	const text =
+		index === 0
+			? `THE TRAIL BEGINS AT THE ${clue.description.toUpperCase()}.`
+			: `FROM ${from.toUpperCase()}: WALK ${clue.distance} METERS AT BEARING ${clue.bearing} DEGREES — ${clue.description.toUpperCase()}.`;
+	return {
+		index,
+		distance: clue.distance,
+		bearing: clue.bearing,
+		description: clue.description,
+		text,
+	};
+}
+
+/** All key-use rows for a guardian, oldest clue first. */
+async function loadTrailRows(guardianId) {
+	const [rows] = await pool.query(
+		`SELECT key_code, clue_index, status FROM guardian_trail_key
+      WHERE guardian_id = ? AND mission_key = ?
+      ORDER BY clue_index;`,
+		[guardianId, TRAIL_MISSION]
+	);
+	return rows;
+}
+
+/**
+ * Live trail state for the Current Mission panel: unlocked clues (in order),
+ * the key currently awaiting decryption (if any), and overall progress.
+ * Returns null for adventures without a trail mission.
+ */
+async function getTrailState(adventureKey, guardianId) {
+	const def = getTrailDef(adventureKey);
+	if (!def || !guardianId) return null;
+
+	const rows = await loadTrailRows(guardianId);
+	const used = rows.filter((r) => r.status === "used");
+	const pendingRow = rows.find((r) => r.status === "pending");
+
+	return {
+		keysTotal: def.keys.length,
+		keysUsed: used.length,
+		complete: used.length >= def.keys.length,
+		clues: used.map((r) => trailCluePayload(def, r.clue_index)).filter(Boolean),
+		pending: pendingRow
+			? {
+					keyCode: pendingRow.key_code,
+					clueIndex: pendingRow.clue_index,
+					clue: trailCluePayload(def, pendingRow.clue_index),
+					challenges: trailChallengeCount(pendingRow.clue_index, def.clues.length),
+			  }
+			: null,
+	};
+}
+
+/**
+ * Report a decryption key. Any valid unused key claims the NEXT clue in order
+ * and goes 'pending' until the decryption challenges are completed. Re-reporting
+ * the same pending key resumes it; a second key while one is pending is refused
+ * (finishing the current decryption keeps unlocks strictly ordered).
+ *
+ * @returns {Promise<object>} { ok:true, clueIndex, clue, challenges } or
+ *   { ok:false, reason: 'invalid'|'used'|'pending_other'|'complete'|'retry' }.
+ */
+async function reportTrailKey(adventureKey, guardianId, rawKey) {
+	const def = getTrailDef(adventureKey);
+	if (!def || !guardianId) return { ok: false, reason: "invalid" };
+
+	const key = normalizeTrailKey(rawKey);
+	if (!key || !def.keys.includes(key)) return { ok: false, reason: "invalid" };
+
+	const rows = await loadTrailRows(guardianId);
+	const existing = rows.find((r) => r.key_code === key);
+	if (existing?.status === "used") return { ok: false, reason: "used" };
+
+	const respond = (clueIndex) => ({
+		ok: true,
+		clueIndex,
+		clue: trailCluePayload(def, clueIndex),
+		challenges: trailChallengeCount(clueIndex, def.clues.length),
+	});
+
+	// Resuming the key already mid-decryption (e.g. after a refresh).
+	if (existing?.status === "pending") return respond(existing.clue_index);
+
+	if (rows.some((r) => r.status === "pending")) {
+		return { ok: false, reason: "pending_other" };
+	}
+	if (rows.length >= def.clues.length) return { ok: false, reason: "complete" };
+
+	const clueIndex = rows.length;
+	try {
+		await pool.query(
+			`INSERT INTO guardian_trail_key
+         (guardian_id, mission_key, key_code, clue_index, status)
+       VALUES (?, ?, ?, ?, 'pending');`,
+			[guardianId, TRAIL_MISSION, key, clueIndex]
+		);
+	} catch (err) {
+		// Two devices raced for the same clue index — one won; ask to retry.
+		if (err && err.code === "ER_DUP_ENTRY") return { ok: false, reason: "retry" };
+		throw err;
+	}
+	return respond(clueIndex);
+}
+
+/**
+ * Complete the decryption for a reported key: flips pending → used and reveals
+ * the clue. Idempotent — completing an already-used key re-returns its clue.
+ */
+async function completeTrailKey(adventureKey, guardianId, rawKey) {
+	const def = getTrailDef(adventureKey);
+	if (!def || !guardianId) return { ok: false, reason: "invalid" };
+
+	const key = normalizeTrailKey(rawKey);
+	if (!key) return { ok: false, reason: "invalid" };
+
+	const rows = await loadTrailRows(guardianId);
+	const row = rows.find((r) => r.key_code === key);
+	if (!row) return { ok: false, reason: "not_reported" };
+
+	if (row.status !== "used") {
+		await pool.query(
+			`UPDATE guardian_trail_key
+          SET status = 'used', used_at = NOW()
+        WHERE guardian_id = ? AND mission_key = ? AND key_code = ? AND status = 'pending';`,
+			[guardianId, TRAIL_MISSION, key]
+		);
+	}
+	return { ok: true, clue: trailCluePayload(def, row.clue_index) };
+}
+
+/** Wipe a guardian's trail progress (testing/staging). Returns rows removed. */
+async function resetTrail(guardianId) {
+	if (!guardianId) return 0;
+	const [result] = await pool.query(
+		`DELETE FROM guardian_trail_key WHERE guardian_id = ? AND mission_key = ?;`,
+		[guardianId, TRAIL_MISSION]
+	);
+	return result.affectedRows || 0;
+}
+
+/** The first valid trail key mentioned in a chat message, or null. */
+function findTrailKeyInMessage(def, message) {
+	if (typeof message !== "string") return null;
+	const tokens = message.toUpperCase().split(/[^A-Z0-9]+/);
+	return tokens.find((t) => def.keys.includes(t)) || null;
+}
+
+/**
+ * Chat-driven trail transitions: a Guardian can "report to Athena" by simply
+ * typing (or speaking) a key in conversation. A valid new key is accepted and
+ * parked pending — the decryption still happens in the Current Mission panel —
+ * and the returned transition tells the prompt builder what just happened.
+ */
+async function applyTrailMessageTransition(adventureKey, guardianId, message) {
+	const def = getTrailDef(adventureKey);
+	if (!def || !guardianId) return null;
+
+	const key = findTrailKeyInMessage(def, message);
+	if (!key) return null;
+
+	const result = await reportTrailKey(adventureKey, guardianId, key);
+	if (result.ok) return "key_accepted";
+	if (result.reason === "used") return "key_duplicate";
+	if (result.reason === "pending_other") return "key_pending_other";
+	return null;
+}
+
+/**
+ * Athena's steering context for the trail mission — progress plus any chat
+ * transition, consumed by the prompt builder (see controllers/prompt.js).
+ */
+async function getTrailPromptContext(adventureKey, guardianId, transition = null) {
+	const state = await getTrailState(adventureKey, guardianId);
+	if (!state) return null;
+	const latest = state.clues.length ? state.clues[state.clues.length - 1] : null;
+	return {
+		id: TRAIL_MISSION,
+		title: "The Trail to Ratatouille",
+		directive:
+			"Find the ten Guardian clue cards hidden around the property. Each key unlocks the next leg of the trail.",
+		phase: state.complete ? "trail_complete" : "key_hunt",
+		transition,
+		keysUsed: state.keysUsed,
+		keysTotal: state.keysTotal,
+		pendingDecryption: !!state.pending,
+		latestClueDescription: latest ? latest.description : null,
+	};
+}
+
+/* -------------------------------------------------------------------------- */
 /* Cooperative missions (Mission 2 "Convergence")                             */
 /* -------------------------------------------------------------------------- */
 
@@ -306,6 +534,14 @@ module.exports = {
 	LAKE_NORMAN_ADVENTURE,
 	PORTICO_MISSION,
 	FINAL_CIPHER,
+	RATATOUILLE_ADVENTURE,
+	TRAIL_MISSION,
+	getTrailState,
+	reportTrailKey,
+	completeTrailKey,
+	resetTrail,
+	applyTrailMessageTransition,
+	getTrailPromptContext,
 	getFamilyOnboardingStatus,
 	messageSignalsBottleDiscovery,
 	messageContainsFinalCipher,

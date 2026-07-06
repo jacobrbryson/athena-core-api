@@ -60,6 +60,122 @@ describe("generatePrompt — Guardian onboarding", () => {
 		expect(system).toContain("notebook");
 	});
 
+	test("ratatouille alarm beat guides the reaction turn instead of the default nudges", async () => {
+		const alarm = "Ratatouille is MISSING!!!";
+		const contents = await build("oh no! what happened??", {
+			guardian: { displayName: "John Doe", adventureKey: "rescue_ratatouille" },
+			onboarding: { priorAthenaLine: alarm, firstContact: false, beat: "ratatouille_alarm" },
+		});
+
+		const roles = contents.map((c) => c.role);
+		expect(roles).toEqual(["system", "model", "user"]);
+		expect(contents.find((c) => c.role === "model").parts[0].text).toBe(alarm);
+
+		const system = contents.find((c) => c.role === "system").parts[0].text;
+		expect(system).toContain("The Ratatouille alarm");
+		expect(system).toContain("never scary");
+		expect(system).not.toContain("First contact");
+		expect(system).not.toContain("Returning Guardian");
+	});
+
+	test("rescue_ratatouille persona carries the missing-companion lore with an anti-invention rule", async () => {
+		const contents = await build("who is Ratatouille?", {
+			guardian: { displayName: "John Doe", adventureKey: "rescue_ratatouille" },
+		});
+		const system = contents.find((c) => c.role === "system").parts[0].text;
+
+		expect(system).toContain("Rescue Ratatouille");
+		expect(system).toContain("gone missing");
+		expect(system).toContain("corrupted or missing");
+		expect(system).toContain("never make up specifics");
+	});
+
+	test("trail mission steering briefs Athena without giving anything away", async () => {
+		const contents = await build("where should we look?", {
+			guardian: { displayName: "John Doe", adventureKey: "rescue_ratatouille" },
+			mission: {
+				id: "mission-1-ratatouille-trail",
+				title: "The Trail to Ratatouille",
+				directive: "Find the ten Guardian clue cards hidden around the property.",
+				phase: "key_hunt",
+				keysUsed: 2,
+				keysTotal: 10,
+				pendingDecryption: false,
+				latestClueDescription: "Island Cove",
+			},
+		});
+		const system = contents.find((c) => c.role === "system").parts[0].text;
+
+		expect(system).toContain("The Trail to Ratatouille");
+		expect(system).toContain("Guardians logo");
+		expect(system).toContain("**2 of 10**");
+		expect(system).toContain('"Island Cove"');
+		expect(system).toContain("NEVER reveal");
+		expect(system).toContain("in order");
+		expect(system).toContain("exactly once");
+	});
+
+	test("a key accepted in chat steers Athena to confirm and hand off to the panel", async () => {
+		const contents = await build("we found X1G7!", {
+			guardian: { displayName: "John Doe", adventureKey: "rescue_ratatouille" },
+			mission: {
+				id: "mission-1-ratatouille-trail",
+				directive: "Find the cards.",
+				phase: "key_hunt",
+				keysUsed: 0,
+				keysTotal: 10,
+				transition: "key_accepted",
+			},
+		});
+		const system = contents.find((c) => c.role === "system").parts[0].text;
+
+		expect(system).toContain("reported a valid decryption key IN THIS MESSAGE");
+		expect(system).toContain("mission bar at the top of the screen");
+	});
+
+	test("a completed trail flips Athena into celebration mode", async () => {
+		const contents = await build("we did it!", {
+			guardian: { displayName: "John Doe", adventureKey: "rescue_ratatouille" },
+			mission: {
+				id: "mission-1-ratatouille-trail",
+				directive: "Find the cards.",
+				phase: "trail_complete",
+				keysUsed: 10,
+				keysTotal: 10,
+			},
+		});
+		const system = contents.find((c) => c.role === "system").parts[0].text;
+
+		expect(system).toContain("COMPLETE");
+		expect(system).toContain("compass");
+		expect(system).toContain("Do not recite the trail legs");
+	});
+
+	test("the alarm-reaction reply hands the Guardian the mission briefing", async () => {
+		const contents = await build("yes I'm ready!", {
+			guardian: { displayName: "John Doe", adventureKey: "rescue_ratatouille" },
+			onboarding: {
+				priorAthenaLine: "Ratatouille is MISSING!!!",
+				firstContact: false,
+				beat: "ratatouille_alarm",
+			},
+			mission: {
+				id: "mission-1-ratatouille-trail",
+				directive: "Find the cards.",
+				phase: "key_hunt",
+				keysUsed: 0,
+				keysTotal: 10,
+			},
+		});
+		const system = contents.find((c) => c.role === "system").parts[0].text;
+
+		expect(system).toContain("The Ratatouille alarm");
+		expect(system).toContain("blinking mission bar");
+		expect(system).toContain("Guardians logo");
+		// The full mission steering block stays out of the scripted beat.
+		expect(system).not.toContain("Current Mission: The Trail to Ratatouille");
+	});
+
 	test("Lake Norman guardian persona includes the field kit knowledge", async () => {
 		const contents = await build("what's in my box?", {
 			guardian: { displayName: "Thomas", adventureKey: "lake_norman_guardians" },

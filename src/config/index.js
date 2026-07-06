@@ -34,4 +34,12 @@ module.exports = {
 		.split(",")
 		.map((r) => r.trim().toLowerCase())
 		.filter(Boolean),
+
+	// Guardian IDs allowed to reset their own trail-mission progress in-app
+	// (the Guardians dev menu). Defaults to the seeded test account; full
+	// resets for any account go through `npm run reset:trail`.
+	TRAIL_RESET_GUARDIAN_IDS: (process.env.TRAIL_RESET_GUARDIAN_IDS || "12345678")
+		.split(",")
+		.map((id) => id.trim())
+		.filter(Boolean),
 };

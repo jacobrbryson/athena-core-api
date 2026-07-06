@@ -5,6 +5,28 @@ const { extractIp } = require("../helpers/utils");
 
 const clients = new Map(); // sessionId => Set<ws>
 
+// Guardian-keyed registry: every socket a guardian credential has open, across
+// ALL of their devices/sessions. A family shares one credential on several
+// devices at once, so cross-device fan-out (e.g. trail-mission updates) keys
+// on guardian_id rather than sessionId.
+const guardianClients = new Map(); // guardian_id => Set<ws>
+
+/**
+ * Push a payload to every open socket belonging to a guardian credential —
+ * all devices, all sessions. No-op when the guardian has no sockets (those
+ * devices catch up over the mission staleness poll instead).
+ */
+function broadcastToGuardian(guardianId, payload) {
+	const sockets = guardianClients.get(guardianId);
+	if (!sockets || !sockets.size) return;
+	const serialized = JSON.stringify(payload);
+	for (const ws of sockets) {
+		if (ws.readyState === ws.OPEN) {
+			ws.send(serialized);
+		}
+	}
+}
+
 function startWebSocketServer(server) {
 	const wss = new WebSocketServer({ server });
 
@@ -36,6 +58,18 @@ function startWebSocketServer(server) {
 		sessionClients.add(ws);
 		clients.set(sessionId, sessionClients);
 
+		// Guardian sockets (session JWT or ws-ticket — both carry guardian_id)
+		// also register under the credential for cross-device broadcasts.
+		const guardianId =
+			decoded.kind === "guardian" && decoded.guardian_id
+				? String(decoded.guardian_id)
+				: null;
+		if (guardianId) {
+			const guardianSet = guardianClients.get(guardianId) || new Set();
+			guardianSet.add(ws);
+			guardianClients.set(guardianId, guardianSet);
+		}
+
 		console.log(
 			`WS connected for session ${sessionId}. clients=${sessionClients.size}`
 		);
@@ -55,6 +89,15 @@ function startWebSocketServer(server) {
 					clients.delete(sessionId);
 				}
 			}
+			if (guardianId) {
+				const guardianSet = guardianClients.get(guardianId);
+				if (guardianSet) {
+					guardianSet.delete(ws);
+					if (guardianSet.size === 0) {
+						guardianClients.delete(guardianId);
+					}
+				}
+			}
 			console.log(
 				`WS disconnected: ${sessionId}. clients=${
 					clients.get(sessionId)?.size || 0
@@ -66,4 +109,4 @@ function startWebSocketServer(server) {
 	return clients;
 }
 
-module.exports = { startWebSocketServer };
+module.exports = { startWebSocketServer, broadcastToGuardian };

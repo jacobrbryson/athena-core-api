@@ -22,6 +22,49 @@
  * "all families" gate, so the real four-family game is unaffected.
  */
 const MISSIONS = {
+	/**
+	 * Rescue Ratatouille Mission 1 "The Trail to Ratatouille": ten clue cards are
+	 * hidden around the lake house property, each marked with the Guardians logo
+	 * and bearing a single-use decryption key. Reporting ANY valid unused key —
+	 * and then completing a short run of decryption challenges — reveals the next
+	 * leg of the trail, strictly in order. The keys and the trail legs are the
+	 * gated payload, so they live here and never ship in the frontend bundle.
+	 *
+	 * Trail legs chain: each leg's distance/bearing is walked FROM the previous
+	 * leg's location. Leg 0 is the trailhead (the Front Door).
+	 */
+	"mission-1-ratatouille-trail": {
+		objective: "trail",
+		adventures: {
+			rescue_ratatouille: {
+				keys: [
+					"X1G7",
+					"SM37",
+					"PX3P",
+					"C4A8",
+					"6KT8",
+					"XG1D",
+					"E34Z",
+					"VS8T",
+					"GYLL",
+					"7PKT",
+				],
+				clues: [
+					{ distance: 0, bearing: 0, description: "Front Door" },
+					{ distance: 170, bearing: 315, description: "Island Cove" },
+					{ distance: 120, bearing: 210, description: "Windy Run" },
+					{ distance: 100, bearing: 170, description: "Hunters Point" },
+					{ distance: 90, bearing: 150, description: "419 Bay Harbor" },
+					{ distance: 55, bearing: 180, description: "425 Bay Harbor" },
+					{ distance: 85, bearing: 210, description: "444 Bay Harbor" },
+					{ distance: 140, bearing: 175, description: "Shoreline" },
+					{ distance: 122, bearing: 125, description: "First Island" },
+					{ distance: 350, bearing: 200, description: "Fallen Tree" },
+				],
+			},
+		},
+	},
+
 	"mission-2-convergence": {
 		objective: "convergence",
 		adventures: {

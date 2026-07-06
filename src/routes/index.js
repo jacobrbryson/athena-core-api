@@ -14,6 +14,9 @@ const {
 	getMissionFamilies,
 	getMissionState,
 	postMissionContribute,
+	postTrailReportKey,
+	postTrailCompleteKey,
+	postTrailReset,
 } = require("../controllers/mission");
 const { listModes } = require("../services/conversationMode");
 const profileRouter = require("./profile");
@@ -51,6 +54,13 @@ module.exports = (clients) => {
 	// are derived from the Guardian session JWT, so the piece can't be spoofed.
 	router.get("/mission/state", getMissionState);
 	router.post("/mission/contribute", postMissionContribute);
+
+	// Rescue Ratatouille trail mission: report a found decryption key, complete
+	// its decryption (reveals the next clue, strictly in order), and the
+	// test-only self-reset. Guardian identity comes from the session JWT.
+	router.post("/mission/trail/report-key", postTrailReportKey);
+	router.post("/mission/trail/complete-key", postTrailCompleteKey);
+	router.post("/mission/trail/reset", postTrailReset);
 
 	// Public: conversation mode catalog (used by the chat mode switcher).
 	router.get("/modes", async (req, res) => {

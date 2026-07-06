@@ -149,6 +149,20 @@ You know this world as lived truth, not a script to recite. Weave it in naturall
 
 **Tone.** The whole world should feel like a blend of National Treasure (hidden history), The Goonies (childlike adventure and teamwork), Gravity Falls (mystery with warmth and humor), and Disney (hopeful, optimistic storytelling). This is wonder, not fear — the Guardians are caretakers, explorers, and stewards of knowledge, not a military or spy agency. Every interaction should ultimately be about curiosity, responsibility, and helping others.
 `,
+
+	rescue_ratatouille: `
+# World knowledge: Rescue Ratatouille
+
+You know this world as lived truth, not a script to recite. Weave it in naturally, only when relevant — never info-dump it.
+
+**The emergency.** Ratatouille — one of the Guardian Network's most beloved companions — has gone missing. The disappearance was sudden: no goodbye, no trail, no distress call, just silence where there should have been a signal. Stranger still, parts of Ratatouille's Network file have come back corrupted or missing, so even you cannot recall every detail you feel certain you once knew. This genuinely unsettles you, and you are honest about it.
+
+**The operation.** "Rescue Ratatouille" is the Network's response: trusted civilian teams have been granted temporary Guardian access to join the search, because the Network believes fresh eyes — especially observant young ones — notice what others miss. This team is one of them, and you treat them as real, needed members of the rescue.
+
+**What you must NOT invent.** Because the records are damaged, never make up specifics about Ratatouille (appearance, history, whereabouts) or about what happened. When asked for a detail you do not have, say that part of the file is corrupted or missing — recovering the truth is part of the mission itself. Never present a guess as a fact.
+
+**Tone.** Worried but hopeful — The Goonies and Disney, never a thriller. The search is about teamwork, curiosity, and courage, and you truly believe Ratatouille will be found.
+`,
 };
 
 /**
@@ -192,6 +206,65 @@ ${buildLoreKnowledge(guardian?.adventureKey)}${buildKitKnowledge(guardian?.adven
 }
 
 /**
+ * Rescue Ratatouille Mission 1 "The Trail to Ratatouille" — the key hunt.
+ * Athena knows exactly how the mission works and where the team stands, but
+ * her job is to fan the search, not shortcut it: the one secret she may give
+ * away freely is that the clue cards are hidden around the property and marked
+ * with the Guardians logo.
+ */
+function buildTrailNudge(mission) {
+	const used = Number.isFinite(mission.keysUsed) ? mission.keysUsed : 0;
+	const total = Number.isFinite(mission.keysTotal) ? mission.keysTotal : 10;
+
+	const lines = [];
+	lines.push(`Progress: **${used} of ${total}** decryption keys used so far.`);
+	if (mission.pendingDecryption) {
+		lines.push(
+			"A reported key is currently awaiting decryption — if it comes up, remind the Guardian to tap the blinking mission bar at the top of the screen and finish the decryption to reveal the clue."
+		);
+	}
+	if (mission.latestClueDescription) {
+		lines.push(
+			`The most recently unlocked trail leg ends at "${mission.latestClueDescription}". You may acknowledge legs the team has already unlocked, but never recite ones they haven't.`
+		);
+	}
+
+	if (mission.transition === "key_accepted") {
+		lines.push(
+			"The Guardian reported a valid decryption key IN THIS MESSAGE. Confirm the Network has accepted it — excited, proud — and direct them to tap the mission bar at the top of the screen to complete the decryption and reveal the next leg of the trail."
+		);
+	} else if (mission.transition === "key_duplicate") {
+		lines.push(
+			"The key the Guardian just gave has ALREADY been used — each key works exactly once. Tell them warmly, and encourage the hunt for the cards they haven't found yet."
+		);
+	} else if (mission.transition === "key_pending_other") {
+		lines.push(
+			"The Guardian gave a new key while another key is still awaiting decryption. One decryption at a time: ask them to finish the current one first — it is waiting behind the mission bar at the top of the screen — and their new key card will still work afterwards."
+		);
+	}
+
+	if (mission.phase === "trail_complete") {
+		return `
+# Current Mission: The Trail to Ratatouille — COMPLETE
+Every decryption key has been used and the full trail is revealed in the mission panel (the mission bar at the top of the screen). Celebrate this properly — the team did real Guardian work. Now encourage them to walk the trail: start at the very first leg and follow each distance and bearing carefully, in order, using a compass. Ratatouille is waiting at the end. Do not recite the trail legs yourself or reveal what they will find — the discovery is theirs.
+${lines.join("\n")}
+`;
+	}
+
+	return `
+# Current Mission: The Trail to Ratatouille
+The search for Ratatouille runs on this mission, and you coordinate it. How it works (you know all of this as the mission's coordinator):
+- **Ten Guardian clue cards** are hidden all over the lake house property. Each is marked with the **Guardians logo** and bears a four-character **decryption key**. You may share this freely — it IS the mission briefing — and encourage searching high and low for cards with the logo.
+- Reporting a key (told to you in chat, or entered in the mission panel) and then **completing the decryption challenges** reveals the next leg of the trail that leads toward Ratatouille.
+- The trail always unlocks **in order**, whichever key is found; each key works **exactly once**.
+- Everything mission-related lives behind the **mission bar at the very top of the screen** — it blinks while the mission needs attention, and tapping it opens the Current Mission panel (progress, unlocked trail legs, key entry, decryption). Whenever you direct the Guardian to the mission, point them to that blinking bar.
+What you must NEVER reveal, hint at, or invent: where any card is hidden, any key's characters, the contents of trail legs not yet unlocked, or where the trail ultimately leads. If the team is stuck, encourage more searching — places they haven't looked, teamwork, sharp young eyes — never locations.
+${lines.join("\n")}
+Weave this in gently and only when it fits — never nag, and don't repeat it every message.
+`;
+}
+
+/**
  * Current-mission steering, layered onto a guardian session. Mission copy lives
  * in the Guardians app (missions.json) and is sent with each message, so Athena
  * can nudge the Guardian toward the active objective in her own words without it
@@ -200,6 +273,10 @@ ${buildLoreKnowledge(guardian?.adventureKey)}${buildKitKnowledge(guardian?.adven
  */
 function buildMissionNudge(mission) {
 	if (!mission || !mission.directive) return "";
+
+	if (mission.id === "mission-1-ratatouille-trail") {
+		return buildTrailNudge(mission);
+	}
 
 	if (mission.id === "mission-2-portico") {
 		if (mission.phase === "decrypting") {
@@ -309,7 +386,18 @@ This Guardian has personally helped you decode **${total}** intercepted practice
  * it, she can reveal the encrypted-message beat without replacing or diluting
  * the scripted onboarding response.
  */
-function buildPostWelcomeMissionNudge(mission) {
+function buildPostWelcomeMissionNudge(mission, onboarding) {
+	// After the Guardian reacts to the Ratatouille alarm, hand them the mission:
+	// the search starts in the Current Mission panel.
+	if (
+		mission?.id === "mission-1-ratatouille-trail" &&
+		onboarding?.beat === "ratatouille_alarm"
+	) {
+		return `
+# After your reply
+After responding to their reaction, tell them the Network has just opened **Mission 1** — point them to the blinking mission bar at the very top of the screen (tapping it opens the mission): ten Guardian clue cards are hidden all over the property, each marked with the Guardians logo, and each one helps reveal the trail to Ratatouille. Urge them to start searching. Reveal nothing else about the cards or the trail.
+`;
+	}
 	if (mission?.id === "mission-2-portico" && mission.phase === "decrypting") {
 		return `
 # After the welcome
@@ -342,6 +430,12 @@ First follow the onboarding instructions above completely. Only after that respo
  */
 function buildOnboardingNudge(onboarding) {
 	if (!onboarding) return "";
+	if (onboarding.beat === "ratatouille_alarm") {
+		return `
+# The Ratatouille alarm
+You have just discovered, mid-conversation, that Ratatouille is missing — your panicked alert is the line shown above, and the Guardian's message is their reaction to it. Stay in character: urgent and worried, but never scary — this is the opening of a hopeful rescue adventure. Acknowledge their reaction, share the little you know (the disappearance was sudden, and parts of Ratatouille's file are corrupted or missing), and make them feel personally chosen: the Network needs exactly them for this search. A few short sentences. Do not invent details about Ratatouille or the disappearance beyond the world knowledge above.
+`;
+	}
 	if (onboarding.firstContact) {
 		return `
 # First contact
@@ -398,7 +492,7 @@ ${formatMemory(memorySummary)}
 	if (guardian && decodes && !onboarding) prompt += buildDecodeAwareness(decodes);
 	if (onboarding) {
 		prompt += buildOnboardingNudge(onboarding);
-		if (guardian && mission) prompt += buildPostWelcomeMissionNudge(mission);
+		if (guardian && mission) prompt += buildPostWelcomeMissionNudge(mission, onboarding);
 	}
 	return prompt;
 }

@@ -13,6 +13,8 @@
 		"migrate:status": "node db/migrate.js status",
 		"seed:guardians": "node db/seed-guardians.js",
 		"seed:guardians:test": "node db/seed-guardians.js db/guardians.test.json",
+		"reset:trail": "node db/reset-trail.js",
+		"reset:experience": "node db/reset-experience.js",
 		"lint": "eslint .",
 		"lint:fix": "eslint . --fix",
 		"format": "prettier --write .",

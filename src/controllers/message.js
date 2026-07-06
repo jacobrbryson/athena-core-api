@@ -4,6 +4,7 @@ const { extractIp } = require("../helpers/utils");
 const { decodeGuardianFromRequest } = require("../helpers/guardianToken");
 const { processAiResponse } = require("./gemini");
 const missionService = require("../services/mission");
+const { broadcastToGuardian } = require("../websocket/wsServer");
 const config = require("../config");
 
 const trimStr = (v, max) =>
@@ -32,6 +33,12 @@ function parseMessageContext(body = {}) {
 			? {
 					priorAthenaLine: trimStr(body.onboarding.priorAthenaLine, 600),
 					firstContact: Boolean(body.onboarding.firstContact),
+					// Scripted story beat this reply answers. Whitelisted — an
+					// unrecognized beat falls back to the default first/returning nudges.
+					beat:
+						body.onboarding.beat === "ratatouille_alarm"
+							? "ratatouille_alarm"
+							: undefined,
 			  }
 			: undefined;
 
@@ -207,6 +214,36 @@ async function addMessage(req, res, clients) {
 				);
 			} catch (err) {
 				console.warn("[message] mission state unavailable:", err.message);
+			}
+		}
+
+		// Rescue Ratatouille trail state is likewise server-owned. A key typed or
+		// spoken in chat counts as "reporting to Athena": it's accepted here (the
+		// decryption still happens in the panel) and the transition + live
+		// progress steer this same Athena response.
+		if (
+			ctx.guardianAuth?.adventure_key === missionService.RATATOUILLE_ADVENTURE
+		) {
+			try {
+				const transition = await missionService.applyTrailMessageTransition(
+					ctx.guardianAuth.adventure_key,
+					ctx.guardianAuth.guardian_id,
+					text
+				);
+				ctx.mission = await missionService.getTrailPromptContext(
+					ctx.guardianAuth.adventure_key,
+					ctx.guardianAuth.guardian_id,
+					transition
+				);
+				// A key accepted in chat changes shared trail state — nudge every
+				// device on this credential to re-fetch the mission panel.
+				if (transition === "key_accepted") {
+					broadcastToGuardian(ctx.guardianAuth.guardian_id, {
+						rpc: "trailUpdate",
+					});
+				}
+			} catch (err) {
+				console.warn("[message] trail state unavailable:", err.message);
 			}
 		}
 

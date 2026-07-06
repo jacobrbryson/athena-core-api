@@ -3,8 +3,8 @@
     "guardian_id": "12345678",
     "guardian_secret": "A1B2C3",
     "display_name": "John Doe",
-    "adventure_key": "lake_norman_guardians",
-    "participant_type": "guardian",
+    "adventure_key": "rescue_ratatouille",
+    "participant_type": "civilian_group",
     "is_active": true
   },
   {

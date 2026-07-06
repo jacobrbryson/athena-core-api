@@ -1,5 +1,21 @@
 const missionService = require("../services/mission");
+const config = require("../config");
 const { decodeGuardianFromRequest: decodeGuardian } = require("../helpers/guardianToken");
+const { broadcastToGuardian } = require("../websocket/wsServer");
+
+/**
+ * Nudge every device this guardian credential has open (the family shares one
+ * credential across several tablets/phones) to re-fetch the trail mission.
+ * Ping-only — clients respond with GET /mission/current, so what they render
+ * is always the server's authoritative state, never a stale pushed payload.
+ */
+function notifyTrailChanged(guardianId) {
+	try {
+		broadcastToGuardian(guardianId, { rpc: "trailUpdate" });
+	} catch (err) {
+		console.warn("[mission] trailUpdate broadcast failed:", err.message);
+	}
+}
 
 /**
  * GET /api/v1/mission/families
@@ -42,6 +58,34 @@ async function getCurrentMission(req, res) {
 	}
 
 	try {
+		// Rescue Ratatouille: Mission 1 is the key-hunt trail, tracked per guardian.
+		if (guardian.adventure_key === missionService.RATATOUILLE_ADVENTURE) {
+			const trail = await missionService.getTrailState(
+				guardian.adventure_key,
+				guardian.guardian_id
+			);
+			if (trail) {
+				return res.json({
+					success: true,
+					adventure_key: guardian.adventure_key,
+					phase: "key_hunt",
+					mission: {
+						id: missionService.TRAIL_MISSION,
+						number: 1,
+						title: "The Trail to Ratatouille",
+						status: trail.complete
+							? "Trail Complete"
+							: `${trail.keysUsed}/${trail.keysTotal} keys`,
+						summary: trail.complete
+							? "Every key is in. Follow the whole trail from the very start — Ratatouille is waiting at the end."
+							: "Ten Guardian clue cards are hidden around the property, marked with the Guardians logo. Each card's decryption key unlocks the next leg of the trail.",
+					},
+					families: [],
+					trail,
+				});
+			}
+		}
+
 		const state = await missionService.getCampaignMissionPhase(
 			guardian.adventure_key
 		);
@@ -229,9 +273,110 @@ async function postMissionContribute(req, res) {
 	}
 }
 
+/**
+ * POST /api/v1/mission/trail/report-key  { key }
+ * Report a decryption key from a found clue card. A valid unused key claims
+ * the next clue (in strict order) and goes pending until the decryption
+ * challenges are completed. The clue payload rides back so the decrypt game
+ * can de-glitch the real text.
+ */
+async function postTrailReportKey(req, res) {
+	const guardian = decodeGuardian(req);
+	if (!guardian) {
+		return res
+			.status(401)
+			.json({ success: false, message: "Guardian session required" });
+	}
+	try {
+		const result = await missionService.reportTrailKey(
+			guardian.adventure_key,
+			guardian.guardian_id,
+			req.body?.key
+		);
+		if (!result.ok) return res.json({ success: false, reason: result.reason });
+		notifyTrailChanged(guardian.guardian_id);
+		return res.json({ success: true, ...result });
+	} catch (err) {
+		console.error("[mission] postTrailReportKey failed:", err.message);
+		return res
+			.status(500)
+			.json({ success: false, message: "Failed to report key" });
+	}
+}
+
+/**
+ * POST /api/v1/mission/trail/complete-key  { key }
+ * Decryption challenges finished — flip the pending key to used and reveal the
+ * clue. Idempotent. Returns the refreshed trail state for the panel.
+ */
+async function postTrailCompleteKey(req, res) {
+	const guardian = decodeGuardian(req);
+	if (!guardian) {
+		return res
+			.status(401)
+			.json({ success: false, message: "Guardian session required" });
+	}
+	try {
+		const result = await missionService.completeTrailKey(
+			guardian.adventure_key,
+			guardian.guardian_id,
+			req.body?.key
+		);
+		if (!result.ok) return res.json({ success: false, reason: result.reason });
+		const trail = await missionService.getTrailState(
+			guardian.adventure_key,
+			guardian.guardian_id
+		);
+		notifyTrailChanged(guardian.guardian_id);
+		return res.json({ success: true, clue: result.clue, trail });
+	} catch (err) {
+		console.error("[mission] postTrailCompleteKey failed:", err.message);
+		return res
+			.status(500)
+			.json({ success: false, message: "Failed to complete decryption" });
+	}
+}
+
+/**
+ * POST /api/v1/mission/trail/reset
+ * Wipe the CALLER's own trail progress. Testing affordance only — gated to the
+ * allowlisted guardian ids (default: the seeded test account). Full resets for
+ * any account go through `npm run reset:trail`.
+ */
+async function postTrailReset(req, res) {
+	const guardian = decodeGuardian(req);
+	if (!guardian) {
+		return res
+			.status(401)
+			.json({ success: false, message: "Guardian session required" });
+	}
+	if (!config.TRAIL_RESET_GUARDIAN_IDS.includes(guardian.guardian_id)) {
+		return res
+			.status(403)
+			.json({ success: false, message: "Reset not permitted for this Guardian" });
+	}
+	try {
+		const removed = await missionService.resetTrail(guardian.guardian_id);
+		const trail = await missionService.getTrailState(
+			guardian.adventure_key,
+			guardian.guardian_id
+		);
+		notifyTrailChanged(guardian.guardian_id);
+		return res.json({ success: true, removed, trail });
+	} catch (err) {
+		console.error("[mission] postTrailReset failed:", err.message);
+		return res
+			.status(500)
+			.json({ success: false, message: "Failed to reset trail" });
+	}
+}
+
 module.exports = {
 	getCurrentMission,
 	getMissionFamilies,
 	getMissionState,
 	postMissionContribute,
+	postTrailReportKey,
+	postTrailCompleteKey,
+	postTrailReset,
 };
