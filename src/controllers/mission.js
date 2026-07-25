@@ -89,6 +89,33 @@ async function getCurrentMission(req, res) {
 			}
 		}
 
+		// Lake Norman is now on Mission 3. The legacy guardian_mission_state row
+		// still describes Mission 2's Portico phases, so it cannot be used as the
+		// release selector for the current banner. Mission 3's shared index is the
+		// authoritative live state instead.
+		if (guardian.adventure_key === missionService.LAKE_NORMAN_ADVENTURE) {
+			const index = await missionService.getIndexState(guardian.adventure_key);
+			if (index) {
+				return res.json({
+					success: true,
+					adventure_key: guardian.adventure_key,
+					phase: "active",
+					mission: {
+						id: missionService.INDEX_MISSION,
+						number: 3,
+						title: "The First Watch",
+						status: index.complete
+							? "Index Complete"
+							: `${index.found}/${index.total} records`,
+						summary: index.complete
+							? "The index is whole. Every piece the First Watch scattered has been recovered."
+							: "Index cards from 1963 are scattered across the high ground. Find them and read Athena the code on each one.",
+					},
+					families: [],
+				});
+			}
+		}
+
 		const state = await missionService.getCampaignMissionPhase(
 			guardian.adventure_key
 		);
