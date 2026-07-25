@@ -94,7 +94,13 @@ async function getCurrentMission(req, res) {
 		// release selector for the current banner. Mission 3's shared index is the
 		// authoritative live state instead.
 		if (guardian.adventure_key === missionService.LAKE_NORMAN_ADVENTURE) {
-			const index = await missionService.getIndexState(guardian.adventure_key);
+			const [index, indexClue] = await Promise.all([
+				missionService.getIndexState(guardian.adventure_key),
+				missionService.getIndexClueState(
+					guardian.adventure_key,
+					guardian.guardian_id
+				),
+			]);
 			if (index) {
 				return res.json({
 					success: true,
@@ -112,6 +118,8 @@ async function getCurrentMission(req, res) {
 							: "Index cards from 1963 are scattered across the high ground. Find them and read Athena the code on each one.",
 					},
 					families: [],
+					index,
+					indexClue,
 				});
 			}
 		}
@@ -472,13 +480,41 @@ async function postIndexReport(req, res) {
 			req.body?.code
 		);
 		if (!result.ok) return res.json({ success: false, reason: result.reason });
+		const clue = !result.alreadyFound
+			? await missionService.issueIndexClue(
+					guardian.adventure_key,
+					guardian.guardian_id
+				)
+			: null;
 		if (!result.alreadyFound) notifyIndexChanged(guardian.adventure_key);
-		return res.json({ success: true, ...result });
+		return res.json({ success: true, ...result, clue });
 	} catch (err) {
 		console.error("[mission] postIndexReport failed:", err.message);
 		return res
 			.status(500)
 			.json({ success: false, message: "Failed to report code" });
+	}
+}
+
+async function postIndexClueComplete(req, res) {
+	const guardian = decodeGuardian(req);
+	if (!guardian) {
+		return res
+			.status(401)
+			.json({ success: false, message: "Guardian session required" });
+	}
+	try {
+		const result = await missionService.completeIndexClue(
+			guardian.adventure_key,
+			guardian.guardian_id
+		);
+		if (!result.ok) return res.json({ success: false, reason: result.reason });
+		return res.json({ success: true, clue: result.clue });
+	} catch (err) {
+		console.error("[mission] postIndexClueComplete failed:", err.message);
+		return res
+			.status(500)
+			.json({ success: false, message: "Failed to reveal clue" });
 	}
 }
 
@@ -523,5 +559,6 @@ module.exports = {
 	postTrailReset,
 	getIndex,
 	postIndexReport,
+	postIndexClueComplete,
 	postIndexReset,
 };

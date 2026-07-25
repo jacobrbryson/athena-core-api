@@ -696,6 +696,151 @@ async function getIndexState(adventureKey) {
  * @returns {Promise<object>} { ok:true, entry, alreadyFound, newConvergences,
  *   progress } or { ok:false, reason:'invalid' }.
  */
+function clueHintFor(def, entryId) {
+	const configured = def?.clueHints?.[entryId];
+	if (typeof configured === "string") return { text: configured };
+	return configured && typeof configured.text === "string" ? configured : null;
+}
+
+function clueIsEligible(def, entryId, foundIds, firedIds) {
+	if (foundIds.has(entryId)) return false;
+	const hint = clueHintFor(def, entryId);
+	if (!hint) return false;
+	return !hint.requiresConvergence || firedIds.has(hint.requiresConvergence);
+}
+
+async function loadIndexClueRow(adventureKey, guardianId) {
+	const [rows] = await pool.query(
+		`SELECT target_entry_id, status, issued_at, revealed_at
+       FROM guardian_index_clue
+      WHERE mission_key = ? AND adventure_key = ? AND guardian_id = ?
+      LIMIT 1;`,
+		[INDEX_MISSION, adventureKey, guardianId]
+	);
+	return rows[0] || null;
+}
+
+async function chooseUnfoundClueTarget(def, adventureKey, foundIds, firedIds) {
+	const eligible = def.entries.filter((entry) =>
+		clueIsEligible(def, entry.id, foundIds, firedIds)
+	);
+	if (!eligible.length) return null;
+	const [rows] = await pool.query(
+		`SELECT target_entry_id, COUNT(*) AS assignments
+       FROM guardian_index_clue
+      WHERE mission_key = ? AND adventure_key = ? AND status = 'pending'
+      GROUP BY target_entry_id;`,
+		[INDEX_MISSION, adventureKey]
+	);
+	const counts = new Map(
+		rows.map((row) => [row.target_entry_id, Number(row.assignments) || 0])
+	);
+	return eligible.reduce((best, entry) =>
+		(counts.get(entry.id) || 0) < (counts.get(best.id) || 0) ? entry : best
+	);
+}
+
+async function savePendingIndexClue(adventureKey, guardianId, targetEntryId) {
+	await pool.query(
+		`INSERT INTO guardian_index_clue
+       (mission_key, adventure_key, guardian_id, target_entry_id, status, issued_at, revealed_at)
+     VALUES (?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, NULL)
+     ON DUPLICATE KEY UPDATE
+       target_entry_id = VALUES(target_entry_id),
+       status = 'pending',
+       issued_at = CURRENT_TIMESTAMP,
+       revealed_at = NULL;`,
+		[INDEX_MISSION, adventureKey, guardianId, targetEntryId]
+	);
+	return { pending: true, challenges: 3 };
+}
+
+async function issueIndexClue(adventureKey, guardianId) {
+	const def = getIndexDef(adventureKey);
+	if (!def || !guardianId) return null;
+	const [row, finds, fired] = await Promise.all([
+		loadIndexClueRow(adventureKey, guardianId),
+		loadIndexFinds(adventureKey),
+		loadFiredConvergences(adventureKey),
+	]);
+	const foundIds = new Set(finds.map((find) => find.entry_id));
+	const firedIds = new Set(fired);
+	if (
+		row?.status === "pending" &&
+		clueIsEligible(def, row.target_entry_id, foundIds, firedIds)
+	) {
+		return { pending: true, challenges: 3 };
+	}
+	const target = await chooseUnfoundClueTarget(
+		def,
+		adventureKey,
+		foundIds,
+		firedIds
+	);
+	return target
+		? savePendingIndexClue(adventureKey, guardianId, target.id)
+		: null;
+}
+
+async function getIndexClueState(adventureKey, guardianId) {
+	const def = getIndexDef(adventureKey);
+	if (!def || !guardianId) return null;
+	const [row, finds, fired] = await Promise.all([
+		loadIndexClueRow(adventureKey, guardianId),
+		loadIndexFinds(adventureKey),
+		loadFiredConvergences(adventureKey),
+	]);
+	if (!row || row.status !== "pending") return null;
+	const foundIds = new Set(finds.map((find) => find.entry_id));
+	const firedIds = new Set(fired);
+	if (clueIsEligible(def, row.target_entry_id, foundIds, firedIds)) {
+		return { pending: true, challenges: 3 };
+	}
+	const target = await chooseUnfoundClueTarget(
+		def,
+		adventureKey,
+		foundIds,
+		firedIds
+	);
+	return target
+		? savePendingIndexClue(adventureKey, guardianId, target.id)
+		: null;
+}
+
+async function completeIndexClue(adventureKey, guardianId) {
+	const def = getIndexDef(adventureKey);
+	if (!def || !guardianId) return { ok: false, reason: "invalid" };
+	const [row, finds, fired] = await Promise.all([
+		loadIndexClueRow(adventureKey, guardianId),
+		loadIndexFinds(adventureKey),
+		loadFiredConvergences(adventureKey),
+	]);
+	if (!row || row.status !== "pending") {
+		return { ok: false, reason: "none_pending" };
+	}
+	const foundIds = new Set(finds.map((find) => find.entry_id));
+	const firedIds = new Set(fired);
+	let targetId = row.target_entry_id;
+	if (!clueIsEligible(def, targetId, foundIds, firedIds)) {
+		const replacement = await chooseUnfoundClueTarget(
+			def,
+			adventureKey,
+			foundIds,
+			firedIds
+		);
+		if (!replacement) return { ok: false, reason: "complete" };
+		targetId = replacement.id;
+	}
+	const hint = clueHintFor(def, targetId);
+	await pool.query(
+		`UPDATE guardian_index_clue
+        SET target_entry_id = ?, status = 'revealed', revealed_at = CURRENT_TIMESTAMP
+      WHERE mission_key = ? AND adventure_key = ? AND guardian_id = ?;`,
+		[targetId, INDEX_MISSION, adventureKey, guardianId]
+	);
+	return { ok: true, clue: { text: hint.text } };
+}
+
 async function reportIndexCode(adventureKey, guardianId, rawCode) {
 	const def = getIndexDef(adventureKey);
 	if (!def || !guardianId) return { ok: false, reason: "invalid" };
@@ -841,6 +986,10 @@ async function resetIndex(adventureKey) {
 		`DELETE FROM guardian_index_convergence WHERE mission_key = ? AND adventure_key = ?;`,
 		[INDEX_MISSION, adventureKey]
 	);
+	await pool.query(
+		`DELETE FROM guardian_index_clue WHERE mission_key = ? AND adventure_key = ?;`,
+		[INDEX_MISSION, adventureKey]
+	);
 	return finds.affectedRows || 0;
 }
 
@@ -855,6 +1004,9 @@ module.exports = {
 	normalizeIndexCode,
 	findIndexCodeInMessage,
 	getIndexState,
+	getIndexClueState,
+	issueIndexClue,
+	completeIndexClue,
 	reportIndexCode,
 	applyIndexMessageTransition,
 	getIndexPromptContext,

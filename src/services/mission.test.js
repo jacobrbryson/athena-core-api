@@ -587,6 +587,41 @@ describe("mission service — Mission 3 'The First Watch' (shared index)", () =>
 		expect(pool.query).not.toHaveBeenCalled();
 	});
 
+	test("a new clue assignment targets an unfound card and persists for resume", async () => {
+		pool.query
+			.mockResolvedValueOnce([[]]) // no existing assignment
+			.mockResolvedValueOnce([[find(F01, "F-01")]]) // F-01 is already found
+			.mockResolvedValueOnce([[]]) // no fired convergences
+			.mockResolvedValueOnce([[]]) // no competing pending assignments
+			.mockResolvedValueOnce([{ affectedRows: 1 }]); // save F-02 assignment
+
+		const clue = await mission.issueIndexClue(ADV, GID);
+		expect(clue).toEqual({ pending: true, challenges: 3 });
+		const [insertSql, insertParams] = pool.query.mock.calls[4];
+		expect(insertSql).toContain("guardian_index_clue");
+		expect(insertParams).toEqual([M3, ADV, GID, "F-02"]);
+	});
+
+	test("completion retargets if another Guardian found the assigned card", async () => {
+		pool.query
+			.mockResolvedValueOnce([
+				[{ target_entry_id: "F-02", status: "pending" }],
+			])
+			.mockResolvedValueOnce([
+				[find(F01, "F-01"), find(F02, "F-02", OTHER)],
+			])
+			.mockResolvedValueOnce([[]])
+			.mockResolvedValueOnce([[]]) // assignment counts
+			.mockResolvedValueOnce([{ affectedRows: 1 }]); // reveal replacement
+
+		const result = await mission.completeIndexClue(ADV, GID);
+		expect(result.ok).toBe(true);
+		expect(result.clue.text).toContain("MIMI'S ROOM");
+		expect(JSON.stringify(result)).not.toContain("YRTG");
+		const [, updateParams] = pool.query.mock.calls[4];
+		expect(updateParams[0]).toBe("F-03");
+	});
+
 	/* ---- the prompt must not be able to leak an unfound card ---- */
 
 	test("prompt context contains ONLY found entries", async () => {
@@ -626,9 +661,11 @@ describe("mission service — Mission 3 'The First Watch' (shared index)", () =>
 	test("resetIndex clears the whole adventure's index", async () => {
 		pool.query
 			.mockResolvedValueOnce([{ affectedRows: 12 }])
-			.mockResolvedValueOnce([{ affectedRows: 2 }]);
+			.mockResolvedValueOnce([{ affectedRows: 2 }])
+			.mockResolvedValueOnce([{ affectedRows: 3 }]);
 		expect(await mission.resetIndex(ADV)).toBe(12);
 		expect(pool.query.mock.calls[0][1]).toEqual([M3, ADV]);
 		expect(pool.query.mock.calls[1][1]).toEqual([M3, ADV]);
+		expect(pool.query.mock.calls[2][0]).toContain("guardian_index_clue");
 	});
 });

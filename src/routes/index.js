@@ -19,6 +19,7 @@ const {
 	postTrailReset,
 	getIndex,
 	postIndexReport,
+	postIndexClueComplete,
 	postIndexReset,
 } = require("../controllers/mission");
 const { listModes } = require("../services/conversationMode");
@@ -70,6 +71,7 @@ module.exports = (clients) => {
 	// read and write adventure-scoped state, not per-guardian state.
 	router.get("/mission/index", getIndex);
 	router.post("/mission/index/report", postIndexReport);
+	router.post("/mission/index/clue/complete", postIndexClueComplete);
 	router.post("/mission/index/reset", postIndexReset);
 
 	// Public: conversation mode catalog (used by the chat mode switcher).

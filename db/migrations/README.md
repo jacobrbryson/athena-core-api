@@ -43,6 +43,7 @@ Connection is read from the same env vars as the app (`DB_HOST`, `DB_USER`,
 | `0012_adventure_schedule` | Adds campaign start scheduling and configures Rescue Ratatouille for July 6–12, 2026 (America/New_York). |
 | `0014_guardian_trail_key` | Rescue Ratatouille Mission 1 key-use table (`guardian_trail_key`): per-guardian single-use decryption keys, order-of-use clue indices, pending→used two-step. Reset with `npm run reset:trail [guardian_id]` (trail only) or `npm run reset:experience [guardian_id]` (trail + first-login + QR first-use, for replaying the whole first-contact experience). |
 | `0017_move_all_guardians_to_first_watch` | Makes Lake Norman / Mission 3 the primary campaign for every active Guardian while retaining Rescue Ratatouille as historical secondary enrollment. |
+| `0018_guardian_index_clue` | Adds resumable Mission 3 clue-decryption assignments, revalidated before reveal so hints always target unfound cards. |
 
 See [`docs/architecture/family-system.md`](../../../docs/architecture/family-system.md)
 for the data-model rationale and the deprecation path for `profile_child`.

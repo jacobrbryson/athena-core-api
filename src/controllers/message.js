@@ -231,6 +231,7 @@ async function addMessage(req, res, clients) {
 					// Shared state changed: fan out to every Guardian in the campaign so
 					// all eight panels update, not just this Guardian's own devices.
 					if (transition?.kind === "code_accepted") {
+						await missionService.issueIndexClue(adventureKey, guardianId);
 						broadcastToAdventure(adventureKey, { rpc: "indexUpdate" });
 					}
 				} else {
