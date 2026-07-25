@@ -350,4 +350,5 @@ module.exports = {
 	redeemLoginToken,
 	logAttempt,
 	resolveActiveAdventure,
+	resolveLinkedProfileId,
 };

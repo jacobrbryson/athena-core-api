@@ -1,7 +1,10 @@
 const missionService = require("../services/mission");
 const config = require("../config");
 const { decodeGuardianFromRequest: decodeGuardian } = require("../helpers/guardianToken");
-const { broadcastToGuardian } = require("../websocket/wsServer");
+const {
+	broadcastToGuardian,
+	broadcastToAdventure,
+} = require("../websocket/wsServer");
 
 /**
  * Nudge every device this guardian credential has open (the family shares one
@@ -371,6 +374,118 @@ async function postTrailReset(req, res) {
 	}
 }
 
+/* -------------------------------------------------------------------------- */
+/* Mission 3 "The First Watch" — the shared index                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Nudge every Guardian in the adventure to re-fetch the index. The index is
+ * network-shared, so a find by ONE Guardian has to land on ALL of their
+ * screens — not just the finder's other devices.
+ */
+function notifyIndexChanged(adventureKey) {
+	try {
+		broadcastToAdventure(adventureKey, { rpc: "indexUpdate" });
+	} catch (err) {
+		console.warn("[mission] indexUpdate broadcast failed:", err.message);
+	}
+}
+
+/**
+ * GET /api/v1/mission/index
+ * The adventure's shared index: every card found so far (in the order they
+ * were found, with who found each one) plus progress and fired convergences.
+ * Identical for every Guardian in the campaign — that's the point.
+ */
+async function getIndex(req, res) {
+	const guardian = decodeGuardian(req);
+	if (!guardian) {
+		return res
+			.status(401)
+			.json({ success: false, message: "Guardian session required" });
+	}
+	try {
+		const index = await missionService.getIndexState(guardian.adventure_key);
+		if (!index) {
+			return res.status(404).json({
+				success: false,
+				message: "Mission not found for this adventure",
+			});
+		}
+		return res.json({
+			success: true,
+			adventure_key: guardian.adventure_key,
+			index,
+		});
+	} catch (err) {
+		console.error("[mission] getIndex failed:", err.message);
+		return res
+			.status(500)
+			.json({ success: false, message: "Failed to load index" });
+	}
+}
+
+/**
+ * POST /api/v1/mission/index/report  { code }
+ * Report a found card. Any valid code works at any time — the index is
+ * unordered. A code another Guardian already reported is NOT an error: it
+ * comes back with alreadyFound so Athena can say who got there first.
+ */
+async function postIndexReport(req, res) {
+	const guardian = decodeGuardian(req);
+	if (!guardian) {
+		return res
+			.status(401)
+			.json({ success: false, message: "Guardian session required" });
+	}
+	try {
+		const result = await missionService.reportIndexCode(
+			guardian.adventure_key,
+			guardian.guardian_id,
+			req.body?.code
+		);
+		if (!result.ok) return res.json({ success: false, reason: result.reason });
+		if (!result.alreadyFound) notifyIndexChanged(guardian.adventure_key);
+		return res.json({ success: true, ...result });
+	} catch (err) {
+		console.error("[mission] postIndexReport failed:", err.message);
+		return res
+			.status(500)
+			.json({ success: false, message: "Failed to report code" });
+	}
+}
+
+/**
+ * POST /api/v1/mission/index/reset
+ * Wipe the adventure's whole index. Testing affordance — gated to the same
+ * allowlist as the trail reset, and destructive for the entire campaign (the
+ * index is shared), so it is deliberately not reachable by a normal Guardian.
+ */
+async function postIndexReset(req, res) {
+	const guardian = decodeGuardian(req);
+	if (!guardian) {
+		return res
+			.status(401)
+			.json({ success: false, message: "Guardian session required" });
+	}
+	if (!config.TRAIL_RESET_GUARDIAN_IDS.includes(guardian.guardian_id)) {
+		return res
+			.status(403)
+			.json({ success: false, message: "Reset not permitted for this Guardian" });
+	}
+	try {
+		const removed = await missionService.resetIndex(guardian.adventure_key);
+		const index = await missionService.getIndexState(guardian.adventure_key);
+		notifyIndexChanged(guardian.adventure_key);
+		return res.json({ success: true, removed, index });
+	} catch (err) {
+		console.error("[mission] postIndexReset failed:", err.message);
+		return res
+			.status(500)
+			.json({ success: false, message: "Failed to reset index" });
+	}
+}
+
 module.exports = {
 	getCurrentMission,
 	getMissionFamilies,
@@ -379,4 +494,7 @@ module.exports = {
 	postTrailReportKey,
 	postTrailCompleteKey,
 	postTrailReset,
+	getIndex,
+	postIndexReport,
+	postIndexReset,
 };

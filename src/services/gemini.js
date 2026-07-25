@@ -7,7 +7,7 @@ const ai = new GoogleGenAI({
 	apiKey: process.env.GEMINI_API_KEY,
 });
 
-const MODEL = "gemini-2.5-flash";
+const MODEL = "gemini-3.5-flash-lite";
 const TTS_MODEL = process.env.GEMINI_TTS_MODEL || "gemini-2.5-flash-preview-tts";
 const TTS_VOICE = process.env.GEMINI_TTS_VOICE || "Aoede";
 const TTS_SAMPLE_RATE = 24000;
@@ -135,6 +135,7 @@ async function generateSpeech(text) {
 }
 
 module.exports = {
+	MODEL,
 	generateResponse,
 	generateContentRaw,
 	generateSpeech,

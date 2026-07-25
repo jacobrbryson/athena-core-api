@@ -1,5 +1,5 @@
 const pool = require("../helpers/db");
-const { getMissionDef } = require("../config/missions");
+const { getMissionDef, getIndexDef: getIndexDefFor } = require("../config/missions");
 
 const LAKE_NORMAN_ADVENTURE = "lake_norman_guardians";
 const PORTICO_MISSION = "mission-2-portico";
@@ -7,6 +7,8 @@ const FINAL_CIPHER = "YP2LBHM7";
 
 const RATATOUILLE_ADVENTURE = "rescue_ratatouille";
 const TRAIL_MISSION = "mission-1-ratatouille-trail";
+
+const INDEX_MISSION = "mission-3-first-watch";
 
 /**
  * Mission service.
@@ -530,12 +532,333 @@ async function getConvergenceState(missionKey, adventureKey) {
 	};
 }
 
+/* -------------------------------------------------------------------------- */
+/* Mission 3 "The First Watch" — the shared index                             */
+/*                                                                            */
+/* ~28 physical cards, each with a four-character code, hidden across the      */
+/* property and the surrounding family houses. Reporting a code returns that   */
+/* card's 1963 record fragment.                                                */
+/*                                                                            */
+/* The defining difference from the Ratatouille trail: the index belongs to    */
+/* the NETWORK, not to a guardian. guardian_index_find's primary key omits     */
+/* guardian_id entirely, so one Guardian reporting a code advances the index   */
+/* for EVERY Guardian at once — which is exactly how the trail mission should  */
+/* have behaved and didn't. Order doesn't matter either: each record reads on  */
+/* its own, and the story assembles through convergences that fire on SETS of  */
+/* held entries rather than on any single card.                                */
+/* -------------------------------------------------------------------------- */
+
+/** The index definition for an adventure, or null if it doesn't apply. */
+function getIndexDef(adventureKey) {
+	return getIndexDefFor(INDEX_MISSION, adventureKey);
+}
+
+/** Uppercased code, or null if it can't be one (codes are 4 alphanumerics). */
+function normalizeIndexCode(raw) {
+	const code = typeof raw === "string" ? raw.trim().toUpperCase() : "";
+	return /^[A-Z0-9]{4}$/.test(code) ? code : null;
+}
+
+/** The entry a code belongs to, or null. */
+function indexEntryByCode(def, code) {
+	return def.entries.find((e) => e.code === code) || null;
+}
+
+/**
+ * The player-facing shape of an entry. Deliberately drops `note` (Athena's
+ * private steering), `reverse` (the back of the two-sided F-27 card, which
+ * Athena must not know about until a Guardian physically turns it over) and
+ * `decoy` (which would give away which lock digits are real).
+ */
+function indexEntryPayload(entry, row) {
+	return {
+		id: entry.id,
+		act: entry.act,
+		type: entry.type,
+		title: entry.title,
+		record: entry.record,
+		foundBy: row ? row.found_by_guardian_id : null,
+		foundAt: row ? row.found_at : null,
+	};
+}
+
+/** Every code this adventure has found, oldest first. */
+async function loadIndexFinds(adventureKey) {
+	const [rows] = await pool.query(
+		`SELECT code, entry_id, found_by_guardian_id, found_at
+       FROM guardian_index_find
+      WHERE mission_key = ? AND adventure_key = ?
+      ORDER BY found_at, code;`,
+		[INDEX_MISSION, adventureKey]
+	);
+	return rows;
+}
+
+/** Convergence ids that have already fired for this adventure. */
+async function loadFiredConvergences(adventureKey) {
+	const [rows] = await pool.query(
+		`SELECT convergence_id FROM guardian_index_convergence
+      WHERE mission_key = ? AND adventure_key = ?;`,
+		[INDEX_MISSION, adventureKey]
+	);
+	return rows.map((r) => r.convergence_id);
+}
+
+/** Whether a convergence's requirements are met by the held entries. */
+function convergenceSatisfied(conv, foundIds, firedIds) {
+	if (Array.isArray(conv.requiresAll)) {
+		if (!conv.requiresAll.every((id) => foundIds.has(id))) return false;
+	}
+	if (conv.requiresAny) {
+		const hits = conv.requiresAny.of.filter((id) => foundIds.has(id)).length;
+		if (hits < conv.requiresAny.count) return false;
+	}
+	if (Array.isArray(conv.requiresConvergence)) {
+		if (!conv.requiresConvergence.every((id) => firedIds.has(id))) return false;
+	}
+	return true;
+}
+
+/**
+ * Fire any convergences the network has newly earned and record them so they
+ * only ever land once. Returns the newly fired ones (in config order) so the
+ * caller can hand them to Athena on the same turn.
+ */
+async function fireNewConvergences(def, adventureKey, foundIds, alreadyFired) {
+	const firedIds = new Set(alreadyFired);
+	const newly = [];
+
+	// Sequential rather than parallel: FINALE_UNLOCK depends on CONVERGENCE_III
+	// having fired, so a convergence must be able to see one that fired earlier
+	// in this same pass.
+	for (const conv of def.convergences) {
+		if (firedIds.has(conv.id)) continue;
+		if (!convergenceSatisfied(conv, foundIds, firedIds)) continue;
+
+		const [result] = await pool.query(
+			`INSERT IGNORE INTO guardian_index_convergence
+         (mission_key, adventure_key, convergence_id)
+       VALUES (?, ?, ?);`,
+			[INDEX_MISSION, adventureKey, conv.id]
+		);
+		// affectedRows 0 means another device won the race — it has already been
+		// delivered, so don't deliver it twice.
+		if (result.affectedRows > 0) newly.push(conv);
+		firedIds.add(conv.id);
+	}
+	return newly;
+}
+
+/** The act the network is currently in, from the convergences it has fired. */
+function currentAct(def, firedIds) {
+	let act = 1;
+	for (const conv of def.convergences) {
+		if (firedIds.has(conv.id) && conv.act > act) act = conv.act;
+	}
+	return act;
+}
+
+/**
+ * Live index state for the whole adventure. Shared by every Guardian — the
+ * panel renders identically on all eight phones.
+ */
+async function getIndexState(adventureKey) {
+	const def = getIndexDef(adventureKey);
+	if (!def) return null;
+
+	const [rows, fired] = await Promise.all([
+		loadIndexFinds(adventureKey),
+		loadFiredConvergences(adventureKey),
+	]);
+	const byCode = new Map(rows.map((r) => [r.code, r]));
+	const firedIds = new Set(fired);
+
+	const entries = def.entries
+		.filter((e) => byCode.has(e.code))
+		.map((e) => indexEntryPayload(e, byCode.get(e.code)))
+		.sort((a, b) => new Date(a.foundAt) - new Date(b.foundAt));
+
+	return {
+		found: rows.length,
+		total: def.entries.length,
+		complete: rows.length >= def.entries.length,
+		act: currentAct(def, firedIds),
+		entries,
+		firedConvergences: fired,
+	};
+}
+
+/**
+ * Report a found card code. Any valid code works at any time — there is no
+ * ordering — and a code already claimed by ANOTHER Guardian is not an error:
+ * the card is simply already in the shared index, and we say who found it.
+ *
+ * @returns {Promise<object>} { ok:true, entry, alreadyFound, newConvergences,
+ *   progress } or { ok:false, reason:'invalid' }.
+ */
+async function reportIndexCode(adventureKey, guardianId, rawCode) {
+	const def = getIndexDef(adventureKey);
+	if (!def || !guardianId) return { ok: false, reason: "invalid" };
+
+	const code = normalizeIndexCode(rawCode);
+	const entry = code ? indexEntryByCode(def, code) : null;
+	if (!entry) return { ok: false, reason: "invalid" };
+
+	const [result] = await pool.query(
+		`INSERT IGNORE INTO guardian_index_find
+       (mission_key, adventure_key, code, entry_id, found_by_guardian_id)
+     VALUES (?, ?, ?, ?, ?);`,
+		[INDEX_MISSION, adventureKey, code, entry.id, guardianId]
+	);
+	const alreadyFound = result.affectedRows === 0;
+
+	const [rows, fired] = await Promise.all([
+		loadIndexFinds(adventureKey),
+		loadFiredConvergences(adventureKey),
+	]);
+	const foundIds = new Set(rows.map((r) => r.entry_id));
+	const newConvergences = await fireNewConvergences(
+		def,
+		adventureKey,
+		foundIds,
+		fired
+	);
+	const firedIds = new Set([...fired, ...newConvergences.map((c) => c.id)]);
+	const row = rows.find((r) => r.code === code) || null;
+
+	return {
+		ok: true,
+		alreadyFound,
+		entry: indexEntryPayload(entry, row),
+		newConvergences: newConvergences.map((c) => ({
+			id: c.id,
+			title: c.title,
+			body: c.body,
+		})),
+		progress: {
+			found: rows.length,
+			total: def.entries.length,
+			complete: rows.length >= def.entries.length,
+			act: currentAct(def, firedIds),
+		},
+	};
+}
+
+/** The first valid index code mentioned in a chat message, or null. */
+function findIndexCodeInMessage(def, message) {
+	if (typeof message !== "string") return null;
+	const codes = new Set(def.entries.map((e) => e.code));
+	const tokens = message.toUpperCase().split(/[^A-Z0-9]+/);
+	return tokens.find((t) => codes.has(t)) || null;
+}
+
+/**
+ * Chat-driven reporting: a Guardian reads Athena a code and it counts. This is
+ * the primary interface for Mission 3 — Mission 2 proved the kids much prefer
+ * typing the code straight into the conversation over using a panel.
+ */
+async function applyIndexMessageTransition(adventureKey, guardianId, message) {
+	const def = getIndexDef(adventureKey);
+	if (!def || !guardianId) return null;
+
+	const code = findIndexCodeInMessage(def, message);
+	if (!code) return null;
+
+	const result = await reportIndexCode(adventureKey, guardianId, code);
+	if (!result.ok) return null;
+	return {
+		kind: result.alreadyFound ? "code_duplicate" : "code_accepted",
+		entry: result.entry,
+		newConvergences: result.newConvergences,
+		progress: result.progress,
+	};
+}
+
+/**
+ * Athena's steering context for the index mission. Only entries the network has
+ * ACTUALLY FOUND are included — an unfound entry must not exist as far as the
+ * model is concerned, so it can't be summarized, hinted at, or leaked.
+ */
+async function getIndexPromptContext(adventureKey, guardianId, transition = null) {
+	const def = getIndexDef(adventureKey);
+	if (!def) return null;
+
+	const state = await getIndexState(adventureKey);
+	if (!state) return null;
+
+	const byId = new Map(def.entries.map((e) => [e.id, e]));
+	const foundEntries = state.entries.map((e) => ({
+		id: e.id,
+		title: e.title,
+		record: e.record,
+		// Athena's private steering for this card — how to play it, including the
+		// scripted failures. Never rendered to a client.
+		note: byId.get(e.id)?.note ?? null,
+		foundBy: e.foundBy,
+	}));
+
+	const latest = state.entries.length
+		? state.entries[state.entries.length - 1]
+		: null;
+
+	return {
+		id: INDEX_MISSION,
+		title: "The First Watch",
+		phase: state.complete ? "index_complete" : "index_hunt",
+		act: state.act,
+		transition: transition ? transition.kind : null,
+		foundCount: state.found,
+		total: state.total,
+		foundEntries,
+		latestEntry: transition?.entry
+			? {
+					id: transition.entry.id,
+					title: transition.entry.title,
+					record: transition.entry.record,
+					note: byId.get(transition.entry.id)?.note ?? null,
+					foundBy: transition.entry.foundBy,
+			  }
+			: latest,
+		newConvergences: transition?.newConvergences ?? [],
+		// The tell (§3 of the design doc) this card is scripted to carry, if any.
+		// Config-fired only — Athena never improvises the sentience layer.
+		pendingTell: transition?.entry
+			? byId.get(transition.entry.id)?.tell ?? null
+			: null,
+		directive:
+			"The Guardians find the cards; you read what's on them. Never reveal, summarize, or hint at an entry they have not found.",
+	};
+}
+
+/** Wipe the adventure's whole index (testing/staging). Returns rows removed. */
+async function resetIndex(adventureKey) {
+	if (!adventureKey) return 0;
+	const [finds] = await pool.query(
+		`DELETE FROM guardian_index_find WHERE mission_key = ? AND adventure_key = ?;`,
+		[INDEX_MISSION, adventureKey]
+	);
+	await pool.query(
+		`DELETE FROM guardian_index_convergence WHERE mission_key = ? AND adventure_key = ?;`,
+		[INDEX_MISSION, adventureKey]
+	);
+	return finds.affectedRows || 0;
+}
+
 module.exports = {
 	LAKE_NORMAN_ADVENTURE,
 	PORTICO_MISSION,
 	FINAL_CIPHER,
 	RATATOUILLE_ADVENTURE,
 	TRAIL_MISSION,
+	INDEX_MISSION,
+	getIndexDef,
+	normalizeIndexCode,
+	findIndexCodeInMessage,
+	getIndexState,
+	reportIndexCode,
+	applyIndexMessageTransition,
+	getIndexPromptContext,
+	resetIndex,
 	getTrailState,
 	reportTrailKey,
 	completeTrailKey,

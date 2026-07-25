@@ -18,7 +18,7 @@ const geminiService = require("./gemini");
  * nothing. The partner secret alone authorizes the call (verified by the caller).
  */
 
-const MODEL_VERSION = "ghost-chores-v1/gemini-2.5-flash";
+const MODEL_VERSION = `ghost-chores-v1/${geminiService.MODEL}`;
 
 const DEFAULT_COUNT = 6;
 const MAX_COUNT = 12;

@@ -1,6 +1,7 @@
 const sessionTopicService = require("../services/sessionTopic");
 const sessionService = require("../services/session");
 const { extractIp } = require("../helpers/utils");
+const { resolveCallerProfileId } = require("../helpers/callerIdentity");
 const { publicTopic } = require("../helpers/serialize");
 
 async function getTopics(req, res) {
@@ -13,7 +14,10 @@ async function getTopics(req, res) {
 				.status(400)
 				.json({ success: false, message: "Missing session UUID" });
 
-		const session = await sessionService.getSessionByUuidAndIp(uuid, ip);
+		const session = await sessionService.getAuthorizedSession(uuid, {
+			ip,
+			callerProfileId: await resolveCallerProfileId(req),
+		});
 		if (!session)
 			return res
 				.status(404)

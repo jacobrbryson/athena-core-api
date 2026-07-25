@@ -17,6 +17,9 @@ const {
 	postTrailReportKey,
 	postTrailCompleteKey,
 	postTrailReset,
+	getIndex,
+	postIndexReport,
+	postIndexReset,
 } = require("../controllers/mission");
 const { listModes } = require("../services/conversationMode");
 const profileRouter = require("./profile");
@@ -61,6 +64,13 @@ module.exports = (clients) => {
 	router.post("/mission/trail/report-key", postTrailReportKey);
 	router.post("/mission/trail/complete-key", postTrailCompleteKey);
 	router.post("/mission/trail/reset", postTrailReset);
+
+	// Mission 3 "The First Watch": the shared index. Reporting a card code
+	// advances the index for EVERY Guardian in the adventure at once, so these
+	// read and write adventure-scoped state, not per-guardian state.
+	router.get("/mission/index", getIndex);
+	router.post("/mission/index/report", postIndexReport);
+	router.post("/mission/index/reset", postIndexReset);
 
 	// Public: conversation mode catalog (used by the chat mode switcher).
 	router.get("/modes", async (req, res) => {

@@ -43,12 +43,17 @@ async function resolveProfileBinding(profileUuid) {
 }
 
 /**
- * Retrieves a session record by its UUID and IP address.
+ * Retrieves a session record by UUID alone. Authorization is the caller's job —
+ * use `getAuthorizedSession`, which is what every controller should call.
+ *
+ * `ip` is still accepted and, when given, still filtered on; that path is only
+ * used for anonymous sessions which have no identity to check instead.
+ *
  * @param {string} uuid The session UUID.
- * @param {string} ip The IP address.
+ * @param {string|null} ip Optional IP to require a match on.
  * @returns {Promise<object | undefined>} The session record or undefined.
  */
-async function getSessionByUuidAndIp(uuid, ip) {
+async function getSessionByUuidAndIp(uuid, ip = null) {
 	const [rows] = await pool.query(
 		`SELECT 
     s.id,
@@ -76,12 +81,43 @@ async function getSessionByUuidAndIp(uuid, ip) {
         AND m3.created_at >= NOW() - INTERVAL 24 HOUR
     ) AS ip_message_count_24h
 FROM session s
-WHERE s.uuid = ?
-  AND s.ip_address = ? LIMIT 1;`,
-		[uuid, ip]
+WHERE s.uuid = ?${ip ? " AND s.ip_address = ?" : ""} LIMIT 1;`,
+		ip ? [uuid, ip] : [uuid]
 	);
 
 	return rows[0];
+}
+
+/**
+ * Fetch a session the caller is actually entitled to.
+ *
+ * Sessions used to be resumable by (uuid + IP), which broke every time a child
+ * moved between wifi and cell data — they silently got a brand-new session and
+ * lost their conversation and any activity in progress. Identity is the correct
+ * key, so:
+ *
+ *   - A session bound to a profile requires the caller to have PROVEN that same
+ *     profile via a signed token. This is strictly stronger than the old IP
+ *     check (a signature can't be spoofed by forging a header) and it survives
+ *     changing networks.
+ *   - A genuinely anonymous session (profile_id IS NULL) has no identity to
+ *     compare, so it keeps the IP check as its only protection.
+ *
+ * @param {string} uuid session uuid
+ * @param {object} opts { ip, callerProfileId }
+ * @returns {Promise<object|null>} the session, or null if absent/unauthorized.
+ */
+async function getAuthorizedSession(uuid, { ip = null, callerProfileId = null } = {}) {
+	if (!uuid) return null;
+	const session = await getSessionByUuidAndIp(uuid, null);
+	if (!session) return null;
+
+	if (session.profile_id != null) {
+		return Number(callerProfileId) === Number(session.profile_id) ? session : null;
+	}
+	// Anonymous session — nothing to authenticate against but the network.
+	if (!ip || session.ip_address !== ip) return null;
+	return session;
 }
 
 /**
@@ -138,6 +174,7 @@ async function bindSessionProfile(sessionId, profileId, familyId = null) {
 module.exports = {
 	addSession,
 	getSessionByUuidAndIp,
+	getAuthorizedSession,
 	updateSession,
 	resolveProfileBinding,
 	bindSessionProfile,

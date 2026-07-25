@@ -5,6 +5,7 @@ const {
 	allowedModesForProfile,
 } = require("../services/familyPermissions");
 const { extractIp } = require("../helpers/utils");
+const { resolveCallerProfileId } = require("../helpers/callerIdentity");
 
 /** Active mode keys this profile may actually use (for client gating). */
 async function getAllowedModes(profileId) {
@@ -35,18 +36,23 @@ async function getOrCreateSession(req, res) {
 		);
 		const profileUuid = req.query.profile_uuid || req.body?.profile_uuid;
 
+		// The profile this caller has cryptographically proven (signed token only —
+		// never the profile_uuid query param, which the client controls).
+		const callerProfileId = await resolveCallerProfileId(req);
+
 		if (sessionId) {
-			const session = await sessionService.getSessionByUuidAndIp(
-				sessionId,
-				ipAddress
-			);
+			const session = await sessionService.getAuthorizedSession(sessionId, {
+				ip: ipAddress,
+				callerProfileId,
+			});
 
 			if (session) {
-				// Upgrade a previously-anonymous (IP-bound) session to the now-
-				// known profile. A logged-in parent's first session can be created
-				// before their profile_uuid is available; without this, that
-				// session stays unbound forever and profile-scoped features (e.g.
-				// Connected App grounding) never run for it.
+				// Upgrade a previously-anonymous session to the now-known profile. A
+				// logged-in parent's first session can be created before their
+				// profile_uuid is available; without this, that session stays unbound
+				// forever and profile-scoped features (e.g. Connected App grounding)
+				// never run for it. Binding also promotes the session off IP checks
+				// and onto identity, so it survives a network change from then on.
 				if (profileUuid && !session.profile_id) {
 					const { profileId, familyId } =
 						await sessionService.resolveProfileBinding(profileUuid);

@@ -2,9 +2,14 @@ const messageService = require("../services/message");
 const sessionService = require("../services/session");
 const { extractIp } = require("../helpers/utils");
 const { decodeGuardianFromRequest } = require("../helpers/guardianToken");
+const { resolveCallerProfileId } = require("../helpers/callerIdentity");
 const { processAiResponse } = require("./gemini");
 const missionService = require("../services/mission");
-const { broadcastToGuardian } = require("../websocket/wsServer");
+const gameService = require("../services/game");
+const {
+	broadcastToGuardian,
+	broadcastToAdventure,
+} = require("../websocket/wsServer");
 const config = require("../config");
 
 const trimStr = (v, max) =>
@@ -113,7 +118,10 @@ async function getMessage(req, res) {
 				.status(400)
 				.json({ success: false, message: "Missing session UUID" });
 
-		const session = await sessionService.getSessionByUuidAndIp(uuid, ip);
+		const session = await sessionService.getAuthorizedSession(uuid, {
+			ip,
+			callerProfileId: await resolveCallerProfileId(req),
+		});
 		if (!session)
 			return res
 				.status(404)
@@ -145,10 +153,10 @@ async function addMessage(req, res, clients) {
 				.json({ success: false, message: "Message must be a string" });
 		}
 
-		const session = await sessionService.getSessionByUuidAndIp(
-			sessionId,
-			ip
-		);
+		const session = await sessionService.getAuthorizedSession(sessionId, {
+			ip,
+			callerProfileId: await resolveCallerProfileId(req),
+		});
 		if (!session)
 			return res
 				.status(404)
@@ -202,16 +210,40 @@ async function addMessage(req, res, clients) {
 		if (
 			ctx.guardianAuth?.adventure_key === missionService.LAKE_NORMAN_ADVENTURE
 		) {
+			const adventureKey = ctx.guardianAuth.adventure_key;
+			const guardianId = ctx.guardianAuth.guardian_id;
 			try {
-				const transition = await missionService.applyMessageTransition(
-					ctx.guardianAuth.adventure_key,
-					ctx.guardianAuth.guardian_id,
-					text
-				);
-				ctx.mission = await missionService.getMissionPromptContext(
-					ctx.guardianAuth.adventure_key,
-					transition
-				);
+				if (missionService.getIndexDef(adventureKey)) {
+					// Mission 3 "The First Watch". Reading a card code to Athena in chat
+					// IS the report — the loop the kids actually love — and because the
+					// index is network-shared it advances the mission for EVERY Guardian,
+					// not just the one who typed it.
+					const transition = await missionService.applyIndexMessageTransition(
+						adventureKey,
+						guardianId,
+						text
+					);
+					ctx.mission = await missionService.getIndexPromptContext(
+						adventureKey,
+						guardianId,
+						transition
+					);
+					// Shared state changed: fan out to every Guardian in the campaign so
+					// all eight panels update, not just this Guardian's own devices.
+					if (transition?.kind === "code_accepted") {
+						broadcastToAdventure(adventureKey, { rpc: "indexUpdate" });
+					}
+				} else {
+					const transition = await missionService.applyMessageTransition(
+						adventureKey,
+						guardianId,
+						text
+					);
+					ctx.mission = await missionService.getMissionPromptContext(
+						adventureKey,
+						transition
+					);
+				}
 			} catch (err) {
 				console.warn("[message] mission state unavailable:", err.message);
 			}
@@ -245,6 +277,19 @@ async function addMessage(req, res, clients) {
 			} catch (err) {
 				console.warn("[message] trail state unavailable:", err.message);
 			}
+		}
+
+		// Card games are adjudicated server-side BEFORE the prompt is built, so
+		// the moves Athena narrates have actually happened and her hand is real
+		// rather than improvised. Never blocks the conversation.
+		try {
+			ctx.game = await gameService.applyGameMessage(
+				session.id,
+				text,
+				session.profile_id || null
+			);
+		} catch (err) {
+			console.warn("[message] game state unavailable:", err.message);
 		}
 
 		const humanChatUuid = await messageService.addMessage(

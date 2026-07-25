@@ -14,6 +14,7 @@
 		"seed:guardians": "node db/seed-guardians.js",
 		"seed:guardians:test": "node db/seed-guardians.js db/guardians.test.json",
 		"reset:trail": "node db/reset-trail.js",
+		"reset:index": "node db/reset-index.js",
 		"reset:experience": "node db/reset-experience.js",
 		"lint": "eslint .",
 		"lint:fix": "eslint . --fix",

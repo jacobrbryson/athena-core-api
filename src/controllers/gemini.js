@@ -50,6 +50,7 @@ async function processAiResponse(session, message, clients, ctx = {}) {
 			onboarding: ctx.onboarding,
 			mission: ctx.mission,
 			decodes: ctx.decodes,
+			game: ctx.game,
 			history,
 		});
 		const response = await geminiService.generateResponse(prompt);

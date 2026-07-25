@@ -366,3 +366,269 @@ describe("mission service — Ratatouille trail (key hunt)", () => {
 		]);
 	});
 });
+
+describe("mission service — Mission 3 'The First Watch' (shared index)", () => {
+	const M3 = "mission-3-first-watch";
+	const GID = "12345678";
+	const OTHER = "87654321";
+
+	// Codes from the real card set (see docs/missions/mission-3-the-first-watch.md).
+	const F01 = "JGGT"; // Beam's Mill ledger
+	const F02 = "HKAM"; // Nell's steeple journal
+	const F05 = "SUXV"; // Duke Power survey stake — elevation 760
+	const F27 = "CDMH"; // the coordinates (two-sided card)
+
+	const find = (code, entry_id, guardian = GID, at = "2026-07-01T10:00:00Z") => ({
+		code,
+		entry_id,
+		found_by_guardian_id: guardian,
+		found_at: at,
+	});
+
+	test("only four-character codes in the card set are accepted", async () => {
+		expect(await mission.reportIndexCode(ADV, GID, "ZZZZ")).toEqual({
+			ok: false,
+			reason: "invalid",
+		});
+		expect(await mission.reportIndexCode(ADV, GID, "not a code")).toEqual({
+			ok: false,
+			reason: "invalid",
+		});
+		// Right shape, wrong campaign — Mission 3 is Lake Norman only.
+		expect(await mission.reportIndexCode("rescue_ratatouille", GID, F01)).toEqual({
+			ok: false,
+			reason: "invalid",
+		});
+		expect(pool.query).not.toHaveBeenCalled();
+	});
+
+	test("a valid code returns the 1963 record verbatim", async () => {
+		pool.query
+			.mockResolvedValueOnce([{ affectedRows: 1 }]) // INSERT the find
+			.mockResolvedValueOnce([[find(F01, "F-01")]]) // loadIndexFinds
+			.mockResolvedValueOnce([[]]); // loadFiredConvergences
+
+		const res = await mission.reportIndexCode(ADV, GID, "jggt");
+		expect(res.ok).toBe(true);
+		expect(res.alreadyFound).toBe(false);
+		expect(res.entry.id).toBe("F-01");
+		expect(res.entry.record).toContain("Let the water have it");
+		expect(res.progress).toMatchObject({ found: 1, total: 28, complete: false });
+	});
+
+	test("the player payload never leaks Athena's steering or the card's reverse", async () => {
+		pool.query
+			.mockResolvedValueOnce([{ affectedRows: 1 }])
+			.mockResolvedValueOnce([[find(F27, "F-27")]])
+			.mockResolvedValueOnce([[]]);
+
+		const res = await mission.reportIndexCode(ADV, GID, F27);
+		// `note` is Athena's private steering; `reverse` is the back of the card,
+		// which she must not know about until a Guardian physically turns it over.
+		expect(res.entry).not.toHaveProperty("note");
+		expect(res.entry).not.toHaveProperty("reverse");
+		expect(res.entry).not.toHaveProperty("decoy");
+		expect(JSON.stringify(res.entry)).not.toContain("where the water stops");
+	});
+
+	/* ---- the behaviour Mission 2 got wrong: shared, not per-guardian ---- */
+
+	test("a card found by ONE Guardian is recorded for the whole network", async () => {
+		pool.query
+			.mockResolvedValueOnce([{ affectedRows: 1 }])
+			.mockResolvedValueOnce([[find(F01, "F-01")]])
+			.mockResolvedValueOnce([[]]);
+
+		await mission.reportIndexCode(ADV, GID, F01);
+
+		// The find row is keyed by mission+adventure+code. The guardian id is
+		// stored only to credit the finder — it is NOT part of the identity of
+		// the find, so no second Guardian can claim the same card.
+		const [insertSql, insertParams] = pool.query.mock.calls[0];
+		expect(insertSql).toContain("guardian_index_find");
+		expect(insertParams).toEqual([M3, ADV, F01, "F-01", GID]);
+
+		// And the read-back is scoped to the ADVENTURE, with no guardian filter.
+		const [selectSql, selectParams] = pool.query.mock.calls[1];
+		expect(selectSql).not.toContain("found_by_guardian_id = ?");
+		expect(selectParams).toEqual([M3, ADV]);
+	});
+
+	test("every Guardian sees the same index regardless of who found what", async () => {
+		pool.query
+			.mockResolvedValueOnce([
+				[find(F01, "F-01", GID), find(F02, "F-02", OTHER)],
+			])
+			.mockResolvedValueOnce([[]]);
+
+		// A Guardian who personally found nothing still gets the full index.
+		const state = await mission.getIndexState(ADV);
+		expect(state.found).toBe(2);
+		expect(state.entries.map((e) => e.id)).toEqual(["F-01", "F-02"]);
+		expect(state.entries.map((e) => e.foundBy)).toEqual([GID, OTHER]);
+		// State is fetched per adventure — a guardian id is never even passed in.
+		expect(pool.query.mock.calls[0][1]).toEqual([M3, ADV]);
+	});
+
+	test("re-reporting a card another Guardian already found credits the finder", async () => {
+		pool.query
+			.mockResolvedValueOnce([{ affectedRows: 0 }]) // INSERT IGNORE — already there
+			.mockResolvedValueOnce([[find(F01, "F-01", OTHER)]])
+			.mockResolvedValueOnce([[]]);
+
+		const res = await mission.reportIndexCode(ADV, GID, F01);
+		expect(res.ok).toBe(true);
+		expect(res.alreadyFound).toBe(true);
+		expect(res.entry.foundBy).toBe(OTHER);
+	});
+
+	/* ---- convergences: the story assembles from SETS, not from order ---- */
+
+	test("CONVERGENCE_I fires once the will-not-a-diary set is held", async () => {
+		pool.query
+			.mockResolvedValueOnce([{ affectedRows: 1 }])
+			.mockResolvedValueOnce([
+				[find(F01, "F-01"), find(F02, "F-02"), find(F05, "F-05")],
+			])
+			.mockResolvedValueOnce([[]]) // nothing fired yet
+			.mockResolvedValueOnce([{ affectedRows: 1 }]); // INSERT the convergence
+
+		const res = await mission.reportIndexCode(ADV, GID, F05);
+		expect(res.newConvergences).toHaveLength(1);
+		expect(res.newConvergences[0].id).toBe("CONVERGENCE_I");
+		expect(res.newConvergences[0].body).toContain("writing a will");
+	});
+
+	test("a convergence already fired is never delivered twice", async () => {
+		pool.query
+			.mockResolvedValueOnce([{ affectedRows: 0 }])
+			.mockResolvedValueOnce([
+				[find(F01, "F-01"), find(F02, "F-02"), find(F05, "F-05")],
+			])
+			.mockResolvedValueOnce([[{ convergence_id: "CONVERGENCE_I" }]]);
+
+		const res = await mission.reportIndexCode(ADV, GID, F01);
+		expect(res.newConvergences).toEqual([]);
+	});
+
+	test("STUCK_ON_NUMBERS needs five of the seven Keeper numbers", async () => {
+		const numbers = [
+			["SFCD", "F-19"],
+			["JDGN", "F-20"],
+			["DEEG", "F-21"],
+			["OGAT", "F-22"],
+			["UVZE", "F-23"],
+		].map(([c, id]) => find(c, id));
+
+		// Four is not enough.
+		pool.query
+			.mockResolvedValueOnce([{ affectedRows: 1 }])
+			.mockResolvedValueOnce([[...numbers.slice(0, 4)]])
+			.mockResolvedValueOnce([[]]);
+		let res = await mission.reportIndexCode(ADV, GID, "OGAT");
+		expect(res.newConvergences).toEqual([]);
+
+		pool.query.mockReset();
+
+		// Five is.
+		pool.query
+			.mockResolvedValueOnce([{ affectedRows: 1 }])
+			.mockResolvedValueOnce([numbers])
+			.mockResolvedValueOnce([[]])
+			.mockResolvedValueOnce([{ affectedRows: 1 }]);
+		res = await mission.reportIndexCode(ADV, GID, "UVZE");
+		expect(res.newConvergences.map((c) => c.id)).toEqual(["STUCK_ON_NUMBERS"]);
+		expect(res.newConvergences[0].body).toContain("840");
+	});
+
+	test("FINALE_UNLOCK is gated behind CONVERGENCE_III, not just the coordinates", async () => {
+		// Coordinates in hand, but the combination was never assembled.
+		pool.query
+			.mockResolvedValueOnce([{ affectedRows: 1 }])
+			.mockResolvedValueOnce([[find(F27, "F-27")]])
+			.mockResolvedValueOnce([[]]);
+		let res = await mission.reportIndexCode(ADV, GID, F27);
+		expect(res.newConvergences).toEqual([]);
+
+		pool.query.mockReset();
+
+		// Same card, but the Guardians have already worked out the lock.
+		pool.query
+			.mockResolvedValueOnce([{ affectedRows: 1 }])
+			.mockResolvedValueOnce([[find(F27, "F-27")]])
+			.mockResolvedValueOnce([[{ convergence_id: "CONVERGENCE_III" }]])
+			.mockResolvedValueOnce([{ affectedRows: 1 }]);
+		res = await mission.reportIndexCode(ADV, GID, F27);
+		expect(res.newConvergences.map((c) => c.id)).toEqual(["FINALE_UNLOCK"]);
+		expect(res.progress.act).toBe(4);
+	});
+
+	/* ---- chat is the primary interface ---- */
+
+	test("a code spoken in chat counts as reporting it", async () => {
+		pool.query
+			.mockResolvedValueOnce([{ affectedRows: 1 }])
+			.mockResolvedValueOnce([[find(F01, "F-01")]])
+			.mockResolvedValueOnce([[]]);
+
+		const t = await mission.applyIndexMessageTransition(
+			ADV,
+			GID,
+			"athena!! we found a card behind the oven, it says jggt"
+		);
+		expect(t.kind).toBe("code_accepted");
+		expect(t.entry.id).toBe("F-01");
+	});
+
+	test("chat without a code produces no transition and no writes", async () => {
+		expect(
+			await mission.applyIndexMessageTransition(ADV, GID, "where should we look?")
+		).toBeNull();
+		expect(pool.query).not.toHaveBeenCalled();
+	});
+
+	/* ---- the prompt must not be able to leak an unfound card ---- */
+
+	test("prompt context contains ONLY found entries", async () => {
+		pool.query
+			.mockResolvedValueOnce([[find(F01, "F-01"), find(F02, "F-02")]])
+			.mockResolvedValueOnce([[]]);
+
+		const ctx = await mission.getIndexPromptContext(ADV, GID);
+		expect(ctx).toMatchObject({ id: M3, foundCount: 2, total: 28, act: 1 });
+		expect(ctx.foundEntries.map((e) => e.id)).toEqual(["F-01", "F-02"]);
+
+		// Nothing unfound may appear anywhere in what Athena is handed — not the
+		// lock combination, not the reverse of the coordinates card, not a
+		// record she hasn't been given.
+		const serialized = JSON.stringify(ctx);
+		expect(serialized).not.toContain("4702");
+		expect(serialized).not.toContain("where the water stops");
+		expect(serialized).not.toContain("F-27");
+		expect(serialized).not.toContain("Elmwood");
+	});
+
+	test("prompt context carries the scripted tell for the lantern card", async () => {
+		pool.query
+			.mockResolvedValueOnce([{ affectedRows: 1 }])
+			.mockResolvedValueOnce([[find("VQAJ", "F-04")]])
+			.mockResolvedValueOnce([[]])
+			// getIndexPromptContext re-reads state
+			.mockResolvedValueOnce([[find("VQAJ", "F-04")]])
+			.mockResolvedValueOnce([[]]);
+
+		const t = await mission.applyIndexMessageTransition(ADV, GID, "VQAJ");
+		const ctx = await mission.getIndexPromptContext(ADV, GID, t);
+		expect(ctx.pendingTell).toBe("LANTERN_DENIAL");
+		expect(ctx.latestEntry.note).toContain("This is NOT true");
+	});
+
+	test("resetIndex clears the whole adventure's index", async () => {
+		pool.query
+			.mockResolvedValueOnce([{ affectedRows: 12 }])
+			.mockResolvedValueOnce([{ affectedRows: 2 }]);
+		expect(await mission.resetIndex(ADV)).toBe(12);
+		expect(pool.query.mock.calls[0][1]).toEqual([M3, ADV]);
+		expect(pool.query.mock.calls[1][1]).toEqual([M3, ADV]);
+	});
+});
