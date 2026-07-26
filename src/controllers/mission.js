@@ -518,6 +518,28 @@ async function postIndexClueComplete(req, res) {
 	}
 }
 
+async function postIndexClueStart(req, res) {
+	const guardian = decodeGuardian(req);
+	if (!guardian) {
+		return res
+			.status(401)
+			.json({ success: false, message: "Guardian session required" });
+	}
+	try {
+		const clue = await missionService.issueIndexClue(
+			guardian.adventure_key,
+			guardian.guardian_id
+		);
+		if (!clue) return res.json({ success: false, reason: "unavailable" });
+		return res.json({ success: true, clue });
+	} catch (err) {
+		console.error("[mission] postIndexClueStart failed:", err.message);
+		return res
+			.status(500)
+			.json({ success: false, message: "Failed to start clue decryption" });
+	}
+}
+
 /**
  * POST /api/v1/mission/index/reset
  * Wipe the adventure's whole index. Testing affordance — gated to the same
@@ -559,6 +581,7 @@ module.exports = {
 	postTrailReset,
 	getIndex,
 	postIndexReport,
+	postIndexClueStart,
 	postIndexClueComplete,
 	postIndexReset,
 };
