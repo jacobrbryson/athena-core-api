@@ -30,7 +30,8 @@ describe("device pairing", () => {
 
 	test("redeem returns an opaque token once; unknown codes get null", async () => {
 		pool.query
-			.mockResolvedValueOnce([[{ id: 1, uuid: "dev-1", profile_uuid: "prof-1" }]])
+			.mockResolvedValueOnce([[{ id: 1, uuid: "dev-1", profile_uuid: "prof-1", google_id: "approved-owner" }]])
+			.mockResolvedValueOnce([[{ google_id: "approved-owner" }]])
 			.mockResolvedValueOnce([{ affectedRows: 1 }]);
 		const paired = await devices.redeemPairingCode("ABCD-2345", { name: "Car" });
 		expect(paired.device_token).toMatch(/^athd_[A-Za-z0-9_-]{40,}$/);

@@ -3,6 +3,9 @@
  * the no-cross-model rule for embeddings.
  */
 jest.mock("../../helpers/db", () => ({ query: jest.fn().mockResolvedValue([[]]) }));
+// Router behavior is tested with an authorized caller; denial has its own
+// provider-boundary suite in security/access.node.cjs.
+jest.mock("../../security/access", () => ({ assertModelAccess: jest.fn().mockResolvedValue() }));
 
 const mockGenerateContent = jest.fn();
 const mockEmbedContent = jest.fn();
@@ -133,7 +136,7 @@ describe("generate + fallback", () => {
 		});
 	});
 
-	test("Gemini receives a string prompt wrapped exactly as before the router", async () => {
+	test("Gemini receives the prompt with the owner-controlled core mission", async () => {
 		setEnv({ LLM_ORCWOOD_ENDPOINTS: "" });
 		router.reload();
 		mockGenerateContent.mockResolvedValueOnce({ text: "{}" });
@@ -141,7 +144,7 @@ describe("generate + fallback", () => {
 		expect(mockGenerateContent).toHaveBeenCalledWith({
 			model: "gemini-3.5-flash-lite",
 			contents: [{ role: "user", parts: [{ text: "PROMPT" }] }],
-			config: { responseMimeType: "application/json" },
+			config: { responseMimeType: "application/json", systemInstruction: require("../../security/mission").CORE_MISSION },
 		});
 	});
 });

@@ -31,6 +31,12 @@ COPY --from=builder /app ./
 ENV PORT 8080
 EXPOSE 8080
 
+# The serving process and any future in-process self-improvement agent cannot
+# overwrite mission, authorization code, or model adapters in this image.
+# Only reports are writable. Deployment/image replacement remains owner-only.
+RUN mkdir -p /app/reports/self-review && chown -R node:node /app/reports
+USER node
+
 # Run the 'start' script defined in your package.json
 # CMD is the preferred instruction for running the service
 CMD [ "npm", "start" ]

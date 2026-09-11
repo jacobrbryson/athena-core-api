@@ -6,6 +6,8 @@
  * via responseMimeType) so routing to Gemini changes nothing in production.
  */
 const { GoogleGenAI } = require("@google/genai");
+const { assertModelAccess } = require("../../../security/access");
+const { CORE_MISSION } = require("../../../security/mission");
 
 const TTS_VOICE = process.env.GEMINI_TTS_VOICE || "Aoede";
 const TTS_SAMPLE_RATE = 24000;
@@ -42,8 +44,10 @@ function answerText(response) {
 }
 
 async function generate(endpoint, { task, contents, json = true }) {
+	await assertModelAccess();
 	const model = endpoint.models[task] || endpoint.models.chat;
 	const config = json ? { responseMimeType: "application/json" } : {};
+	config.systemInstruction = CORE_MISSION;
 	const response = await ai().models.generateContent({
 		model,
 		contents: toContents(contents),
@@ -54,6 +58,8 @@ async function generate(endpoint, { task, contents, json = true }) {
 
 /** Raw SDK passthrough for the Gemini function-calling loop (integration.js). */
 async function raw(endpoint, contents, config = {}) {
+	await assertModelAccess();
+	config = { ...config, systemInstruction: CORE_MISSION };
 	if (!Array.isArray(contents)) {
 		throw new Error("generateContentRaw requires a contents array.");
 	}
@@ -61,6 +67,7 @@ async function raw(endpoint, contents, config = {}) {
 }
 
 async function embed(endpoint, texts, { model, purpose = "document" } = {}) {
+	await assertModelAccess();
 	const response = await ai().models.embedContent({
 		model: model || endpoint.models.embed,
 		contents: texts,
@@ -77,6 +84,7 @@ async function embed(endpoint, texts, { model, purpose = "document" } = {}) {
  * deliberately stable so every turn sounds like the same character.
  */
 async function speech(endpoint, text) {
+	await assertModelAccess();
 	const prompt = [
 		"Perform the transcript exactly as Athena, a warm, intelligent, human-sounding guide.",
 		"Use a natural conversational pace, fluid phrasing, subtle emotion, and brief realistic pauses.",

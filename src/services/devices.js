@@ -16,6 +16,7 @@
 const crypto = require("crypto");
 const { v4: uuidv4 } = require("uuid");
 const pool = require("../helpers/db");
+const { allowed } = require("../security/access");
 
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O/1/I/L
 const CODE_TTL_MIN = 10;
@@ -56,13 +57,14 @@ async function redeemPairingCode(code, { name, platform } = {}) {
 	const normalized = normalizeCode(code);
 	if (normalized.length !== 8) return null;
 	const [rows] = await pool.query(
-		`SELECT d.id, d.uuid, p.uuid AS profile_uuid FROM paired_device d
+		`SELECT d.id, d.uuid, p.uuid AS profile_uuid, p.google_id FROM paired_device d
      JOIN profile p ON p.id = d.profile_id
      WHERE d.pairing_code_hash = ? AND d.pairing_expires_at > NOW()
        AND d.token_hash IS NULL AND d.revoked_at IS NULL LIMIT 1;`,
 		[sha256(normalized)]
 	);
 	if (!rows.length) return null;
+	if (!(await allowed({ google_id: rows[0].google_id }))) return null;
 
 	const token = `athd_${crypto.randomBytes(32).toString("base64url")}`;
 	const [result] = await pool.query(

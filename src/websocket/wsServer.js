@@ -48,7 +48,7 @@ function broadcastToAdventure(adventureKey, payload) {
 function startWebSocketServer(server) {
 	const wss = new WebSocketServer({ server });
 
-	wss.on("connection", (ws, req) => {
+	wss.on("connection", async (ws, req) => {
 		const { query } = url.parse(req.url, true);
 		const sessionId = query.sessionId;
 
@@ -72,6 +72,16 @@ function startWebSocketServer(server) {
 			return;
 		}
 
+		try {
+			if (!(await require("../security/access").allowed(decoded))) {
+				ws.close(1008, "Guardian access or owner approval required");
+				return;
+			}
+		} catch {
+			ws.close(1011, "Access verification unavailable");
+			return;
+		}
+		if (ws.readyState !== ws.OPEN) return;
 		const sessionClients = clients.get(sessionId) || new Set();
 		sessionClients.add(ws);
 		clients.set(sessionId, sessionClients);

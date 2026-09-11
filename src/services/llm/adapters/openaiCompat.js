@@ -69,6 +69,7 @@ function cleanOutput(text, json) {
 }
 
 async function post(endpoint, path, body, timeoutMs) {
+	await require("../../../security/access").assertModelAccess();
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), timeoutMs || endpoint.timeoutMs);
 	try {
@@ -98,7 +99,7 @@ async function generate(endpoint, { task, contents, json = true, schema = null, 
 	const model = endpoint.models[task] || endpoint.models.chat;
 	if (!model) throw new Error(`${endpoint.id} has no model for task "${task}"`);
 
-	const body = { model, messages: toMessages(contents), stream: false };
+	const body = { model, messages: [{ role: "system", content: require("../../../security/mission").CORE_MISSION }, ...toMessages(contents)], stream: false };
 	if (Number.isFinite(temperature)) body.temperature = temperature;
 	if (json) {
 		body.response_format =

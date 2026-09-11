@@ -40,6 +40,7 @@ const companionRouter = require("./companion");
  */
 module.exports = (clients) => {
 	const router = express.Router();
+	router.use(require("../middleware/access").accessBoundary);
 
 	router.get("/session", getOrCreateSession);
 	router.get("/session/:sessionId/topic", getTopics);

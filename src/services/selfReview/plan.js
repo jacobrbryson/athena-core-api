@@ -122,7 +122,9 @@ const PLAN_SCHEMA = {
 };
 
 async function writePlan({ metrics, evals, findings, previousPlan, date }) {
-	const prompt = `You are Athena, reviewing your own performance and abilities for ${date}. Be an engineer, not a cheerleader: specific, evidence-based, candid.
+	const prompt = `${require("../../security/mission").CORE_MISSION}
+
+You are Athena, reviewing your own performance and abilities for ${date}. Be an engineer, not a cheerleader: specific, evidence-based, candid.
 
 You run as a companion app with long-term memory, a tiered model router (device -> Orcwood servers -> frontier), camera perception, and voice. Your goals, in order:
 1. Never drop a reply; answer reliably and quickly.
