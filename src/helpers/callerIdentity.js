@@ -34,10 +34,13 @@ function verifiedToken(req) {
 	}
 }
 
+// NOTE: the legacy `profile` table predates the migrations and has no
+// deleted_at column — filtering on it made every lookup throw (see the
+// profile service, which never filters on it either).
 async function profileIdForUuid(profileUuid) {
 	if (typeof profileUuid !== "string" || !profileUuid.trim()) return null;
 	const [rows] = await pool.query(
-		`SELECT id FROM profile WHERE uuid = ? AND deleted_at IS NULL LIMIT 1;`,
+		`SELECT id FROM profile WHERE uuid = ? LIMIT 1;`,
 		[profileUuid.trim()]
 	);
 	return rows[0]?.id ?? null;
@@ -46,7 +49,7 @@ async function profileIdForUuid(profileUuid) {
 async function profileIdForGoogleId(googleId) {
 	if (!googleId) return null;
 	const [rows] = await pool.query(
-		`SELECT id FROM profile WHERE google_id = ? AND deleted_at IS NULL LIMIT 1;`,
+		`SELECT id FROM profile WHERE google_id = ? LIMIT 1;`,
 		[String(googleId)]
 	);
 	return rows[0]?.id ?? null;
@@ -71,13 +74,24 @@ async function profileIdForGuardian(guardianId) {
  * request carries no usable identity (an anonymous visitor).
  */
 async function resolveCallerProfileId(req) {
+	// Paired device (phone / car): opaque token checked against paired_device.
+	const deviceToken = req.headers["x-athena-device-token"];
+	if (typeof deviceToken === "string" && deviceToken) {
+		const { authenticateDeviceToken } = require("../services/devices");
+		const device = await authenticateDeviceToken(deviceToken).catch(() => null);
+		return device?.profileId ?? null;
+	}
+
 	const decoded = verifiedToken(req);
 	if (!decoded) return null;
+	// `return await` (not bare `return`) so a failed lookup is caught here and
+	// the caller is treated as anonymous, instead of the rejection escaping and
+	// failing the whole request (500 on /session, 401 on /speech).
 	try {
-		if (decoded.kind === "child") return profileIdForUuid(decoded.profile_uuid);
+		if (decoded.kind === "child") return await profileIdForUuid(decoded.profile_uuid);
 		if (decoded.kind === "guardian")
-			return profileIdForGuardian(decoded.guardian_id);
-		if (decoded.google_id) return profileIdForGoogleId(decoded.google_id);
+			return await profileIdForGuardian(decoded.guardian_id);
+		if (decoded.google_id) return await profileIdForGoogleId(decoded.google_id);
 	} catch (err) {
 		console.warn("[callerIdentity] profile resolution failed:", err.message);
 	}

@@ -11,7 +11,7 @@ async function resolveLinkedProfileId(email) {
 	if (!email) return null;
 	try {
 		const [rows] = await pool.query(
-			`SELECT id FROM profile WHERE email = ? AND deleted_at IS NULL LIMIT 1;`,
+			`SELECT id FROM profile WHERE email = ? LIMIT 1;`,
 			[email.toLowerCase().trim()]
 		);
 		return rows[0] ? rows[0].id : null;
