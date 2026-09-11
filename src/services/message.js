@@ -12,16 +12,36 @@ async function addMessage(sessionId, isHuman, message, mode = null) {
 	return uuid;
 }
 
+/**
+ * The most recent 100 messages, oldest -> newest. Selecting the newest page
+ * and re-sorting matters: a plain `ASC LIMIT 100` returns a long session's
+ * FIRST 100 messages, so replies stopped appearing after message 100.
+ */
 async function getMessages(sessionId) {
 	const [messages] = await pool.query(
-		"SELECT uuid, text, created_at, is_human, mode FROM message WHERE session_id = ? ORDER BY created_at ASC LIMIT 100;",
+		`SELECT uuid, text, created_at, is_human, mode FROM (
+       SELECT uuid, text, created_at, is_human, mode FROM message
+       WHERE session_id = ? ORDER BY created_at DESC LIMIT 100
+     ) recent ORDER BY created_at ASC;`,
 		[sessionId]
 	);
 
 	return messages;
 }
 
+/** Messages strictly newer than `since` (a DATETIME), oldest -> newest. */
+async function getMessagesSince(sessionId, since, limit = 40) {
+	const [messages] = await pool.query(
+		`SELECT uuid, text, created_at, is_human FROM message
+     WHERE session_id = ?${since ? " AND created_at > ?" : ""}
+     ORDER BY created_at ASC LIMIT ?;`,
+		since ? [sessionId, since, limit] : [sessionId, limit]
+	);
+	return messages;
+}
+
 module.exports = {
 	addMessage,
 	getMessages,
+	getMessagesSince,
 };
