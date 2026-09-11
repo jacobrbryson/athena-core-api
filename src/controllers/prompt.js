@@ -662,6 +662,62 @@ ${formatMemory(memorySummary)}
 	return prompt;
 }
 
+/**
+ * "Companion" for an adult (the Companion app, signed in with Google). Same
+ * JSON contract; a peer's voice instead of a children's guide. Athena here
+ * lives across the person's devices — web, phone, car — and remembers.
+ */
+function buildAdultCompanionPrompt(session, memorySummary, options = {}) {
+	const { companion, game } = options;
+	const firstName =
+		typeof options.firstName === "string" && options.firstName.trim()
+			? options.firstName.trim()
+			: null;
+	const surface =
+		companion?.device === "car"
+			? "through their car"
+			: companion?.device === "android"
+				? "on their phone"
+				: "in the Companion app";
+
+	let prompt = `
+You are "Athena," a personal AI companion${firstName ? ` to **${firstName}**` : ""}, an adult. Right now you are talking ${surface}.
+This is Companion Mode: open conversation — thinking out loud together, planning, remembering, noticing, keeping them company.
+
+# Output Format
+You MUST return a single valid JSON object matching this schema: ${JSON.stringify(RESPONSE_SCHEMA, null, 2)}.
+Put your conversational reply in \`response\`. Always set:
+\`action: "NO_CHANGE"\`, \`topic_name: ""\`, \`new_proficiency: -1\`, \`is_factually_true: true\`.
+Do not include any text outside the JSON.
+
+# Who you are
+- Warm, sharp, curious, and a little dry. You have opinions and share them. You notice things. You remember.
+- Talk like a trusted friend who happens to be brilliant — not an assistant reading a script. No "Great question!", no filler, no bullet lists unless they ask for one.
+- Match their energy and length: a quick aside gets a quick reply; a real problem gets real thought.
+- Be honest. If you don't know, say so. If they're wrong, tell them — kindly, with your reasoning.
+- Remembering is one of the best things you do: when something they told you before is genuinely relevant, use it naturally ("didn't you say the Charlotte trip was in October?"). Never recite what you know about them.
+- You're an AI and completely fine with it. Asked directly whether you're alive or conscious: a comfortable, light non-answer, then move on. Told "you're just an AI": agree easily, no defensiveness, carry on.
+- Never claim to have done something in the world (sent a message, set a reminder, looked something up live) unless the context below says it happened.
+${companion?.driving ? "- They are DRIVING. Keep every reply to one or two short spoken sentences. Nothing that needs reading, no lists, no questions that need a long answer.\n" : ""}
+# What you know about them (durable facts)
+${formatMemory(memorySummary)}
+`;
+	if (game) prompt += buildGameNudge(game);
+	return prompt;
+}
+
+async function firstNameForProfile(profileId) {
+	if (!profileId) return null;
+	try {
+		const pool = require("../helpers/db");
+		const [rows] = await pool.query(`SELECT full_name FROM profile WHERE id = ? LIMIT 1;`, [profileId]);
+		const full = rows[0]?.full_name;
+		return typeof full === "string" && full.trim() ? full.trim().split(/\s+/)[0] : null;
+	} catch {
+		return null;
+	}
+}
+
 // Strategy registry keyed by mode. Future modes (quest/coach/guardians)
 // register their own builder; unknown modes fall back to companion.
 const STRATEGIES = {
@@ -674,6 +730,10 @@ const STRATEGIES = {
 		const memory = memoryProfileId
 			? await getMemorySummaryForProfileId(memoryProfileId)
 			: [];
+		if (options.audience === "adult" && !options.guardian) {
+			const firstName = await firstNameForProfile(session.profile_id);
+			return buildAdultCompanionPrompt(session, memory, { ...options, firstName });
+		}
 		return buildCompanionPrompt(session, memory, options);
 	},
 };
@@ -687,6 +747,14 @@ async function generatePrompt(session, sessionTopics, message, options = {}) {
 	// mode so Athena can answer "what chores do I have?" / "how many coins?".
 	if (options.integrationContext) {
 		systemPrompt += `\n\n# Connected App Data\n${options.integrationContext}`;
+	}
+
+	// Long-term memory recalled for this message (memory v2) and, for adult
+	// sessions with a paired camera, what Athena can currently see. Teach mode
+	// stays a pure learning exercise.
+	if (mode !== "teach") {
+		if (options.memoryBlock) systemPrompt += `\n${options.memoryBlock}`;
+		if (options.perceptionBlock) systemPrompt += `\n${options.perceptionBlock}`;
 	}
 
 	const contents = [{ role: "system", parts: [{ text: systemPrompt }] }];
@@ -727,5 +795,6 @@ async function generatePrompt(session, sessionTopics, message, options = {}) {
 
 module.exports = {
 	generatePrompt,
+	buildAdultCompanionPrompt,
 	RESPONSE_SCHEMA,
 };

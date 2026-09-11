@@ -1,25 +1,37 @@
+const { EventEmitter } = require("events");
 const { v4: uuidv4 } = require("uuid");
 const pool = require("../helpers/db");
 const { authorizeChildForParent, getFamilyForProfile } = require("./family");
 const { getProfileByGoogleId } = require("./parent-helpers");
 
 /**
- * Memory foundation service (Phase 7).
+ * Memory foundation service (Phase 7) — durable FACTS about a user.
  *
- * Stores lightweight, structured facts about a user (interests, favorite
- * subjects, pets, family info, preferences). This is intentionally a simple
- * key/value-per-category store — NOT a full long-term memory / embedding
- * system. See docs/architecture/memory-foundation.md for the extension path.
+ * Stores structured facts (interests, pets, people, preferences, …) as
+ * category/key/value slots. Memory v2 (services/memoryStore) builds on this:
+ * episodes live in memory_event, and every fact written here is embedded for
+ * semantic recall via the `memoryEvents` hook below.
+ * See docs/architecture/memory-v2.md.
  *
  * Each row is family-aware (family_id), user-specific (profile_id), and
  * privacy-aware (visibility: 'private' | 'family').
  */
+
+// Emits "fact:written" (row) and "fact:deleted" ({ id, profile_id }) so the
+// memory store can keep embeddings in sync with every writer (UI, AI
+// extraction, the Family Chores integration) without each one knowing.
+const memoryEvents = new EventEmitter();
 
 const CATEGORIES = new Set([
 	"interest",
 	"subject",
 	"pet",
 	"family",
+	"person",
+	"place",
+	"work",
+	"goal",
+	"routine",
 	"preference",
 	"other",
 ]);
@@ -47,7 +59,12 @@ function publicMemory(row) {
 }
 
 /** Resolve the profile.id + family for an actor (parent google id or child profile uuid). */
-async function resolveProfileId({ googleId, profileUuid }) {
+async function resolveProfileId({ googleId, profileUuid, profileId }) {
+	if (Number.isFinite(Number(profileId)) && Number(profileId) > 0) {
+		// Already-verified profile (e.g. a paired device token).
+		const family = await getFamilyForProfile(Number(profileId)).catch(() => null);
+		return { profileId: Number(profileId), familyId: family ? family.id : null };
+	}
 	if (googleId) {
 		const p = await getProfileByGoogleId(googleId);
 		const family = await getFamilyForProfile(p.id);
@@ -134,11 +151,40 @@ async function upsertMemoryForProfile(profileId, familyId, payload = {}) {
 	);
 
 	const [rows] = await pool.query(
-		`SELECT uuid, category, memory_key, memory_value, source, visibility, confidence, created_at, updated_at
+		`SELECT id, profile_id, uuid, category, memory_key, memory_value, source, visibility, confidence, created_at, updated_at
      FROM user_memory WHERE profile_id = ? AND category = ? AND memory_key = ? LIMIT 1;`,
 		[profileId, category, key]
 	);
+	if (rows[0]) memoryEvents.emit("fact:written", rows[0]);
 	return publicMemory(rows[0]);
+}
+
+/** Existing fact slot (any source) or null — lets AI extraction respect curated facts. */
+async function getFactSlot(profileId, category, key) {
+	const [rows] = await pool.query(
+		`SELECT id, uuid, source, memory_value, deleted_at
+     FROM user_memory WHERE profile_id = ? AND category = ? AND memory_key = ? LIMIT 1;`,
+		[profileId, normalizeCategory(category), String(key).trim().slice(0, 120)]
+	);
+	return rows[0] || null;
+}
+
+/** Soft-delete facts by key (case-insensitive) — "forget that my…". Returns the count. */
+async function forgetFactsByKey(profileId, keys = []) {
+	let count = 0;
+	for (const key of keys) {
+		if (typeof key !== "string" || !key.trim()) continue;
+		const [rows] = await pool.query(
+			`SELECT id FROM user_memory WHERE profile_id = ? AND LOWER(memory_key) = LOWER(?) AND deleted_at IS NULL;`,
+			[profileId, key.trim().slice(0, 120)]
+		);
+		for (const r of rows) {
+			await pool.query(`UPDATE user_memory SET deleted_at = NOW() WHERE id = ?;`, [r.id]);
+			memoryEvents.emit("fact:deleted", { id: r.id, profile_id: profileId });
+			count += 1;
+		}
+	}
+	return count;
 }
 
 /** Create or update a memory slot (unique per profile/category/key). */
@@ -150,11 +196,13 @@ async function upsertMemory(actor, payload = {}) {
 /** Soft-delete a memory by uuid (must belong to the actor). */
 async function deleteMemory(actor, memoryUuid) {
 	const { profileId } = await resolveProfileId(actor);
-	const [result] = await pool.query(
-		`UPDATE user_memory SET deleted_at = NOW() WHERE uuid = ? AND profile_id = ? AND deleted_at IS NULL;`,
+	const [rows] = await pool.query(
+		`SELECT id FROM user_memory WHERE uuid = ? AND profile_id = ? AND deleted_at IS NULL LIMIT 1;`,
 		[memoryUuid, profileId]
 	);
-	if (!result.affectedRows) throw new Error("Memory not found");
+	if (!rows.length) throw new Error("Memory not found");
+	await pool.query(`UPDATE user_memory SET deleted_at = NOW() WHERE id = ?;`, [rows[0].id]);
+	memoryEvents.emit("fact:deleted", { id: rows[0].id, profile_id: profileId });
 	return { success: true };
 }
 
@@ -181,11 +229,14 @@ async function getMemorySummaryForProfileId(profileId, limit = 25) {
 module.exports = {
 	CATEGORIES,
 	VISIBILITIES,
+	memoryEvents,
 	resolveProfileId,
 	listOwnMemory,
 	listChildMemoryForParent,
 	upsertMemory,
 	upsertMemoryForProfile,
+	getFactSlot,
+	forgetFactsByKey,
 	deleteMemory,
 	getMemorySummaryForProfileId,
 };

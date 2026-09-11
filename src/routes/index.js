@@ -31,6 +31,7 @@ const familyRouter = require("./family");
 const consentRouter = require("./consent");
 const memoryRouter = require("./memory");
 const integrationRouter = require("./integration");
+const companionRouter = require("./companion");
 
 /**
  * Router factory
@@ -105,6 +106,7 @@ module.exports = (clients) => {
 	router.use("/consent", consentRouter);
 	router.use("/memory", memoryRouter);
 	router.use("/integrations", integrationRouter);
+	router.use("/", companionRouter);
 
 	// Optional catch-all
 	router.use((req, res) => {

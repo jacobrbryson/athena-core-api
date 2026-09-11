@@ -1,6 +1,8 @@
 const sessionService = require("../services/session");
 const messageService = require("../services/message");
-const geminiService = require("../services/gemini");
+const llm = require("../services/llm");
+const memoryStore = require("../services/memoryStore");
+const perception = require("../services/perception");
 const sessionTopicService = require("../services/sessionTopic");
 const integrationService = require("../services/integration");
 const missionService = require("../services/mission");
@@ -9,6 +11,18 @@ const { generatePrompt } = require("./prompt");
 
 // How many prior messages to feed back as conversation history.
 const MAX_HISTORY = 20;
+
+/** The shared reply schema every conversation mode emits (see prompt.js). */
+function isValidReply(r) {
+	return (
+		!!r &&
+		typeof r.response === "string" &&
+		r.response.trim().length > 0 &&
+		typeof r.action === "string" &&
+		typeof r.new_proficiency === "number" &&
+		typeof r.topic_name === "string"
+	);
+}
 
 async function processAiResponse(session, message, clients, ctx = {}) {
 	try {
@@ -44,6 +58,12 @@ async function processAiResponse(session, message, clients, ctx = {}) {
 			console.warn("[gemini] history fetch failed:", e.message);
 		}
 
+		// Long-term memory for this turn (audience, recall block). Time-boxed and
+		// never throws, so memory can't stall or break a reply.
+		const memoryCtx = await memoryStore
+			.buildMemoryContext(session, message, ctx)
+			.catch(() => ({ audience: "child", memoryEnabled: false, promptBlock: null }));
+
 		const prompt = await generatePrompt(session, topics || [], message, {
 			integrationContext,
 			guardian: ctx.guardian,
@@ -51,34 +71,40 @@ async function processAiResponse(session, message, clients, ctx = {}) {
 			mission: ctx.mission,
 			decodes: ctx.decodes,
 			game: ctx.game,
+			companion: ctx.companion,
+			audience: memoryCtx.audience,
+			memoryBlock: memoryCtx.promptBlock,
+			perceptionBlock:
+				session.profile_id && memoryCtx.audience === "adult"
+					? perception.getPromptBlock(session.profile_id)
+					: null,
 			history,
 		});
-		const response = await geminiService.generateResponse(prompt);
 
-		if (!response) {
-			console.warn(
-				`Gemini returned no response for session ${session.id}`
-			);
-			return;
-		}
-
+		// Routed through the tiered model layer (Orcwood -> frontier by policy).
+		// A tier whose output isn't valid reply JSON is skipped in favor of the
+		// next one instead of silently dropping the reply.
 		let parsedResponse;
 		try {
-			parsedResponse = JSON.parse(response);
-		} catch (parseErr) {
-			console.error("Gemini returned invalid JSON", parseErr);
-			return;
-		}
-
-		const validResponse =
-			parsedResponse &&
-			typeof parsedResponse.response === "string" &&
-			typeof parsedResponse.action === "string" &&
-			typeof parsedResponse.new_proficiency === "number" &&
-			typeof parsedResponse.topic_name === "string";
-
-		if (!validResponse) {
-			console.error("Gemini response failed validation", parsedResponse);
+			const result = await llm.generate({
+				task: "chat",
+				contents: prompt,
+				audience: memoryCtx.audience,
+				validate: (text) => {
+					try {
+						parsedResponse = JSON.parse(text);
+					} catch {
+						return "invalid JSON";
+					}
+					return isValidReply(parsedResponse) ? null : "reply failed schema validation";
+				},
+			});
+			if (!result?.text) {
+				console.warn(`Model returned no response for session ${session.id}`);
+				return;
+			}
+		} catch (err) {
+			console.error(`No model produced a valid reply for session ${session.id}:`, err.message);
 			return;
 		}
 
@@ -88,6 +114,14 @@ async function processAiResponse(session, message, clients, ctx = {}) {
 			parsedResponse.response,
 			session.mode
 		);
+
+		// Background memory extraction (throttled; never blocks the reply).
+		if (session.mode !== "teach") {
+			memoryStore.afterTurn(session, message, {
+				audience: memoryCtx.audience,
+				memoryEnabled: memoryCtx.memoryEnabled,
+			});
+		}
 
 		// In-chat mission reporting: when Athena flags that the Guardian reported
 		// their cooperative-mission piece, record it for their family (idempotent;

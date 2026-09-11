@@ -6,3 +6,5 @@ db/guardians.lake-norman-2025.json
 db/seed-lake-norman-2025.js
 db/reset-campaign.js
 db/issue-guardian-token.js
+# Nightly self-review output (also stored in self_review_report)
+reports/

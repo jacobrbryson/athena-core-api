@@ -58,6 +58,29 @@ function extractForwardedClientIp(req) {
 	return normalizeIp(list[0] || null);
 }
 
+/**
+ * requireAuth, but ALSO accepting a paired device (phone / car), which sends
+ * an opaque, revocable device token instead of an IP-pinned JWT — see
+ * services/devices.js. Opt-in per route: plain requireAuth never admits a
+ * device, so routes that assume a Google/child identity can't be reached by one.
+ * Sets req.user = { kind: "device", deviceId, deviceUuid, profileId, platform }.
+ */
+function requireAuthOrDevice(req, res, next) {
+	const deviceToken = req.headers["x-athena-device-token"];
+	if (typeof deviceToken !== "string" || !deviceToken) return requireAuth(req, res, next);
+
+	const { authenticateDeviceToken } = require("../services/devices");
+	return authenticateDeviceToken(deviceToken)
+		.then((device) => {
+			if (!device) {
+				return res.status(401).json({ success: false, message: "Unauthorized" });
+			}
+			req.user = { kind: "device", ...device };
+			return next();
+		})
+		.catch(() => res.status(401).json({ success: false, message: "Unauthorized" }));
+}
+
 function requireAuth(req, res, next) {
 	const token = extractToken(req);
 	const decoded = verifyToken(token);
@@ -146,6 +169,7 @@ function requireParent(req, res, next) {
 
 module.exports = {
 	requireAuth,
+	requireAuthOrDevice,
 	requireParent,
 	decodeUserToken,
 };

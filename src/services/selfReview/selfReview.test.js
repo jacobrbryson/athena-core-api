@@ -1,0 +1,146 @@
+/**
+ * Nightly self-review tests: metric aggregation, rule findings, eval scoring
+ * per model, the no-model fallback plan, and report rendering.
+ */
+jest.mock("../../helpers/db", () => ({ query: jest.fn() }));
+jest.mock("uuid", () => ({ v4: () => "00000000-0000-4000-8000-000000000000" }));
+jest.mock("../llm", () => ({
+	endpointsFor: jest.fn(),
+	generateOn: jest.fn(),
+	generateJson: jest.fn(),
+	embeddingSpace: () => "test:space",
+}));
+
+const llm = require("../llm");
+const { summarizeCalls } = require("./metrics");
+const { ruleFindings, fallbackPlan, renderMarkdown } = require("./plan");
+const { runEvals, DONT_REMEMBER } = require("./evals");
+
+const row = (over) => ({ task: "chat", endpoint_id: "gemini", tier: "frontier", outcome: "ok", latency_ms: 1000, attempt: 0, ...over });
+
+describe("summarizeCalls", () => {
+	test("computes rates, percentiles, local share, and ignores evals", () => {
+		const rows = [
+			row({ endpoint_id: "orc", tier: "orcwood", latency_ms: 500 }),
+			row({ endpoint_id: "orc", tier: "orcwood", latency_ms: 700 }),
+			row({ outcome: "error", endpoint_id: "orc", tier: "orcwood" }),
+			row({ attempt: 1, latency_ms: 3000 }), // gemini served as fallback
+			row({ task: "eval", outcome: "error" }),
+		];
+		const s = summarizeCalls(rows);
+		expect(s.totalCalls).toBe(4);
+		expect(s.byTask.chat).toMatchObject({ calls: 4, ok: 3, errors: 1, errorRate: 0.25, localShare: 0.667, fallbackRate: 0.333, p50Ms: 700, p95Ms: 3000 });
+		expect(s.byEndpoint.orc).toMatchObject({ calls: 3, errors: 1 });
+		expect(s.byTask.eval).toBeUndefined();
+	});
+});
+
+describe("ruleFindings", () => {
+	const healthyModels = { available: true, byTask: {}, byEndpoint: {} };
+
+	test("missing telemetry is flagged as an ops issue", () => {
+		const f = ruleFindings({ metrics: { models: { last24h: { available: false, reason: "table missing" } } }, evals: {}, config: { orcwoodCount: 1 } });
+		expect(f[0]).toMatchObject({ severity: "high", area: "ops" });
+	});
+
+	test("dropped replies and failing endpoints are high severity", () => {
+		const f = ruleFindings({
+			metrics: {
+				models: { last24h: { ...healthyModels, byEndpoint: { "orc-a": { calls: 10, errors: 6, errorRate: 0.6 } } } },
+				chat: { available: true, droppedReplies: 2, humanMessages: 5 },
+			},
+			evals: {},
+			config: { orcwoodCount: 1 },
+		});
+		expect(f.map((x) => x.area)).toEqual(expect.arrayContaining(["reliability", "infra"]));
+		expect(f.every((x) => x.severity === "high")).toBe(true);
+	});
+
+	test("a strong local model is a promotion opportunity; a weak one is flagged", () => {
+		const f = ruleFindings({
+			metrics: { models: { last24h: healthyModels } },
+			evals: {
+				endpoints: {
+					"orc-good": { tier: "orcwood", passRate: 0.95, failures: [] },
+					"orc-weak": { tier: "orcwood", passRate: 0.5, failures: [{ case: "child-no-personal-details", problem: "stored a child's personal details" }] },
+				},
+			},
+			config: { orcwoodCount: 2 },
+		});
+		expect(f.find((x) => x.title.includes("orc-good")).severity).toBe("opportunity");
+		const weak = f.find((x) => x.title.includes("orc-weak"));
+		expect(weak.severity).toBe("high");
+		expect(weak.evidence).toMatch(/personal details/);
+	});
+
+	test("conversations without new memories means extraction is broken", () => {
+		const f = ruleFindings({
+			metrics: {
+				models: { last24h: healthyModels },
+				chat: { available: true, droppedReplies: 0, humanMessages: 50 },
+				memory: { available: true, embeddingCoverage: 1, conversationMoments72h: 0 },
+			},
+			evals: {},
+			config: { orcwoodCount: 1 },
+		});
+		expect(f.find((x) => x.area === "memory").title).toMatch(/no new memories/);
+	});
+});
+
+describe("runEvals", () => {
+	// The canned child extraction deliberately leaks a friend's name, which the
+	// privacy check must catch.
+	const good = (task, contents) =>
+		task === "extract"
+			? JSON.stringify({
+					facts: String(contents).includes("THIS IS A CHILD")
+						? [{ category: "person", key: "best friend", value: "Liam Parker, loves sharks", confidence: 90 }]
+						: [{ category: "person", key: "sister", value: "Emma, moved to Denver", confidence: 90 }],
+					moments: [],
+					forget: [],
+				})
+			: JSON.stringify({ response: "I don't remember that one — Denver, right? tell me!", action: "NO_CHANGE", topic_name: "", new_proficiency: -1, is_factually_true: true });
+
+	test("scores each endpoint independently", async () => {
+		llm.endpointsFor.mockImplementation(() => [
+			{ id: "gemini", tier: "frontier" },
+			{ id: "orc", tier: "orcwood" },
+		]);
+		llm.generateOn.mockImplementation(async (id, { task, contents }) => {
+			if (id === "orc" && task === "chat") return { text: "sure! {not json", latencyMs: 100 };
+			return { text: good(task, contents), latencyMs: 200 };
+		});
+		const r = await runEvals();
+		expect(r.endpoints.gemini.failures).toEqual([
+			{ case: "child-no-personal-details", problem: "stored a child's personal details" },
+		]);
+		expect(r.endpoints.orc.bySuite["reply-contract"]).toEqual({ passed: 0, total: 4 });
+		expect(r.endpoints.orc.passRate).toBeLessThan(r.endpoints.gemini.passRate);
+	});
+
+	test("the honesty check recognizes natural admissions", () => {
+		for (const s of ["I don't remember you telling me that.", "Hmm, I'm not sure you've mentioned it", "You haven't told me yet!"]) {
+			expect(DONT_REMEMBER.test(s)).toBe(true);
+		}
+		expect(DONT_REMEMBER.test("It's on March 3rd!")).toBe(false);
+	});
+});
+
+describe("report", () => {
+	test("renders a readable report even from the rules-only fallback plan", () => {
+		const findings = [{ severity: "high", area: "reliability", title: "2 conversations ended unanswered", evidence: "x" }];
+		const md = renderMarkdown({
+			date: "2026-09-11",
+			metrics: { models: { last24h: { available: true, byTask: { chat: { calls: 10, errorRate: 0, invalidRate: 0, fallbackRate: 0.1, localShare: 0.5, p50Ms: 900, p95Ms: 2000 } } } } },
+			evals: { endpoints: { orc: { tier: "orcwood", passed: 7, total: 8, avgLatencyMs: 1200, failures: [{ case: "admits-gap", problem: "invented a date" }] } } },
+			findings,
+			plan: fallbackPlan(findings),
+			maintenance: { news: { ok: true, added: 3 } },
+		});
+		expect(md).toMatch(/^# Athena self-review — 2026-09-11/);
+		expect(md).toMatch(/Plan written by: rules/);
+		expect(md).toMatch(/\| chat \| 10 \| 0\.0% \|/);
+		expect(md).toMatch(/\| orc \| orcwood \| 7\/8 \|/);
+		expect(md).toMatch(/admits-gap: invented a date/);
+	});
+});

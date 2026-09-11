@@ -3,6 +3,7 @@ const sessionService = require("../services/session");
 const { extractIp } = require("../helpers/utils");
 const { decodeGuardianFromRequest } = require("../helpers/guardianToken");
 const { resolveCallerProfileId } = require("../helpers/callerIdentity");
+const { audienceForProfile } = require("../services/audience");
 const { processAiResponse } = require("./gemini");
 const missionService = require("../services/mission");
 const gameService = require("../services/game");
@@ -100,11 +101,33 @@ function parseMessageContext(body = {}) {
 		}
 	}
 
+	// Companion-app surface context: which device Athena is on, whether the
+	// person is driving (short spoken replies), and their timezone (so memory
+	// recall reads "yesterday" in their local day).
+	let companion;
+	if (body.companion && typeof body.companion === "object") {
+		const device = ["web", "android", "car"].includes(body.companion.device)
+			? body.companion.device
+			: "web";
+		const tz = trimStr(body.companion.timezone, 64);
+		let timezone = null;
+		if (tz) {
+			try {
+				new Intl.DateTimeFormat("en-US", { timeZone: tz });
+				timezone = tz;
+			} catch {
+				timezone = null;
+			}
+		}
+		companion = { device, driving: body.companion.driving === true, timezone };
+	}
+
 	return {
 		guardian: guardian && (guardian.displayName || guardian.adventureKey) ? guardian : undefined,
 		onboarding,
 		mission,
 		decodes,
+		companion,
 	};
 }
 
@@ -197,7 +220,13 @@ async function addMessage(req, res, clients) {
 			});
 		}
 
-		if (text?.length > 256) {
+		// The 256-char cap suits the kids' product; adults in the Companion app
+		// write real paragraphs.
+		const maxLength =
+			session.profile_id && (await audienceForProfile(session.profile_id).catch(() => "child")) === "adult"
+				? 2000
+				: 256;
+		if (text?.length > maxLength) {
 			return res.status(400).json({
 				success: false,
 				message: "Text length too long",

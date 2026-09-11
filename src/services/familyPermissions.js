@@ -205,6 +205,9 @@ async function allowedModesForProfile(profileId, modeKeys = []) {
 module.exports = {
 	DEFAULT_PERMISSIONS,
 	MODE_PERMISSION_KEYS,
+	isPermissionEnabled,
+	getChildPermissionContext,
+	effectivePermissionsForChild,
 	getPermissions,
 	setPermission,
 	isModeAllowedForProfile,

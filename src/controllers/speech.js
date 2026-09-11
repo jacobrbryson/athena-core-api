@@ -1,10 +1,16 @@
 const geminiService = require("../services/gemini");
 const { decodeGuardianFromRequest } = require("../helpers/guardianToken");
+const { resolveCallerProfileId } = require("../helpers/callerIdentity");
 
 const MAX_SPEECH_TEXT_LENGTH = 800;
 
 async function generateSpeech(req, res) {
-	if (!decodeGuardianFromRequest(req)) {
+	// Neural voice costs real money per call, so it is limited to verified
+	// identities: a Guardian session, or any signed-in profile (the Companion
+	// app, a paired device). Anonymous visitors never get it.
+	const allowed =
+		!!decodeGuardianFromRequest(req) || (await resolveCallerProfileId(req).catch(() => null)) != null;
+	if (!allowed) {
 		return res.status(401).json({ success: false, message: "Unauthorized" });
 	}
 

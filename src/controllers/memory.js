@@ -5,6 +5,9 @@ function actorFromReq(req) {
 	if (req.user?.kind === "child") {
 		return { profileUuid: req.user.profileUuid };
 	}
+	if (req.user?.kind === "device") {
+		return { profileId: req.user.profileId };
+	}
 	return { googleId: req.user.googleId };
 }
 
