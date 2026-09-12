@@ -790,7 +790,11 @@ async function generatePrompt(session, sessionTopics, message, options = {}) {
 		],
 	});
 
-	return JSON.stringify(contents);
+	// Return the real Content array. It used to be JSON.stringify'd into a single
+	// user message, which made the model echo that escaping back: ~10% of chat
+	// replies came out as {\"response\": ...} and failed to parse. Adapters now
+	// map the `system` entry to a real system instruction and keep the turns.
+	return contents;
 }
 
 module.exports = {

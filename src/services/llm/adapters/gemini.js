@@ -21,12 +21,32 @@ function ai() {
 	return client;
 }
 
-function toContents(contents) {
+/**
+ * Split a Content array into Gemini's shape: the `system` entries become a
+ * system instruction (Gemini only accepts user/model roles in contents), and
+ * the conversation turns stay as contents.
+ *
+ * This is what keeps replies parseable: previously the whole array was
+ * JSON-stringified into one user message, and the model echoed that escaping
+ * back (`{\"response\": ...}`) on roughly a tenth of chat turns.
+ */
+function toRequest(contents) {
 	if (typeof contents === "string") {
-		return [{ role: "user", parts: [{ text: contents }] }];
+		return { contents: [{ role: "user", parts: [{ text: contents }] }], system: null };
 	}
-	if (Array.isArray(contents)) return contents;
-	throw new Error("Invalid contents format. Must be a string or array of Content objects.");
+	if (!Array.isArray(contents)) {
+		throw new Error("Invalid contents format. Must be a string or array of Content objects.");
+	}
+	const system = contents
+		.filter((c) => c?.role === "system")
+		.flatMap((c) => (Array.isArray(c.parts) ? c.parts : []))
+		.map((p) => p?.text || "")
+		.filter(Boolean)
+		.join("\n\n");
+	return {
+		contents: contents.filter((c) => c?.role !== "system"),
+		system: system || null,
+	};
 }
 
 /**
@@ -43,17 +63,28 @@ function answerText(response) {
 		.join("");
 }
 
-async function generate(endpoint, { task, contents, json = true }) {
+async function generate(endpoint, { task, contents, json = true, schema = null }) {
 	await assertModelAccess();
 	const model = endpoint.models[task] || endpoint.models.chat;
+	const request = toRequest(contents);
 	const config = json ? { responseMimeType: "application/json" } : {};
-	config.systemInstruction = CORE_MISSION;
+	// CORE_MISSION always leads the system instruction (owner policy, security/mission.js);
+	// the mode's prompt follows it.
+	config.systemInstruction = request.system ? `${CORE_MISSION}\n\n${request.system}` : CORE_MISSION;
+	// Structured output: the model is constrained to the caller's schema instead
+	// of being asked politely for JSON in the prompt.
+	if (json && schema) config.responseSchema = schema;
 	const response = await ai().models.generateContent({
 		model,
-		contents: toContents(contents),
+		contents: request.contents,
 		config,
 	});
-	return { text: answerText(response), model, usage: response.usageMetadata || null };
+	return {
+		text: answerText(response),
+		model,
+		usage: response.usageMetadata || null,
+		finishReason: response?.candidates?.[0]?.finishReason || null,
+	};
 }
 
 /** Raw SDK passthrough for the Gemini function-calling loop (integration.js). */

@@ -7,7 +7,8 @@ const sessionTopicService = require("../services/sessionTopic");
 const integrationService = require("../services/integration");
 const missionService = require("../services/mission");
 
-const { generatePrompt } = require("./prompt");
+const { generatePrompt, RESPONSE_SCHEMA } = require("./prompt");
+const { parseModelJson } = require("../services/llm/parse");
 
 // How many prior messages to feed back as conversation history.
 const MAX_HISTORY = 20;
@@ -90,12 +91,12 @@ async function processAiResponse(session, message, clients, ctx = {}) {
 				task: "chat",
 				contents: prompt,
 				audience: memoryCtx.audience,
+				// Constrain the model to the reply schema (Gemini structured
+				// output) rather than only asking for JSON in the prompt.
+				schema: RESPONSE_SCHEMA,
 				validate: (text) => {
-					try {
-						parsedResponse = JSON.parse(text);
-					} catch {
-						return "invalid JSON";
-					}
+					parsedResponse = parseModelJson(text);
+					if (!parsedResponse) return "invalid JSON";
 					return isValidReply(parsedResponse) ? null : "reply failed schema validation";
 				},
 			});

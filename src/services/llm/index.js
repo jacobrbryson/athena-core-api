@@ -12,6 +12,7 @@
  */
 const router = require("./router");
 const { buildManifest } = require("./manifest");
+const { parseModelJson } = require("./parse");
 
 /**
  * Generate and parse JSON. A tier that returns unparseable JSON (or fails the
@@ -24,11 +25,8 @@ async function generateJson({ check, ...opts }) {
 		...opts,
 		json: true,
 		validate: (text) => {
-			try {
-				parsed = JSON.parse(text);
-			} catch {
-				return "not valid JSON";
-			}
+			parsed = parseModelJson(text);
+			if (!parsed) return "not valid JSON";
 			if (check) {
 				const problem = check(parsed);
 				if (problem && problem !== true) return problem;

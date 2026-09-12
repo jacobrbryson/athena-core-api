@@ -15,7 +15,8 @@ const { generatePrompt } = require("./prompt");
 const guardianSession = { mode: "companion", age: 5, profile_id: null };
 
 async function build(message, options) {
-	return JSON.parse(await generatePrompt(guardianSession, [], message, options));
+	const built = await generatePrompt(guardianSession, [], message, options);
+	return Array.isArray(built) ? built : JSON.parse(built);
 }
 
 describe("generatePrompt — Guardian onboarding", () => {
