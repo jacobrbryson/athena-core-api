@@ -82,8 +82,11 @@ async function maintenance({ dryRun }) {
 		results
 	);
 	await step("consolidation", () => memoryStore.consolidate(), results);
-	await step("embeddingBackfill", () => memoryStore.backfillEmbeddings({ limit: 1000 }), results);
+	// News BEFORE the backfill: ingest writes memories whose embeddings happen in
+	// the background, so backfilling afterwards catches anything that failed the
+	// same night instead of leaving it unsearchable until tomorrow.
 	await step("news", () => memoryStore.ingestNews(), results);
+	await step("embeddingBackfill", () => memoryStore.backfillEmbeddings({ limit: 1000 }), results);
 	return results;
 }
 

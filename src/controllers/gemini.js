@@ -12,6 +12,14 @@ const { parseModelJson } = require("../services/llm/parse");
 
 // How many prior messages to feed back as conversation history.
 const MAX_HISTORY = 20;
+// Chat generation attempts before Athena falls back to saying something honest.
+// Models are stochastic, so a second try on the same tier often succeeds.
+const CHAT_ATTEMPTS = 2;
+// Said only when no model produced a usable reply. A conversation must never
+// dead-end on the person's own message (the nightly review counts those as
+// dropped replies) — and it must not pretend to have answered.
+const FALLBACK_REPLY =
+	"Sorry — something glitched on my end and I lost that reply. Can you say it again?";
 
 /** The shared reply schema every conversation mode emits (see prompt.js). */
 function isValidReply(r) {
@@ -86,27 +94,43 @@ async function processAiResponse(session, message, clients, ctx = {}) {
 		// A tier whose output isn't valid reply JSON is skipped in favor of the
 		// next one instead of silently dropping the reply.
 		let parsedResponse;
-		try {
-			const result = await llm.generate({
-				task: "chat",
-				contents: prompt,
-				audience: memoryCtx.audience,
-				// Constrain the model to the reply schema (Gemini structured
-				// output) rather than only asking for JSON in the prompt.
-				schema: RESPONSE_SCHEMA,
-				validate: (text) => {
-					parsedResponse = parseModelJson(text);
-					if (!parsedResponse) return "invalid JSON";
-					return isValidReply(parsedResponse) ? null : "reply failed schema validation";
-				},
-			});
-			if (!result?.text) {
-				console.warn(`Model returned no response for session ${session.id}`);
-				return;
+		let fellBack = false;
+		for (let attempt = 1; attempt <= CHAT_ATTEMPTS && !parsedResponse; attempt++) {
+			try {
+				const result = await llm.generate({
+					task: "chat",
+					contents: prompt,
+					audience: memoryCtx.audience,
+					// Constrain the model to the reply schema (Gemini structured
+					// output) rather than only asking for JSON in the prompt.
+					schema: RESPONSE_SCHEMA,
+					validate: (text) => {
+						const candidate = parseModelJson(text);
+						if (!candidate) return "invalid JSON";
+						if (!isValidReply(candidate)) return "reply failed schema validation";
+						parsedResponse = candidate;
+						return null;
+					},
+				});
+				if (!result?.text) parsedResponse = null;
+			} catch (err) {
+				console.warn(
+					`Chat attempt ${attempt}/${CHAT_ATTEMPTS} produced no valid reply for session ${session.id}: ${err.message}`
+				);
 			}
-		} catch (err) {
-			console.error(`No model produced a valid reply for session ${session.id}:`, err.message);
-			return;
+		}
+
+		if (!parsedResponse) {
+			// Answer honestly rather than leaving the person hanging.
+			console.error(`Falling back to an apology for session ${session.id}`);
+			fellBack = true;
+			parsedResponse = {
+				response: FALLBACK_REPLY,
+				action: "NO_CHANGE",
+				topic_name: "",
+				new_proficiency: -1,
+				is_factually_true: true,
+			};
 		}
 
 		const aiChatUuid = await messageService.addMessage(
@@ -117,7 +141,8 @@ async function processAiResponse(session, message, clients, ctx = {}) {
 		);
 
 		// Background memory extraction (throttled; never blocks the reply).
-		if (session.mode !== "teach") {
+		// Skipped for fallback apologies — there is nothing to remember.
+		if (session.mode !== "teach" && !fellBack) {
 			memoryStore.afterTurn(session, message, {
 				audience: memoryCtx.audience,
 				memoryEnabled: memoryCtx.memoryEnabled,

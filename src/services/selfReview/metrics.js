@@ -118,11 +118,13 @@ async function memoryMetrics(space) {
 			`SELECT COUNT(*) AS n FROM user_memory
        WHERE updated_at >= NOW() - INTERVAL 24 HOUR AND source = 'ai' AND deleted_at IS NULL;`
 		);
+		// Embedding happens in the background right after a memory is written, so
+		// anything newer than a few minutes is in flight rather than missing.
 		const [[coverage]] = await pool.query(
 			`SELECT COUNT(*) AS total, COALESCE(SUM(m.id IS NOT NULL), 0) AS embedded
        FROM memory_event e
        LEFT JOIN memory_embedding m ON m.memory_type = 'event' AND m.memory_id = e.id AND m.space = ?
-       WHERE e.deleted_at IS NULL;`,
+       WHERE e.deleted_at IS NULL AND e.created_at < NOW() - INTERVAL 10 MINUTE;`,
 			[space]
 		);
 		const [[recalled]] = await pool.query(

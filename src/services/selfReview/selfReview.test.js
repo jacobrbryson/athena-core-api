@@ -35,6 +35,19 @@ describe("summarizeCalls", () => {
 	});
 });
 
+describe("collectMetrics", () => {
+	test("embedding coverage ignores memories whose background embedding is still in flight", async () => {
+		const { collectMetrics } = require("./metrics");
+		const pool = require("../../helpers/db");
+		pool.query.mockResolvedValue([[{ total: 0, embedded: 0, messages: 0, human: 0, sessions: 0, dropped: 0, n: 0 }]]);
+		await collectMetrics({ embeddingSpace: "gemini:gemini-embedding-001" });
+		const coverageSql = pool.query.mock.calls
+			.map(([sql]) => sql)
+			.find((sql) => sql.includes("memory_embedding") && sql.includes("AS embedded"));
+		expect(coverageSql).toContain("created_at < NOW() - INTERVAL 10 MINUTE");
+	});
+});
+
 describe("ruleFindings", () => {
 	const healthyModels = { available: true, byTask: {}, byEndpoint: {} };
 
