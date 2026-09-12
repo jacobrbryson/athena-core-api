@@ -28,6 +28,24 @@ function defaultModels() {
 				"Provided by the OS on supported Android devices (ML Kit GenAI / AICore). Nothing to download; devices report availability.",
 		},
 		{
+			// Small chat model that runs INSIDE the Android app (Unity
+			// DeviceLanguageModel -> MediaPipe LLM Inference). Used for short
+			// offline replies; anything else escalates to the server tiers.
+			// Host the .task/.litertlm bundle yourself (Gemma's license requires
+			// accepting terms) and set DEVICE_LLM_MODEL_URL + _SHA256.
+			id: "device-chat-lite",
+			runtime: "mediapipe-llm",
+			platforms: ["android"],
+			tasks: ["chat-lite", "intent"],
+			format: "task",
+			url: process.env.DEVICE_LLM_MODEL_URL || null,
+			sha256: process.env.DEVICE_LLM_MODEL_SHA256 || null,
+			sizeMb: Number(process.env.DEVICE_LLM_MODEL_SIZE_MB) || null,
+			minRamGb: 6,
+			notes:
+				"Offline replies on the phone. Requires the com.google.mediapipe:tasks-genai runtime in the Android build; absent it, the app just uses the server tiers.",
+		},
+		{
 			id: "vision-detector",
 			runtime: "unity-inference-engine",
 			platforms: ["android"],
