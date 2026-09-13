@@ -155,7 +155,7 @@ async function upsertLink({
 	baseUrl,
 	scopes,
 }) {
-	const encrypted = encrypt(token);
+	const encrypted = await encrypt(token);
 	const uuid = uuidv4();
 	await pool.query(
 		`INSERT INTO integration_link
@@ -461,7 +461,7 @@ async function getUsableCredentials(profileId, provider = PROVIDER_FAMILY_CHORES
 	if (!row) return null;
 	let token;
 	try {
-		token = decrypt(row.access_token);
+		token = await decrypt(row.access_token);
 	} catch (err) {
 		console.error("[integration] Failed to decrypt access token:", err.message);
 		return null;
@@ -927,7 +927,7 @@ async function connectChildByPartner({
 
 	let token;
 	try {
-		token = decrypt(link.access_token);
+		token = await decrypt(link.access_token);
 	} catch (err) {
 		console.error("[integration] Failed to decrypt parent token:", err.message);
 		throw httpError("Stored Family Chores token could not be used", 500);

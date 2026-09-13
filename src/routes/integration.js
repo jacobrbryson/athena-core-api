@@ -11,6 +11,14 @@ const {
 	connectAthenaChild,
 	disconnectAthenaChild,
 } = require("../controllers/integration");
+const {
+	requireKnownProvider,
+	listConnectors,
+	getConnector,
+	startConnect,
+	handleCallback,
+	disconnectConnector,
+} = require("../controllers/connectors");
 const { requireAuth } = require("../middleware/auth");
 
 const router = express.Router();
@@ -43,11 +51,34 @@ router.post(
 );
 
 // -------------------------------------------------------------------
+// PUBLIC: OAuth callback. The provider redirects a BROWSER here, so there is
+// no Athena JWT to check (and the session JWT is IP-pinned, so it could not
+// be relied on regardless). Identity comes from the single-use `state`
+// recorded when the flow started — see services/connectors/oauth.js.
+// Declared before requireAuth on purpose.
+// -------------------------------------------------------------------
+router.get("/:provider/callback", requireKnownProvider, handleCallback);
+
+// -------------------------------------------------------------------
 // Everything below requires an authenticated Athena user.
 // -------------------------------------------------------------------
 router.use(requireAuth);
 
+// Family Chores keeps its own routes; declared before the generic
+// /:provider ones so the more specific path wins.
 router.get("/family-chores", getFamilyChoresStatus);
 router.delete("/family-chores", disconnectFamilyChores);
+
+// Generic OAuth connectors (Google Calendar, Strava, Whoop). Each acts only
+// on the caller's own profile — never a profile id taken from the request.
+router.get("/", listConnectors);
+router.post(
+	"/:provider/connect",
+	requireKnownProvider,
+	express.json(),
+	startConnect
+);
+router.get("/:provider", requireKnownProvider, getConnector);
+router.delete("/:provider", requireKnownProvider, disconnectConnector);
 
 module.exports = router;

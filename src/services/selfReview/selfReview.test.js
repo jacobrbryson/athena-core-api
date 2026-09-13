@@ -19,6 +19,23 @@ const { runEvals, DONT_REMEMBER } = require("./evals");
 const row = (over) => ({ task: "chat", endpoint_id: "gemini", tier: "frontier", outcome: "ok", latency_ms: 1000, attempt: 0, ...over });
 
 describe("summarizeCalls", () => {
+	// A smoke test after a deploy is a real call that answered a real request,
+	// but counting it as production health produced a plan item about the
+	// tester's own 1x1 JPEG fixture ("vision error rate 25%").
+	test("smoke-test calls are set aside from the health metrics but still counted", () => {
+		const s = summarizeCalls([
+			row(),
+			row({ task: "smoke:vision", outcome: "error" }),
+			row({ task: "smoke:chat" }),
+		]);
+		expect(s.byTask["smoke:vision"]).toBeUndefined();
+		expect(s.byTask.chat.calls).toBe(1);
+		expect(s.byTask.chat.errorRate).toBe(0);
+		expect(s.totalCalls).toBe(1);
+		// Set aside, never hidden — the report prints this.
+		expect(s.smokeCalls).toBe(2);
+	});
+
 	test("computes rates, percentiles, local share, and ignores evals", () => {
 		const rows = [
 			row({ endpoint_id: "orc", tier: "orcwood", latency_ms: 500 }),
@@ -155,5 +172,17 @@ describe("report", () => {
 		expect(md).toMatch(/\| chat \| 10 \| 0\.0% \|/);
 		expect(md).toMatch(/\| orc \| orcwood \| 7\/8 \|/);
 		expect(md).toMatch(/admits-gap: invented a date/);
+	});
+
+	test("excluded smoke calls are disclosed in the report", () => {
+		const md = renderMarkdown({
+			date: "2026-09-13",
+			metrics: { models: { last24h: { available: true, byTask: {}, smokeCalls: 3 } } },
+			evals: {},
+			findings: [],
+			plan: fallbackPlan([]),
+			maintenance: {},
+		});
+		expect(md).toMatch(/3 smoke-test calls excluded/);
 	});
 });

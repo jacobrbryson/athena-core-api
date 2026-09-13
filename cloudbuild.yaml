@@ -37,8 +37,16 @@ steps:
       # (connect / disconnect / suggest-chores). Create it per SECURITY_SETUP.md.
       - "--update-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest,DB_PASS=DB_PASS:latest,JWT_SECRET=JWT_SECRET:latest,RECAPTCHA_SECRET=RECAPTCHA_SECRET:latest,FAMILY_CHORES_PARTNER_SECRET=FAMILY_CHORES_PARTNER_SECRET:latest"
 
+      # NOTE: ATHENA_ENC_KEYRING is deliberately NOT injected here. It is read
+      # at runtime from Secret Manager (src/services/secrets) so the monthly
+      # rotation job's new version is picked up without a redeploy. Injecting
+      # it as an env var would pin the keyring to deploy time — env wins over
+      # Secret Manager — and decryption would break after the first rotation.
+      # The runtime SA needs roles/secretmanager.secretAccessor on it; see
+      # deploy/scripts/setup-key-rotation.sh.
+
       # --- Non-secret runtime config (use a custom ^@^ delimiter so values can contain commas) ---
-      - "--set-env-vars=^@^DB_HOST=$_DB_HOST@DB_USER=$_DB_USER@DB_NAME=$_DB_NAME@RECAPTCHA_PROJECT_ID=$_RECAPTCHA_PROJECT_ID@RECAPTCHA_SITE_KEY=$_RECAPTCHA_SITE_KEY@PUBLIC_SESSION_MESSAGE_DAILY_LIMIT=$_PUBLIC_SESSION_MESSAGE_DAILY_LIMIT@PUBLIC_IP_MESSAGE_DAILY_LIMIT=$_PUBLIC_IP_MESSAGE_DAILY_LIMIT@FAMILY_CHORES_ADMIN_ROLES=$_FAMILY_CHORES_ADMIN_ROLES"
+      - "--set-env-vars=^@^GCP_PROJECT_ID=$PROJECT_ID@DB_HOST=$_DB_HOST@DB_USER=$_DB_USER@DB_NAME=$_DB_NAME@RECAPTCHA_PROJECT_ID=$_RECAPTCHA_PROJECT_ID@RECAPTCHA_SITE_KEY=$_RECAPTCHA_SITE_KEY@PUBLIC_SESSION_MESSAGE_DAILY_LIMIT=$_PUBLIC_SESSION_MESSAGE_DAILY_LIMIT@PUBLIC_IP_MESSAGE_DAILY_LIMIT=$_PUBLIC_IP_MESSAGE_DAILY_LIMIT@FAMILY_CHORES_ADMIN_ROLES=$_FAMILY_CHORES_ADMIN_ROLES"
 
 # The final image tag is saved in the Artifact Registry
 images:

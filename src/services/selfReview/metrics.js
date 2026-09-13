@@ -6,6 +6,7 @@
  * section instead of failing the whole review.
  */
 const pool = require("../../helpers/db");
+const { SMOKE_PREFIX } = require("../llm/telemetry");
 
 function percentile(sorted, p) {
 	if (!sorted.length) return null;
@@ -28,8 +29,15 @@ async function section(fn) {
 function summarizeCalls(rows) {
 	const byTask = {};
 	const byEndpoint = {};
+	let smokeCalls = 0;
 	for (const r of rows) {
 		if (r.task === "eval") continue; // nightly evals never skew production metrics
+		// Deliberate post-deploy testing is real traffic but not a health signal;
+		// counted and reported, never silently dropped (see llm/telemetry.js).
+		if (typeof r.task === "string" && r.task.startsWith(SMOKE_PREFIX)) {
+			smokeCalls += 1;
+			continue;
+		}
 		const t = (byTask[r.task] ||= { calls: 0, ok: 0, errors: 0, invalid: 0, fallbackServed: 0, latencies: [], tiers: {} });
 		t.calls += 1;
 		if (r.outcome === "ok") {
@@ -62,7 +70,8 @@ function summarizeCalls(rows) {
 		t.fallbackRate = t.ok ? +(t.fallbackServed / t.ok).toFixed(3) : 0;
 	}
 	for (const k of Object.keys(byEndpoint)) finish(byEndpoint[k]);
-	return { byTask, byEndpoint, totalCalls: rows.filter((r) => r.task !== "eval").length };
+	const counted = (r) => r.task !== "eval" && !String(r.task).startsWith(SMOKE_PREFIX);
+	return { byTask, byEndpoint, totalCalls: rows.filter(counted).length, smokeCalls };
 }
 
 async function modelMetrics(fromHoursAgo, toHoursAgo = 0) {

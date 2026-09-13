@@ -16,6 +16,9 @@
 		"reset:trail": "node db/reset-trail.js",
 		"reset:index": "node db/reset-index.js",
 		"reset:experience": "node db/reset-experience.js",
+		"rotate:keys": "node src/jobs/rotate-keys.js",
+		"rotate:keys:dry": "node src/jobs/rotate-keys.js --dry-run",
+		"rotate:keys:reencrypt": "node src/jobs/rotate-keys.js --reencrypt",
 		"nightly": "node src/jobs/nightly.js",
 		"nightly:dry": "node src/jobs/nightly.js --dry-run",
 		"nightly:review": "node src/jobs/nightly.js --only review",
@@ -28,8 +31,9 @@
 		"clean": "rm -rf dist"
 	},
 	"dependencies": {
-		"@google/genai": "^1.29.0",
 		"@google-cloud/recaptcha-enterprise": "^5.13.0",
+		"@google-cloud/secret-manager": "^7.1.0",
+		"@google/genai": "^1.29.0",
 		"dotenv": "^17.2.3",
 		"express": "^5.1.0",
 		"jsonwebtoken": "^9.0.2",

@@ -13,6 +13,7 @@
 const { loadConfig, TASKS } = require("./config");
 const health = require("./health");
 const telemetry = require("./telemetry");
+const autotune = require("./autotune");
 const geminiAdapter = require("./adapters/gemini");
 const openaiAdapter = require("./adapters/openaiCompat");
 
@@ -47,6 +48,10 @@ function orderByHealth(candidates) {
 	return up.length ? up : candidates;
 }
 
+function managedCandidates(task, opts) {
+	return autotune.tune(orderByHealth(candidatesFor(task, opts)), task, telemetry.recent(200), opts).ordered;
+}
+
 function inputSize(contents) {
 	return typeof contents === "string" ? contents.length : JSON.stringify(contents || "").length;
 }
@@ -64,7 +69,7 @@ class NoModelAvailableError extends Error {
  * Throws NoModelAvailableError only after every candidate has failed.
  */
 async function generate({ task = "chat", contents, json = true, schema = null, audience, validate, temperature }) {
-	const chain = orderByHealth(candidatesFor(task, { audience }));
+	const chain = managedCandidates(task, { audience });
 	const attempts = [];
 
 	for (let i = 0; i < chain.length; i++) {
@@ -193,6 +198,44 @@ function embeddingSpace() {
 	return `${config.embed.endpointId}:${config.embed.model}`;
 }
 
+/**
+ * Generate an image. Frontier-only and binary, so it has its own path rather
+ * than going through generate(); it still falls down the chain of frontier
+ * endpoints that declare an image model, the way text does.
+ *
+ * Returns { images, endpointId, model }.
+ */
+async function image(prompt, opts = {}) {
+	if (typeof prompt !== "string" || !prompt.trim()) {
+		throw new Error("Image generation requires a prompt");
+	}
+	const chain = orderByHealth(config.frontier.filter((e) => !!e.models?.image));
+	const attempts = [];
+
+	for (const endpoint of chain) {
+		const started = Date.now();
+		try {
+			const out = await adapterFor(endpoint).image(endpoint, prompt, opts);
+			const latencyMs = Date.now() - started;
+			health.reportSuccess(endpoint.id, latencyMs);
+			telemetry.recordCall({
+				task: "image", endpointId: endpoint.id, tier: endpoint.tier, model: out.model,
+				outcome: "ok", latencyMs, inputChars: prompt.length,
+			});
+			return { images: out.images, endpointId: endpoint.id, model: out.model };
+		} catch (err) {
+			const latencyMs = Date.now() - started;
+			health.reportFailure(endpoint.id, err);
+			telemetry.recordCall({
+				task: "image", endpointId: endpoint.id, tier: endpoint.tier,
+				model: endpoint.models?.image, outcome: "error", latencyMs, error: err.message,
+			});
+			attempts.push({ id: endpoint.id, error: err.message });
+		}
+	}
+	throw new NoModelAvailableError("image", attempts);
+}
+
 async function speech(text) {
 	const endpoint = config.frontier.find((e) => e.models?.tts);
 	if (!endpoint) throw new NoModelAvailableError("tts", []);
@@ -235,7 +278,7 @@ function startHealthLoop(intervalMs = 60_000) {
 
 /** Which tier would serve a task right now (first healthy candidate). */
 function servingTier(task, opts) {
-	const chain = orderByHealth(candidatesFor(task, opts));
+	const chain = managedCandidates(task, opts);
 	return chain[0] ? { endpointId: chain[0].id, tier: chain[0].tier, model: chain[0].models[task] } : null;
 }
 
@@ -250,6 +293,15 @@ function status() {
 	});
 	return {
 		policy: config.policy,
+		automaticManagement: {
+			mode: "same-tier-routing",
+			windowMs: autotune.WINDOW_MS,
+			minimumSamples: autotune.MIN_SAMPLES,
+			slowResponseMs: autotune.SLOW_MS,
+			tasks: Object.fromEntries(["chat", "json", "vision", "extract", "review"].map((task) => [task,
+				autotune.tune(candidatesFor(task), task, telemetry.recent(200)).diagnostics,
+			])),
+		},
 		childPolicy: config.childPolicy,
 		embeddingSpace: embeddingSpace(),
 		serving: {
@@ -277,6 +329,7 @@ module.exports = {
 	raw,
 	embed,
 	embeddingSpace,
+	image,
 	speech,
 	status,
 	servingTier,

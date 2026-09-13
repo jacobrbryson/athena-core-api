@@ -8,9 +8,39 @@
  * doesn't exist yet (migration not applied) DB logging switches itself off.
  */
 
+const { AsyncLocalStorage } = require("node:async_hooks");
+
 const RING_SIZE = 200;
 const ring = [];
 let dbEnabled = process.env.LLM_TELEMETRY_DB !== "false";
+
+// Deliberate testing against production — a smoke test after a deploy — is real
+// traffic that answers a real request, but it is not a signal about how Athena
+// is serving people, and treating it as one produces plan items about the
+// tester's own fixtures (a 1x1 JPEG once read as a 25% vision error rate).
+// Calls made inside runAsSmoke() are logged in full, with the task prefixed
+// `smoke:`, and the self-review counts them separately instead of mixing them
+// into the health metrics. Nothing is hidden: the row, the endpoint, the
+// outcome and the error are all still there, and the report says how many were
+// set aside.
+const smokeContext = new AsyncLocalStorage();
+
+/** Run fn (and everything it awaits) with model calls marked as smoke tests. */
+function runAsSmoke(fn) {
+	return smokeContext.run(true, fn);
+}
+
+function isSmoke() {
+	return smokeContext.getStore() === true;
+}
+
+const SMOKE_PREFIX = "smoke:";
+const TASK_COLUMN_CHARS = 24; // llm_call_log.task is VARCHAR(24)
+
+function labelFor(task) {
+	if (!isSmoke()) return task;
+	return `${SMOKE_PREFIX}${task}`.slice(0, TASK_COLUMN_CHARS);
+}
 
 function pool() {
 	return require("../../helpers/db");
@@ -19,7 +49,7 @@ function pool() {
 function recordCall(entry) {
 	const row = {
 		at: Date.now(),
-		task: entry.task,
+		task: labelFor(entry.task),
 		endpointId: entry.endpointId,
 		tier: entry.tier,
 		model: entry.model || null,
@@ -66,4 +96,11 @@ function recent(limit = 50) {
 	return ring.slice(-limit);
 }
 
-module.exports = { recordCall, recent, _disableDb: () => (dbEnabled = false) };
+module.exports = {
+	recordCall,
+	recent,
+	runAsSmoke,
+	isSmoke,
+	SMOKE_PREFIX,
+	_disableDb: () => (dbEnabled = false),
+};

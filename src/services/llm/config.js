@@ -23,6 +23,18 @@
  *                          hosted models carry stronger safety tuning for kids)
  *   LLM_EMBED_MODEL        "<endpointId>:<model>" naming the ONE active embedding
  *                          space (default gemini:gemini-embedding-001)
+ *
+ * A second frontier provider (OpenAI) joins the chain when OPENAI_API_KEY is
+ * set. Its per-task models are declared explicitly rather than defaulted,
+ * because model availability differs per account — an invented id 404s at the
+ * provider. Only the image model has a default, since image generation is the
+ * reason the provider is here:
+ *
+ *   OPENAI_API_KEY         enables the endpoint
+ *   OPENAI_CHAT_MODEL      opt in to OpenAI for chat/json/extract/review
+ *   OPENAI_VISION_MODEL    opt in for image understanding
+ *   OPENAI_IMAGE_MODEL     image generation (default gpt-image-1)
+ *   OPENAI_PRIORITY        chain position; default 10, behind Gemini's 0
  */
 
 const GEMINI_CHAT_MODEL = "gemini-3.5-flash-lite";
@@ -39,6 +51,9 @@ const TASKS = {
 	review: { pinned: null }, // nightly self-review / planning
 	tools: { pinned: "frontier" }, // Gemini function-calling format
 	tts: { pinned: "frontier" }, // Gemini neural voice
+	// Image generation. Frontier-only: no local tier does it, and the output is
+	// binary, so it never goes through generate() — see image() in router.js.
+	image: { pinned: "frontier" },
 	// Embeddings never fall back across models: vectors from different models
 	// are not comparable. See LLM_EMBED_MODEL and embed() in router.js.
 	embed: { pinned: "embed" },
@@ -81,6 +96,53 @@ function normalizeEndpoint(e, index) {
 	};
 }
 
+/**
+ * The OpenAI frontier endpoint, or null when no key is configured.
+ *
+ * Speaks the OpenAI dialect, so the existing openaiCompat adapter serves it —
+ * the same adapter the Orcwood tier uses, which already runs the
+ * assertModelAccess guard on every dispatch.
+ *
+ * `apiKeySecret` (rather than a baked-in key) lets the adapter resolve the
+ * value at call time through services/secrets, so a rotated key is picked up
+ * without a redeploy.
+ */
+function buildOpenAi() {
+	const enabled =
+		!!process.env.OPENAI_API_KEY || process.env.OPENAI_ENABLED === "true";
+	if (!enabled) return null;
+
+	const chat = process.env.OPENAI_CHAT_MODEL || null;
+	const models = {
+		chat,
+		json: process.env.OPENAI_JSON_MODEL || chat,
+		extract: process.env.OPENAI_EXTRACT_MODEL || chat,
+		review: process.env.OPENAI_REVIEW_MODEL || chat,
+		vision: process.env.OPENAI_VISION_MODEL || null,
+		// gpt-image-1 is the long-standing id; newer gpt-image-2.5-* models
+		// exist but are not on every account, so they are opt-in by env.
+		image: process.env.OPENAI_IMAGE_MODEL || "gpt-image-1",
+	};
+
+	return {
+		id: "openai",
+		tier: "frontier",
+		kind: "openai",
+		baseUrl: (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/$/, ""),
+		apiKey: process.env.OPENAI_API_KEY || "",
+		apiKeySecret: "OPENAI_API_KEY",
+		models,
+		// OpenAI honors response_format json_schema with strict validation.
+		supportsJsonSchema: true,
+		timeoutMs: Number(process.env.OPENAI_TIMEOUT_MS) || 60000,
+		// Behind Gemini by default: adding the provider must not silently
+		// re-route every existing conversation onto a new bill.
+		priority: Number.isFinite(Number(process.env.OPENAI_PRIORITY))
+			? Number(process.env.OPENAI_PRIORITY)
+			: 10,
+	};
+}
+
 function loadConfig() {
 	const orcwood = parseJsonEnv("LLM_ORCWOOD_ENDPOINTS", [])
 		.map(normalizeEndpoint)
@@ -108,6 +170,10 @@ function loadConfig() {
 		});
 	}
 
+	const openai = buildOpenAi();
+	if (openai) frontier.push(openai);
+	frontier.sort((a, b) => a.priority - b.priority);
+
 	const policy = POLICIES.has(process.env.LLM_POLICY)
 		? process.env.LLM_POLICY
 		: "local-first";
@@ -125,4 +191,4 @@ function loadConfig() {
 	return { orcwood, frontier, policy, childPolicy, embed };
 }
 
-module.exports = { loadConfig, TASKS, POLICIES, GEMINI_CHAT_MODEL };
+module.exports = { loadConfig, TASKS, POLICIES, GEMINI_CHAT_MODEL, buildOpenAi };

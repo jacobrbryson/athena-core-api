@@ -4,6 +4,7 @@
  *   llm.generate({ task, contents, json, schema, audience, validate })
  *   llm.generateJson({ ... })   // generate + parse, with validation-driven fallback
  *   llm.embed(texts, { purpose })
+ *   llm.image(prompt, { size, quality })
  *   llm.speech(text)
  *   llm.raw(contents, config)   // Gemini function calling
  *   llm.status() / llm.manifest()
@@ -45,6 +46,7 @@ module.exports = {
 	raw: router.raw,
 	embed: router.embed,
 	embeddingSpace: router.embeddingSpace,
+	image: router.image,
 	speech: router.speech,
 	status: router.status,
 	servingTier: router.servingTier,

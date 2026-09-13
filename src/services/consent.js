@@ -13,6 +13,10 @@ const CONSENT_TYPES = new Set([
 	"privacy_policy",
 	"ai_disclosure",
 	"terms_of_service",
+	// Gate on linking a health provider (Strava, Whoop). Deliberately NOT in
+	// the `required` list in getConsentSnapshot: it is opt-in for families who
+	// connect one, not a precondition for using Athena at all.
+	"health_data",
 ]);
 
 function normalizeConsentType(value) {
@@ -147,8 +151,26 @@ async function getConsentHistory(googleId, limit = 100) {
 	}));
 }
 
+/**
+ * Has this parent's family accepted a given consent? Used to gate linking a
+ * provider that carries health data (see services/connectors/oauth.js).
+ * Missing family or missing googleId is a "no", never a throw.
+ */
+async function hasConsent(googleId, consentType) {
+	const type = normalizeConsentType(consentType);
+	if (!type || !googleId) return false;
+	try {
+		const snapshot = await getConsentStatus(googleId);
+		return snapshot.consents?.[type]?.accepted === true;
+	} catch (err) {
+		console.warn("[consent] hasConsent check failed:", err.message);
+		return false;
+	}
+}
+
 module.exports = {
 	CONSENT_TYPES,
+	hasConsent,
 	recordConsent,
 	getConsentStatus,
 	getConsentHistory,

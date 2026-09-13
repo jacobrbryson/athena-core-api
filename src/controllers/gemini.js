@@ -5,6 +5,7 @@ const memoryStore = require("../services/memoryStore");
 const perception = require("../services/perception");
 const sessionTopicService = require("../services/sessionTopic");
 const integrationService = require("../services/integration");
+const connectorContext = require("../services/connectors/context");
 const missionService = require("../services/mission");
 
 const { generatePrompt, RESPONSE_SCHEMA } = require("./prompt");
@@ -37,23 +38,32 @@ async function processAiResponse(session, message, clients, ctx = {}) {
 	try {
 		const topics = await sessionTopicService.getSessionTopics(session.id);
 
-		// If the user has linked an external app (e.g. Family Chores) and is
-		// asking about it, fetch a live snapshot to ground the reply. Failures
-		// here must never block the conversation.
+		// If the user has linked an external app and is asking about it, fetch a
+		// live snapshot to ground the reply. Family Chores is partner-linked;
+		// Calendar/Strava/Whoop are OAuth connectors. Both are keyword-gated so
+		// an unrelated message costs nothing, and failures here must never block
+		// the conversation.
 		let integrationContext = null;
-		if (
-			session.profile_id &&
-			integrationService.messageNeedsFamilyChores(message)
-		) {
-			try {
-				integrationContext =
-					await integrationService.buildFamilyChoresContext(
-						session.profile_id,
-						{ message }
-					);
-			} catch (e) {
-				console.warn("[gemini] Family Chores context failed:", e.message);
-			}
+		if (session.profile_id) {
+			const blocks = await Promise.all([
+				integrationService.messageNeedsFamilyChores(message)
+					? integrationService
+							.buildFamilyChoresContext(session.profile_id, { message })
+							.catch((e) => {
+								console.warn("[gemini] Family Chores context failed:", e.message);
+								return null;
+							})
+					: null,
+				connectorContext.messageNeedsConnectors(message)
+					? connectorContext
+							.buildContext(session.profile_id, { message })
+							.catch((e) => {
+								console.warn("[gemini] connector context failed:", e.message);
+								return null;
+							})
+					: null,
+			]);
+			integrationContext = blocks.filter(Boolean).join("\n\n") || null;
 		}
 
 		// Conversation history for continuity. getMessages returns the transcript

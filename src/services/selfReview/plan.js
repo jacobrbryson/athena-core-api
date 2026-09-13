@@ -226,6 +226,12 @@ function renderMarkdown({ date, metrics, evals, findings, plan, maintenance }) {
 			L.push(`| ${task} | ${t.calls} | ${pct(t.errorRate)} | ${pct(t.invalidRate)} | ${pct(t.fallbackRate)} | ${pct(t.localShare)} | ${secs(t.p50Ms)} | ${secs(t.p95Ms)} |`);
 		}
 	} else L.push(`_Unavailable: ${m?.reason}_`);
+	if (m?.smokeCalls) {
+		L.push(
+			"",
+			`_${m.smokeCalls} smoke-test call${m.smokeCalls === 1 ? "" : "s"} excluded from the table above (deliberate post-deploy testing, labelled \`smoke:*\`)._`
+		);
+	}
 	L.push("");
 
 	L.push("## Abilities (capability evals)", "");

@@ -9,6 +9,7 @@ const {
 const { validateCode } = require("../controllers/childAuth");
 const { validateGuardian, redeemGuardianToken } = require("../controllers/guardianAuth");
 const { generateSpeech } = require("../controllers/speech");
+const { generateImage } = require("../controllers/image");
 const {
 	getCurrentMission,
 	getMissionFamilies,
@@ -41,6 +42,9 @@ const companionRouter = require("./companion");
 module.exports = (clients) => {
 	const router = express.Router();
 	router.use(require("../middleware/access").accessBoundary);
+	// Labels post-deploy smoke traffic so it doesn't read as production health.
+	// After the access boundary on purpose — it decides nothing about access.
+	router.use(require("../middleware/smokeTest"));
 
 	router.get("/session", getOrCreateSession);
 	router.get("/session/:sessionId/topic", getTopics);
@@ -50,6 +54,11 @@ module.exports = (clients) => {
 	// Authenticated Guardian-only neural voice. The proxy forwards the Guardian
 	// session JWT in x-user-authorization while keeping the Gemini key private.
 	router.post("/speech", generateSpeech);
+
+	// Image generation (OpenAI). Behind the same access boundary as every other
+	// model call — accessBoundary above has already required Guardian access or
+	// an owner grant, and the adapter re-checks at provider dispatch.
+	router.post("/image", express.json({ limit: "64kb" }), generateImage);
 
 	// Guardian "Current Mission" panel: per-family onboarding status, scoped to
 	// the caller's adventure (derived from the forwarded Guardian session JWT).

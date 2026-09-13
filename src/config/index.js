@@ -9,8 +9,35 @@ module.exports = {
 	RECAPTCHA_PROJECT_ID: process.env.RECAPTCHA_PROJECT_ID || "",
 	RECAPTCHA_SITE_KEY: process.env.RECAPTCHA_SITE_KEY || "",
 
+	// --- Secret storage (see docs/architecture/secret-rotation.md) ---
+	// GCP project holding the Secret Manager secrets. Cloud Run sets
+	// GOOGLE_CLOUD_PROJECT itself; this is the explicit override.
+	GCP_PROJECT_ID: process.env.GCP_PROJECT_ID || "",
+	// How long a resolved secret is cached in-process. Shorter = a rotated
+	// secret is picked up sooner; longer = fewer Secret Manager calls.
+	SECRET_CACHE_TTL_MS: process.env.SECRET_CACHE_TTL_MS || "",
+
+	// --- Outbound OAuth connectors (Google Calendar, Strava, Whoop) ---
+	// Public base URL of the API as the BROWSER sees it — the proxy, not
+	// core_api, which is invoker-only. OAuth redirect URIs are built from
+	// this and must match what is registered with each provider:
+	//   <PUBLIC_API_BASE_URL>/integrations/<provider>/callback
+	PUBLIC_API_BASE_URL: process.env.PUBLIC_API_BASE_URL || "",
+	// Origins the callback may send the browser back to. The first is the
+	// default. An empty list means local dev: the callback answers with JSON
+	// instead of redirecting. Anything not listed is rejected, so the public
+	// callback can never be used as an open redirect.
+	INTEGRATION_REDIRECT_ALLOWLIST: (
+		process.env.INTEGRATION_REDIRECT_ALLOWLIST || ""
+	)
+		.split(",")
+		.map((o) => o.trim().replace(/\/$/, ""))
+		.filter(Boolean),
+
 	// --- External integrations (Family Chores app, etc.) ---
-	// Key used to encrypt partner API tokens at rest (see helpers/crypto.js).
+	// Pre-keyring key for secrets at rest. Superseded by the ATHENA_ENC_KEYRING
+	// secret; still read so ciphertext written before the keyring stays
+	// readable (see helpers/crypto.js).
 	INTEGRATION_ENC_KEY: process.env.INTEGRATION_ENC_KEY || "",
 	// Default base URL for the Family Chores public API. A per-link override
 	// may be supplied at connect time; this is the fallback.
