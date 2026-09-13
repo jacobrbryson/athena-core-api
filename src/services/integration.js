@@ -1027,6 +1027,7 @@ async function disconnectChildByPartner({ partnerSecret, email, playerId }) {
 
 module.exports = {
 	PROVIDER_FAMILY_CHORES,
+	resolveActingProfile,
 	SUPPORTED_PROVIDERS,
 	connectFamilyChores,
 	disconnectByPartner,
