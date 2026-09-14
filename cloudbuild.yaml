@@ -46,7 +46,11 @@ steps:
       # deploy/scripts/setup-key-rotation.sh.
 
       # --- Non-secret runtime config (use a custom ^@^ delimiter so values can contain commas) ---
-      - "--set-env-vars=^@^GCP_PROJECT_ID=$PROJECT_ID@DB_HOST=$_DB_HOST@DB_USER=$_DB_USER@DB_NAME=$_DB_NAME@RECAPTCHA_PROJECT_ID=$_RECAPTCHA_PROJECT_ID@RECAPTCHA_SITE_KEY=$_RECAPTCHA_SITE_KEY@PUBLIC_SESSION_MESSAGE_DAILY_LIMIT=$_PUBLIC_SESSION_MESSAGE_DAILY_LIMIT@PUBLIC_IP_MESSAGE_DAILY_LIMIT=$_PUBLIC_IP_MESSAGE_DAILY_LIMIT@FAMILY_CHORES_ADMIN_ROLES=$_FAMILY_CHORES_ADMIN_ROLES"
+      # --set-env-vars REPLACES the whole set, so every runtime var the service
+      # needs must be listed here. Anything set out-of-band with `gcloud run
+      # services update` is wiped by the next deploy — which is exactly how the
+      # OAuth connector callback broke once already.
+      - "--set-env-vars=^@^GCP_PROJECT_ID=$PROJECT_ID@DB_HOST=$_DB_HOST@DB_USER=$_DB_USER@DB_NAME=$_DB_NAME@RECAPTCHA_PROJECT_ID=$_RECAPTCHA_PROJECT_ID@RECAPTCHA_SITE_KEY=$_RECAPTCHA_SITE_KEY@PUBLIC_SESSION_MESSAGE_DAILY_LIMIT=$_PUBLIC_SESSION_MESSAGE_DAILY_LIMIT@PUBLIC_IP_MESSAGE_DAILY_LIMIT=$_PUBLIC_IP_MESSAGE_DAILY_LIMIT@FAMILY_CHORES_ADMIN_ROLES=$_FAMILY_CHORES_ADMIN_ROLES@PUBLIC_API_BASE_URL=$_PUBLIC_API_BASE_URL@INTEGRATION_REDIRECT_ALLOWLIST=$_INTEGRATION_REDIRECT_ALLOWLIST"
 
 # The final image tag is saved in the Artifact Registry
 images:
@@ -68,5 +72,15 @@ substitutions:
   # Family Chores roles allowed to connect Athena (matched against /me.role).
   # Adjust to match Family Chores' real parent/admin role names.
   _FAMILY_CHORES_ADMIN_ROLES: "parent,admin,owner,guardian"
+  # Public base URL of the API as the BROWSER sees it — the proxy, not this
+  # service. OAuth redirect URIs are built from it, and each must be registered
+  # with the provider as <_PUBLIC_API_BASE_URL>/integrations/<provider>/callback.
+  _PUBLIC_API_BASE_URL: "https://athena-proxy-api-12367074465.us-central1.run.app/api/v1"
+  # Origins the connector callback may hand the browser back to; the first is
+  # the default. The callback is public, so this list is the only thing keeping
+  # it from being an open redirect — keep it to the apps that actually start an
+  # OAuth connect (today: Companion; Guardians ships no connector UI). An empty
+  # value means local dev, where the callback answers with JSON instead.
+  _INTEGRATION_REDIRECT_ALLOWLIST: "https://athena-companion-mlkumvppsa-uc.a.run.app,https://athena-companion-12367074465.us-central1.run.app"
 options:
   logging: CLOUD_LOGGING_ONLY
