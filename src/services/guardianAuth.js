@@ -22,6 +22,34 @@ async function resolveLinkedProfileId(email) {
 }
 
 /**
+ * Resolve the Athena profile.id for an AUTHENTICATED guardian_id.
+ *
+ * The login response carries linked_profile_id for the client's convenience,
+ * but the client must never be believed about it — it selects whose memories
+ * and whose connected accounts (calendar, Strava, Whoop) Athena reads. This
+ * re-derives it from the guardian id inside the verified session token, so a
+ * forged body cannot point Athena at someone else's profile.
+ *
+ * Never throws — a missing link is not an auth failure.
+ */
+async function linkedProfileIdForGuardian(guardianId) {
+	if (!guardianId) return null;
+	try {
+		const [rows] = await pool.query(
+			`SELECT email FROM guardian_credential WHERE guardian_id = ? LIMIT 1;`,
+			[String(guardianId).trim()]
+		);
+		return rows[0] ? await resolveLinkedProfileId(rows[0].email) : null;
+	} catch (err) {
+		console.error(
+			"[guardianAuth] linkedProfileIdForGuardian failed:",
+			err.message
+		);
+		return null;
+	}
+}
+
+/**
  * Determine the effective adventure for a guardian login.
  *
  * Rules:
@@ -351,4 +379,5 @@ module.exports = {
 	logAttempt,
 	resolveActiveAdventure,
 	resolveLinkedProfileId,
+	linkedProfileIdForGuardian,
 };

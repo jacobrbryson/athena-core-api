@@ -43,12 +43,19 @@ async function processAiResponse(session, message, clients, ctx = {}) {
 		// Calendar/Strava/Whoop are OAuth connectors. Both are keyword-gated so
 		// an unrelated message costs nothing, and failures here must never block
 		// the conversation.
+		//
+		// A Guardians session is never bound to a profile — that app has no
+		// profile_uuid to send — so fall back to the profile resolved from the
+		// guardian's verified session token (message.js), the same identity
+		// prompt.js already uses to recall their memories.
+		const groundingProfileId = ctx.guardian?.linkedProfileId || session.profile_id;
+
 		let integrationContext = null;
-		if (session.profile_id) {
+		if (groundingProfileId) {
 			const blocks = await Promise.all([
 				integrationService.messageNeedsFamilyChores(message)
 					? integrationService
-							.buildFamilyChoresContext(session.profile_id, { message })
+							.buildFamilyChoresContext(groundingProfileId, { message })
 							.catch((e) => {
 								console.warn("[gemini] Family Chores context failed:", e.message);
 								return null;
@@ -56,7 +63,7 @@ async function processAiResponse(session, message, clients, ctx = {}) {
 					: null,
 				connectorContext.messageNeedsConnectors(message)
 					? connectorContext
-							.buildContext(session.profile_id, { message })
+							.buildContext(groundingProfileId, { message })
 							.catch((e) => {
 								console.warn("[gemini] connector context failed:", e.message);
 								return null;

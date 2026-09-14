@@ -2,6 +2,7 @@ const messageService = require("../services/message");
 const sessionService = require("../services/session");
 const { extractIp } = require("../helpers/utils");
 const { decodeGuardianFromRequest } = require("../helpers/guardianToken");
+const guardianAuth = require("../services/guardianAuth");
 const { resolveCallerProfileId } = require("../helpers/callerIdentity");
 const { audienceForProfile } = require("../services/audience");
 const { processAiResponse } = require("./gemini");
@@ -28,9 +29,10 @@ function parseMessageContext(body = {}) {
 				displayName: trimStr(body.guardian.display_name, 80),
 				adventureKey: trimStr(body.guardian.adventure_key, 64),
 				city: trimStr(body.guardian.city, 120),
-				linkedProfileId: Number.isFinite(Number(body.guardian.linked_profile_id))
-					? Number(body.guardian.linked_profile_id)
-					: null,
+				// linkedProfileId is deliberately NOT read from the body — it
+				// selects whose memories and connected accounts Athena reads.
+				// It is filled in below from the verified session token.
+				linkedProfileId: null,
 		  }
 		: undefined;
 
@@ -209,6 +211,20 @@ async function addMessage(req, res, clients) {
 		// attribute in-chat mission reporting to the right family. Never trusted
 		// from the body.
 		ctx.guardianAuth = decodeGuardianFromRequest(req);
+
+		// Which Athena profile this guardian is, resolved from the verified
+		// token rather than the body. Guardians sessions are never bound to a
+		// profile (the app has no profile_uuid to send), so without this the
+		// guardian's own memories and connected accounts — calendar included —
+		// are invisible to Athena in the Guardians console.
+		if (ctx.guardianAuth?.guardian_id) {
+			const linkedProfileId = await guardianAuth
+				.linkedProfileIdForGuardian(ctx.guardianAuth.guardian_id)
+				.catch(() => null);
+			if (linkedProfileId) {
+				ctx.guardian = { ...(ctx.guardian || {}), linkedProfileId };
+			}
+		}
 
 		// The onboarding "communication check" invites very short replies
 		// ("hi", "ok"), so relax the usual minimum for those turns only.

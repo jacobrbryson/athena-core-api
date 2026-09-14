@@ -28,8 +28,21 @@ function apiResponse(body, { ok = true, status = 200 } = {}) {
 	};
 }
 
+/** A calendarList body. `primary` first, the rest treated as shared. */
+function calendarList(...names) {
+	return apiResponse({
+		items: names.map((name, i) => ({
+			id: i === 0 ? "primary@example.com" : `${name.toLowerCase()}@group.calendar.google.com`,
+			summary: name,
+			timeZone: "America/New_York",
+			...(i === 0 ? { primary: true } : {}),
+		})),
+	});
+}
+
 beforeEach(() => {
 	jest.clearAllMocks();
+	googleCalendar.clearCalendarCache();
 	mockAccessToken.mockResolvedValue("live-token");
 	mockList.mockResolvedValue([
 		{ provider: "google_calendar", status: "active" },
@@ -44,6 +57,9 @@ afterEach(() => jest.restoreAllMocks());
 
 const lastUrl = () => new URL(global.fetch.mock.calls[0][0]);
 const lastInit = () => global.fetch.mock.calls[0][1];
+/** Nth fetch (0-based) — the calendar reads span several calls. */
+const urlAt = (n) => new URL(global.fetch.mock.calls[n][0]);
+const initAt = (n) => global.fetch.mock.calls[n][1];
 
 describe("http layer", () => {
 	it("preserves a path prefix on the provider's base URL", () => {
@@ -103,10 +119,14 @@ describe("http layer", () => {
 
 describe("google calendar", () => {
 	it("expands recurring events and orders them by start time", async () => {
-		global.fetch.mockResolvedValue(apiResponse({ items: [] }));
+		global.fetch
+			.mockResolvedValueOnce(calendarList("Mine"))
+			.mockResolvedValue(apiResponse({ items: [] }));
 		await googleCalendar.listEvents(PROFILE, { days: 3 });
-		const url = lastUrl();
-		expect(url.pathname).toBe("/calendar/v3/calendars/primary/events");
+
+		expect(urlAt(0).pathname).toBe("/calendar/v3/users/me/calendarList");
+		const url = urlAt(1);
+		expect(url.pathname).toBe("/calendar/v3/calendars/primary%40example.com/events");
 		// orderBy=startTime is only legal alongside singleEvents=true.
 		expect(url.searchParams.get("singleEvents")).toBe("true");
 		expect(url.searchParams.get("orderBy")).toBe("startTime");
@@ -114,7 +134,7 @@ describe("google calendar", () => {
 	});
 
 	it("normalizes timed and all-day events", async () => {
-		global.fetch.mockResolvedValue(
+		global.fetch.mockResolvedValueOnce(calendarList("Mine")).mockResolvedValue(
 			apiResponse({
 				items: [
 					{
@@ -138,14 +158,185 @@ describe("google calendar", () => {
 		expect(events[1]).toMatchObject({ title: "Holiday", allDay: true });
 	});
 
-	it("asks freeBusy with a POST body rather than a query", async () => {
-		global.fetch.mockResolvedValue(
-			apiResponse({ calendars: { primary: { busy: [{ start: "a", end: "b" }] } } })
+	it("reads every calendar and merges them in start order", async () => {
+		// The shared household calendar is where the plans actually live — it
+		// used to be invisible, because only `primary` was ever read.
+		global.fetch
+			.mockResolvedValueOnce(calendarList("Mine", "Family"))
+			.mockResolvedValueOnce(
+				apiResponse({
+					items: [
+						{ summary: "Standup", start: { dateTime: "2026-09-14T13:00:00Z" } },
+					],
+				})
+			)
+			.mockResolvedValueOnce(
+				apiResponse({
+					items: [
+						{ summary: "Swim lesson", start: { dateTime: "2026-09-14T09:00:00Z" } },
+					],
+				})
+			);
+
+		const events = await googleCalendar.listEvents(PROFILE);
+		expect(events.map((e) => e.title)).toEqual(["Swim lesson", "Standup"]);
+		expect(events[0]).toMatchObject({ calendar: "Family", shared: true });
+		expect(events[1]).toMatchObject({ calendar: "Mine", shared: false });
+	});
+
+	it("names the shared calendar in the prompt block", async () => {
+		global.fetch
+			.mockResolvedValueOnce(calendarList("Mine", "Family"))
+			.mockResolvedValueOnce(
+				apiResponse({
+					items: [{ summary: "Swim lesson", start: { dateTime: "2026-09-14T09:00:00Z" } }],
+				})
+			)
+			.mockResolvedValue(apiResponse({ items: [] }));
+
+		const text = await googleCalendar.buildContext(PROFILE, { days: 7 });
+		expect(text).toMatch(/your calendar and Family/);
+		expect(text).toMatch(/Swim lesson/);
+	});
+
+	it("skips declined and cancelled events", async () => {
+		global.fetch.mockResolvedValueOnce(calendarList("Mine")).mockResolvedValue(
+			apiResponse({
+				items: [
+					{
+						summary: "Declined meeting",
+						start: { dateTime: "2026-09-14T13:00:00Z" },
+						attendees: [{ self: true, responseStatus: "declined" }],
+					},
+					{
+						summary: "Called off",
+						status: "cancelled",
+						start: { dateTime: "2026-09-14T14:00:00Z" },
+					},
+					{ summary: "Real one", start: { dateTime: "2026-09-14T15:00:00Z" } },
+				],
+			})
 		);
+		const events = await googleCalendar.listEvents(PROFILE);
+		expect(events.map((e) => e.title)).toEqual(["Real one"]);
+	});
+
+	it("survives one calendar failing but not all of them", async () => {
+		global.fetch
+			.mockResolvedValueOnce(calendarList("Mine", "Family"))
+			.mockResolvedValueOnce(
+				apiResponse({
+					items: [{ summary: "Standup", start: { dateTime: "2026-09-14T13:00:00Z" } }],
+				})
+			)
+			.mockResolvedValueOnce(apiResponse({}, { ok: false, status: 500 }));
+		expect((await googleCalendar.listEvents(PROFILE)).map((e) => e.title)).toEqual([
+			"Standup",
+		]);
+
+		// But a total failure must NOT be reported as an empty schedule.
+		jest.clearAllMocks();
+		googleCalendar.clearCalendarCache();
+		global.fetch
+			.mockResolvedValueOnce(calendarList("Mine", "Family"))
+			.mockResolvedValue(apiResponse({}, { ok: false, status: 500 }));
+		await expect(googleCalendar.listEvents(PROFILE)).rejects.toThrow();
+	});
+
+	it("falls back to the primary calendar when the list is unreadable", async () => {
+		global.fetch
+			.mockResolvedValueOnce(apiResponse({}, { ok: false, status: 500 }))
+			.mockResolvedValue(apiResponse({ items: [] }));
+		await googleCalendar.listEvents(PROFILE);
+		expect(urlAt(1).pathname).toBe("/calendar/v3/calendars/primary/events");
+	});
+
+	it("asks freeBusy about every calendar, with a POST body", async () => {
+		global.fetch
+			.mockResolvedValueOnce(calendarList("Mine", "Family"))
+			.mockResolvedValueOnce(
+				apiResponse({
+					calendars: {
+						"primary@example.com": { busy: [{ start: "a", end: "b" }] },
+						"family@group.calendar.google.com": { busy: [{ start: "c", end: "d" }] },
+					},
+				})
+			);
 		const busy = await googleCalendar.freeBusy(PROFILE, { days: 2 });
-		expect(lastInit().method).toBe("POST");
-		expect(JSON.parse(lastInit().body).items).toEqual([{ id: "primary" }]);
-		expect(busy).toEqual([{ start: "a", end: "b" }]);
+		expect(initAt(1).method).toBe("POST");
+		expect(JSON.parse(initAt(1).body).items).toEqual([
+			{ id: "primary@example.com" },
+			{ id: "family@group.calendar.google.com" },
+		]);
+		expect(busy).toEqual([
+			{ start: "a", end: "b" },
+			{ start: "c", end: "d" },
+		]);
+	});
+
+	it("renders times in the account's own calendar zone, not UTC", async () => {
+		// 13:00Z in September is 09:00 in New York. Telling someone their 9am
+		// standup is at 1pm is worse than telling them nothing.
+		global.fetch
+			.mockResolvedValueOnce(calendarList("Mine"))
+			.mockResolvedValue(
+				apiResponse({
+					items: [
+						{ summary: "Standup", start: { dateTime: "2026-09-14T13:00:00Z" } },
+					],
+				})
+			);
+		const text = await googleCalendar.buildContext(PROFILE, { days: 7 });
+		expect(text).toMatch(/local time, America\/New_York/);
+		expect(text).toMatch(/Mon 2026-09-14 09:00 — Standup/);
+		expect(text).not.toMatch(/13:00/);
+	});
+
+	it("takes the display zone from the primary calendar", () => {
+		expect(
+			googleCalendar.displayTimeZone([
+				{ primary: false, timeZone: "Europe/Berlin" },
+				{ primary: true, timeZone: "America/Chicago" },
+			])
+		).toBe("America/Chicago");
+		// No zone anywhere (the calendar list was unreadable) stays explicit.
+		expect(googleCalendar.displayTimeZone([{ primary: true, timeZone: null }])).toBe(
+			"UTC"
+		);
+	});
+
+	it("keeps an all-day event on its own date whatever the zone", () => {
+		// A birthday is on the 15th in every timezone; shifting it into local
+		// time would move it to the 14th for anyone west of UTC.
+		expect(
+			googleCalendar.formatEvent(
+				{ title: "Birthday", start: "2026-09-15", allDay: true },
+				"America/Los_Angeles"
+			)
+		).toBe("- Tue 2026-09-15 (all day) — Birthday");
+	});
+
+	it("falls back to UTC rather than dropping the block on a bad zone", () => {
+		expect(
+			googleCalendar.formatEvent(
+				{ title: "Standup", start: "2026-09-14T13:00:00Z" },
+				"Not/AZone"
+			)
+		).toBe("- 2026-09-14 13:00 — Standup");
+	});
+
+	it("coalesces busy blocks that overlap across calendars", () => {
+		// Two people booked over the same hour is one busy stretch, not two.
+		expect(
+			googleCalendar.mergeIntervals([
+				{ start: "2026-09-14T09:00:00Z", end: "2026-09-14T10:00:00Z" },
+				{ start: "2026-09-14T09:30:00Z", end: "2026-09-14T11:00:00Z" },
+				{ start: "2026-09-14T13:00:00Z", end: "2026-09-14T14:00:00Z" },
+			])
+		).toEqual([
+			{ start: "2026-09-14T09:00:00Z", end: "2026-09-14T11:00:00Z" },
+			{ start: "2026-09-14T13:00:00Z", end: "2026-09-14T14:00:00Z" },
+		]);
 	});
 
 	it("clamps the window to a sane range", () => {
@@ -166,7 +357,9 @@ describe("google calendar", () => {
 	});
 
 	it("says so plainly when the calendar is empty", async () => {
-		global.fetch.mockResolvedValue(apiResponse({ items: [] }));
+		global.fetch
+			.mockResolvedValueOnce(calendarList("Mine"))
+			.mockResolvedValue(apiResponse({ items: [] }));
 		expect(await googleCalendar.buildContext(PROFILE, { days: 7 })).toMatch(
 			/nothing scheduled/
 		);
