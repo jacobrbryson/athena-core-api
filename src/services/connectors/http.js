@@ -82,6 +82,22 @@ function errorReasons(data) {
 		.map((v) => v.toLowerCase());
 }
 
+/**
+ * The most specific thing the provider said about this failure.
+ *
+ * Google nests its message under `error`, so the flat read alone logged
+ * [object Object] for exactly the errors worth reading.
+ */
+function providerDetail(data, status) {
+	const error = data && data.error;
+	return String(
+		(data && data.error_description) ||
+			(data && data.message) ||
+			(error && typeof error === "object" ? error.message || error.status : error) ||
+			`HTTP ${status}`
+	);
+}
+
 /** True when this response says the user's grant is gone, not that this
  *  particular request was refused. */
 function grantIsGone(status, data) {
@@ -150,10 +166,13 @@ async function providerRequest(
 			signal: controller.signal,
 		});
 	} catch (err) {
-		throw httpError(
-			`${provider.label} request failed: ${err.message}`,
-			504,
-			"provider_error"
+		throw Object.assign(
+			httpError(
+				`${provider.label} request failed: ${err.message}`,
+				504,
+				"provider_error"
+			),
+			{ providerDetail: err.message }
 		);
 	} finally {
 		clearTimeout(timer);
@@ -185,23 +204,27 @@ async function providerRequest(
 				409,
 				"not_connected"
 			),
-			{ reason: "revoked" }
+			{
+				reason: "revoked",
+				providerStatus: response.status,
+				providerDetail: providerDetail(data, response.status),
+			}
 		);
 	}
 
 	if (!response.ok) {
-		// Google nests its message under `error`, so the flat read alone
-		// logged [object Object] for exactly the errors worth reading.
-		const error = data && data.error;
-		const detail =
-			(data && data.error_description) ||
-			(data && data.message) ||
-			(error && typeof error === "object" ? error.message || error.status : error) ||
-			`HTTP ${response.status}`;
-		throw httpError(
-			`${provider.label}: ${String(detail).slice(0, 200)}`,
-			502,
-			"provider_error"
+		const detail = providerDetail(data, response.status);
+		throw Object.assign(
+			httpError(
+				`${provider.label}: ${String(detail).slice(0, 200)}`,
+				502,
+				"provider_error"
+			),
+			// The provider's OWN status and wording, kept as fields rather than
+			// only baked into our message, so the grounding layer can quote
+			// them without unpicking a string we composed. Nothing reads these
+			// without sanitizing first — see connectors/context.js.
+			{ providerStatus: response.status, providerDetail: detail }
 		);
 	}
 	return data;

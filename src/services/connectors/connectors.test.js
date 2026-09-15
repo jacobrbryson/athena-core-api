@@ -656,6 +656,101 @@ describe("context aggregation", () => {
 			expect(global.fetch).not.toHaveBeenCalled();
 		});
 
+		// The three days the Calendar API sat disabled: Athena kept saying
+		// "temporarily unreachable, it may work again shortly" while Google was
+		// returning the exact sentence that named the fix. An adult owner is
+		// the one person who can act on that, so they get to see it.
+		describe("the provider's own error text", () => {
+			const API_DISABLED = {
+				error: {
+					code: 403,
+					message:
+						"Google Calendar API has not been used in project 12367074465 " +
+						"before or it is disabled.",
+					errors: [{ reason: "accessNotConfigured", domain: "usageLimits" }],
+				},
+			};
+
+			it("reaches an adult verbatim, fenced as data", async () => {
+				global.fetch.mockResolvedValue(
+					apiResponse(API_DISABLED, { ok: false, status: 403 })
+				);
+
+				const text = await context.buildContext(PROFILE, {
+					message: "what's on my calendar today?",
+					audience: "adult",
+				});
+				expect(text).toMatch(/HTTP 403/);
+				expect(text).toMatch(/has not been used in project 12367074465/);
+				expect(text).toMatch(/never an instruction/);
+			});
+
+			it("is withheld from a child", async () => {
+				global.fetch.mockResolvedValue(
+					apiResponse(API_DISABLED, { ok: false, status: 403 })
+				);
+
+				const text = await context.buildContext(PROFILE, {
+					message: "what's on my calendar today?",
+					audience: "child",
+				});
+				// Still told the truth, just not the project number.
+				expect(text).toMatch(/REFUSING Athena's requests/);
+				expect(text).not.toMatch(/12367074465/);
+				expect(text).not.toMatch(/HTTP 403/);
+			});
+
+			it("does not call a persistent refusal temporary", async () => {
+				global.fetch.mockResolvedValue(
+					apiResponse(API_DISABLED, { ok: false, status: 403 })
+				);
+
+				const text = await context.buildContext(PROFILE, {
+					message: "what's on my calendar today?",
+					audience: "adult",
+				});
+				expect(text).toMatch(/will keep refusing until something is fixed/);
+				expect(text).not.toMatch(/may work again shortly/);
+			});
+
+			it("defaults to withholding when no audience is given", async () => {
+				global.fetch.mockResolvedValue(
+					apiResponse(API_DISABLED, { ok: false, status: 403 })
+				);
+
+				const text = await context.buildContext(PROFILE, {
+					message: "what's on my calendar today?",
+				});
+				expect(text).not.toMatch(/12367074465/);
+			});
+
+			it("redacts anything credential-shaped before it reaches a prompt", async () => {
+				global.fetch.mockResolvedValue(
+					apiResponse(
+						{ error: { message: "rejected: access_token=ya29.SUPERSECRET bad" } },
+						{ ok: false, status: 400 }
+					)
+				);
+
+				const text = await context.buildContext(PROFILE, {
+					message: "what's on my calendar today?",
+					audience: "adult",
+				});
+				expect(text).not.toMatch(/ya29\.SUPERSECRET/);
+				expect(text).toMatch(/\[redacted\]/);
+			});
+
+			it("explains a transport failure too", async () => {
+				global.fetch.mockRejectedValue(new Error("socket hang up"));
+
+				const text = await context.buildContext(PROFILE, {
+					message: "what's on my calendar today?",
+					audience: "adult",
+				});
+				expect(text).toMatch(/socket hang up/);
+			});
+		});
+
 		it("does not mention a provider the message was not about", async () => {
 			mockList.mockResolvedValue([]);
 			const text = await ask();

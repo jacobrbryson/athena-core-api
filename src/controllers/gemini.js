@@ -7,6 +7,7 @@ const sessionTopicService = require("../services/sessionTopic");
 const integrationService = require("../services/integration");
 const connectorContext = require("../services/connectors/context");
 const missionService = require("../services/mission");
+const { audienceForSession } = require("../services/audience");
 
 const { generatePrompt, RESPONSE_SCHEMA } = require("./prompt");
 const { parseModelJson } = require("../services/llm/parse");
@@ -50,6 +51,17 @@ async function processAiResponse(session, message, clients, ctx = {}) {
 		// prompt.js already uses to recall their memories.
 		const groundingProfileId = ctx.guardian?.linkedProfileId || session.profile_id;
 
+		// Whether a failing integration may show this person the provider's own
+		// error text. Adults get the real reason so they can fix it; children
+		// get "I can't see it right now" and nothing more. Resolved here rather
+		// than reused from memoryCtx below because the grounding runs first;
+		// audienceForSession is cached per profile, so the second call is free.
+		// A Guardian session is a child audience even though it grounds on the
+		// parent's profile — the account is theirs, the conversation is not.
+		const groundingAudience = await audienceForSession(session, ctx).catch(
+			() => "child"
+		);
+
 		let integrationContext = null;
 		if (groundingProfileId) {
 			const blocks = await Promise.all([
@@ -63,7 +75,10 @@ async function processAiResponse(session, message, clients, ctx = {}) {
 					: null,
 				connectorContext.messageNeedsConnectors(message)
 					? connectorContext
-							.buildContext(groundingProfileId, { message })
+							.buildContext(groundingProfileId, {
+								message,
+								audience: groundingAudience,
+							})
 							.catch((e) => {
 								console.warn("[gemini] connector context failed:", e.message);
 								return null;
