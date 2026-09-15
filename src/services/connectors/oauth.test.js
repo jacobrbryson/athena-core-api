@@ -21,6 +21,12 @@ const mockCredentials = {
 	revoke: jest.fn(),
 	updateTokens: jest.fn(),
 	markNeedsReauth: jest.fn(),
+	// The real module's status constants. Without them accessToken's
+	// needs-reauth guard compares `undefined === undefined` for any credential
+	// fixture that omits `status`, and takes the backoff branch by accident.
+	STATUS_ACTIVE: "active",
+	STATUS_NEEDS_REAUTH: "needs_reauth",
+	STATUS_REVOKED: "revoked",
 };
 jest.mock("../credentials", () => mockCredentials);
 
@@ -82,6 +88,9 @@ beforeEach(() => {
 	wireDb();
 	mockHasConsent.mockResolvedValue(true);
 	mockCredentials.put.mockResolvedValue({ provider: "strava", status: "active" });
+	// Module-level state, and the fixtures share credential uuids: without this
+	// a test that backs off leaks that into the next one.
+	oauth.clearReauthBackoff();
 	global.fetch = jest.fn();
 	jest.spyOn(console, "warn").mockImplementation(() => {});
 	jest.spyOn(console, "error").mockImplementation(() => {});
@@ -412,6 +421,48 @@ describe("accessToken", () => {
 		expect(await oauth.accessToken(42, "strava")).toBeNull();
 		expect(mockCredentials.markNeedsReauth).toHaveBeenCalled();
 		expect(global.fetch).not.toHaveBeenCalled();
+	});
+
+	it("revives a link flagged needs_reauth when the grant is still good", async () => {
+		// The flag is raised on evidence that is often wrong — a rate-limited
+		// 403, one shared calendar the account cannot read. A refresh that
+		// succeeds puts the row back to active, so a link that never actually
+		// died never costs the user a trip through consent.
+		mockCredentials.get.mockResolvedValue({
+			uuid: "cred-flagged",
+			refreshToken: "rt",
+			expired: true,
+			status: "needs_reauth",
+		});
+		global.fetch.mockResolvedValue(
+			tokenResponse({ access_token: "at-revived", expires_in: 3600 })
+		);
+
+		expect(await oauth.accessToken(42, "strava")).toBe("at-revived");
+		expect(mockCredentials.updateTokens).toHaveBeenCalledWith(
+			"cred-flagged",
+			expect.objectContaining({ accessToken: "at-revived" })
+		);
+		expect(mockCredentials.markNeedsReauth).not.toHaveBeenCalled();
+	});
+
+	it("does not retry a genuinely dead grant on every call", async () => {
+		mockCredentials.get.mockResolvedValue({
+			uuid: "cred-dead",
+			refreshToken: "rt-dead",
+			expired: true,
+			status: "needs_reauth",
+		});
+		global.fetch.mockResolvedValue(
+			tokenResponse({ error: "invalid_grant" }, { ok: false, status: 400 })
+		);
+
+		expect(await oauth.accessToken(42, "strava")).toBeNull();
+		expect(global.fetch).toHaveBeenCalledTimes(1);
+
+		// Inside the cooldown, answered without a second round trip.
+		expect(await oauth.accessToken(42, "strava")).toBeNull();
+		expect(global.fetch).toHaveBeenCalledTimes(1);
 	});
 });
 

@@ -157,6 +157,12 @@ async function collectEvents(profileId, { days = 7, maxResults = MAX_EVENTS } = 
 						orderBy: "startTime",
 						maxResults: limit,
 					},
+					// One calendar out of twenty answering 403 says something about
+					// that calendar, not about the account's grant — and this call
+					// fans out far enough to trip a per-user rate limit on its own.
+					// Link health is judged by the account-level calendarList
+					// read, which a real revocation fails first.
+					invalidateOnAuthFailure: false,
 				}
 			)
 				.then((data) => ({

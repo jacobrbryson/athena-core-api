@@ -61,11 +61,23 @@ async function api(token, path, query = {}) {
 	for (const row of rows) {
 		console.log(`\n=== profile_id ${row.profile_id} (status ${row.status}) ===`);
 
-		const token = await oauth.accessToken(row.profile_id, PROVIDER, {
-			actor: "diagnostic",
-		});
+		const token = await oauth
+			.accessToken(row.profile_id, PROVIDER, { actor: "diagnostic" })
+			.catch((err) => {
+				if (err.code === "credential_unreadable") {
+					console.log(
+						"accessToken() threw credential_unreadable — the stored token " +
+							"cannot be decrypted with the keyring this process loaded. " +
+							"The LINK is fine; the key is missing. Check " +
+							"ATHENA_ENC_KEYRING / GCP_PROJECT_ID on this host."
+					);
+					return null;
+				}
+				console.log(`accessToken() threw: ${err.message}`);
+				return null;
+			});
 		if (!token) {
-			console.log("accessToken() returned null — the link needs reconnecting.");
+			console.log("No usable access token for this profile; skipping its reads.");
 			continue;
 		}
 		console.log("accessToken() OK.");

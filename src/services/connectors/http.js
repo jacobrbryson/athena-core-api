@@ -42,23 +42,97 @@ function buildUrl(base, path, query) {
 }
 
 /**
+ * Reasons a provider answers 403 that have nothing to do with the grant.
+ *
+ * Google Calendar says 403 for a rate limit, for quota, and for a single
+ * calendar the account can see but not read in detail — a subscribed
+ * holiday calendar, or one shared at free/busy access. None of those mean
+ * the user revoked anything, and treating them as revocation tore down a
+ * healthy link and sent the user back through consent, over and over.
+ *
+ * A 403 we cannot explain is still treated as the grant being gone, because
+ * that is what an unexplained 403 usually is, and the flag is now
+ * recoverable: the next refresh puts a wrongly-flagged link back to active.
+ */
+const NON_AUTH_403_REASONS = new Set([
+	"ratelimitexceeded",
+	"userratelimitexceeded",
+	"dailylimitexceeded",
+	"quotaexceeded",
+	// Google's domain for every quota and rate-limit refusal.
+	"usagelimits",
+	"resource_exhausted",
+	"backenderror",
+	"forbiddenfornonorganizer",
+	"notacalendaruser",
+	"requiredaccesslevel",
+]);
+
+/** Every reason-ish string a provider's error body offers, lowercased. */
+function errorReasons(data) {
+	const error = (data && data.error) || {};
+	const list = Array.isArray(error.errors) ? error.errors : [];
+	return [
+		...list.map((e) => e && e.reason),
+		...list.map((e) => e && e.domain),
+		error.status,
+		typeof data?.error === "string" ? data.error : null,
+	]
+		.filter((v) => typeof v === "string")
+		.map((v) => v.toLowerCase());
+}
+
+/** True when this response says the user's grant is gone, not that this
+ *  particular request was refused. */
+function grantIsGone(status, data) {
+	if (status === 401) return true;
+	if (status !== 403) return false;
+	return !errorReasons(data).some((r) => NON_AUTH_403_REASONS.has(r));
+}
+
+/**
  * One authenticated request against a provider's API.
  *
  * @param {number} profileId   whose credential to use
  * @param {string} providerId  registry id
  * @param {string} path        root-relative path, e.g. "/v2/recovery"
+ * @param {boolean} [opts.invalidateOnAuthFailure=true]  whether a 401/403 may
+ *        flag the whole link. False for reads that fan out over many
+ *        sub-resources, where one of them failing says nothing about the link.
  * @returns {Promise<any>} parsed JSON body
  */
 async function providerRequest(
 	profileId,
 	providerId,
 	path,
-	{ method = "GET", query, body, actor = "athena" } = {}
+	{ method = "GET", query, body, actor = "athena", invalidateOnAuthFailure = true } = {}
 ) {
 	const provider = getProvider(providerId);
-	const token = await oauth.accessToken(profileId, providerId, { actor });
+	let token;
+	try {
+		token = await oauth.accessToken(profileId, providerId, { actor });
+	} catch (err) {
+		// A credential we hold but cannot open. Reported as not_connected so
+		// every caller's existing "skip this provider" path keeps working, but
+		// tagged with `reason` so the grounding layer can say what actually
+		// happened instead of telling the user to reconnect a healthy link.
+		if (err && err.code === "credential_unreadable") {
+			throw Object.assign(
+				httpError(
+					`${provider.label} credential cannot be read on this server`,
+					409,
+					"not_connected"
+				),
+				{ reason: "unreadable" }
+			);
+		}
+		throw err;
+	}
 	if (!token) {
-		throw httpError(`${provider.label} is not connected`, 409, "not_connected");
+		throw Object.assign(
+			httpError(`${provider.label} is not connected`, 409, "not_connected"),
+			{ reason: "absent" }
+		);
 	}
 
 	const controller = new AbortController();
@@ -85,17 +159,6 @@ async function providerRequest(
 		clearTimeout(timer);
 	}
 
-	if (response.status === 401 || response.status === 403) {
-		// The token was live as far as we knew, so the grant was revoked at the
-		// provider. Flag it rather than retrying into the same wall.
-		await oauth.invalidate(profileId, providerId, `provider returned ${response.status}`);
-		throw httpError(
-			`${provider.label} access was revoked; reconnect required`,
-			409,
-			"not_connected"
-		);
-	}
-
 	const text = await response.text();
 	let data;
 	try {
@@ -104,9 +167,36 @@ async function providerRequest(
 		data = null;
 	}
 
+	// The body is parsed first because a 403 only means something once you
+	// have read why the provider said it.
+	if (grantIsGone(response.status, data)) {
+		// The token was live as far as we knew, so the grant was revoked at the
+		// provider. Flag it rather than retrying into the same wall.
+		if (invalidateOnAuthFailure) {
+			await oauth.invalidate(
+				profileId,
+				providerId,
+				`provider returned ${response.status}`
+			);
+		}
+		throw Object.assign(
+			httpError(
+				`${provider.label} access was revoked; reconnect required`,
+				409,
+				"not_connected"
+			),
+			{ reason: "revoked" }
+		);
+	}
+
 	if (!response.ok) {
+		// Google nests its message under `error`, so the flat read alone
+		// logged [object Object] for exactly the errors worth reading.
+		const error = data && data.error;
 		const detail =
-			(data && (data.error_description || data.message || data.error)) ||
+			(data && data.error_description) ||
+			(data && data.message) ||
+			(error && typeof error === "object" ? error.message || error.status : error) ||
 			`HTTP ${response.status}`;
 		throw httpError(
 			`${provider.label}: ${String(detail).slice(0, 200)}`,

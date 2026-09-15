@@ -106,6 +106,42 @@ describe("http layer", () => {
 		);
 	});
 
+	it("does not flag the link when a 403 is only a rate limit", async () => {
+		// Google answers 403 for quota and rate limits too. Reading those as
+		// revocation tore down a healthy link and sent the user back through
+		// consent — which is what made the calendar need reconnecting so often.
+		global.fetch.mockResolvedValue(
+			apiResponse(
+				{
+					error: {
+						code: 403,
+						message: "Rate Limit Exceeded",
+						errors: [{ reason: "rateLimitExceeded" }],
+					},
+				},
+				{ ok: false, status: 403 }
+			)
+		);
+
+		const err = await strava.listActivities(PROFILE).catch((e) => e);
+		expect(err.code).toBe("provider_error");
+		expect(err.message).toMatch(/Rate Limit Exceeded/);
+		expect(mockInvalidate).not.toHaveBeenCalled();
+	});
+
+	it("does not flag the link when one calendar of many answers 403", async () => {
+		// A calendar the account may list but not read in detail says nothing
+		// about the grant, and the fan-out is wide enough to trip a rate limit
+		// on its own.
+		global.fetch
+			.mockResolvedValueOnce(calendarList("Mine", "Family"))
+			.mockResolvedValueOnce(apiResponse({ items: [] }))
+			.mockResolvedValueOnce(apiResponse({}, { ok: false, status: 403 }));
+
+		await expect(googleCalendar.listEvents(PROFILE)).resolves.toEqual([]);
+		expect(mockInvalidate).not.toHaveBeenCalled();
+	});
+
 	it("surfaces a provider error without flagging the link", async () => {
 		global.fetch.mockResolvedValue(
 			apiResponse({ message: "Rate Limit Exceeded" }, { ok: false, status: 429 })
@@ -475,9 +511,17 @@ describe("whoop", () => {
 		expect(night.sleep_performance_percent).toBe(88);
 	});
 
-	it("keeps the calendar block when Whoop's sections fail", async () => {
+	it("reports rather than hides a total Whoop outage", async () => {
 		global.fetch.mockResolvedValue(apiResponse({}, { ok: false, status: 500 }));
-		expect(await whoop.buildContext(PROFILE)).toBeNull();
+		// Not null: the caller must be able to tell an outage from a quiet week.
+		await expect(whoop.buildContext(PROFILE)).rejects.toThrow(/Whoop/);
+	});
+
+	it("keeps the section that worked when only one fails", async () => {
+		global.fetch
+			.mockResolvedValueOnce(apiResponse({ records: [] }))
+			.mockResolvedValue(apiResponse({}, { ok: false, status: 500 }));
+		await expect(whoop.buildContext(PROFILE)).resolves.toMatch(/Whoop/);
 	});
 });
 
@@ -515,16 +559,24 @@ describe("context aggregation", () => {
 		const text = await context.buildContext(PROFILE, {
 			message: "how was my run and what's on my calendar?",
 		});
+		// Only the linked provider is actually called...
 		expect(global.fetch).toHaveBeenCalledTimes(1);
 		expect(text).toMatch(/Strava/);
-		expect(text).not.toMatch(/Google Calendar/);
+		// ...but the unlinked one is still accounted for, rather than left to
+		// the model's imagination.
+		expect(text).toMatch(/Google Calendar: NOT connected/);
 	});
 
-	it("ignores a revoked link", async () => {
+	it("never calls a revoked link, and says it needs reconnecting", async () => {
 		mockList.mockResolvedValue([{ provider: "strava", status: "needs_reauth" }]);
-		expect(
-			await context.buildContext(PROFILE, { message: "how far did I run?" })
-		).toBeNull();
+
+		const text = await context.buildContext(PROFILE, {
+			message: "how far did I run?",
+		});
+		expect(text).toMatch(/Strava: linked, but the connection is no longer authorized/);
+		expect(text).toMatch(/reconnected/);
+		// Not the first-time-setup wording: they did link it once.
+		expect(text).not.toMatch(/has not linked the account yet/);
 		expect(global.fetch).not.toHaveBeenCalled();
 	});
 
@@ -537,7 +589,79 @@ describe("context aggregation", () => {
 			message: "how was my run and my recovery?",
 		});
 		expect(text).toMatch(/Strava/);
+		// The Strava data block survives, and Whoop contributes a failure
+		// notice rather than nothing — but no Whoop DATA block.
 		expect(text).not.toMatch(/Whoop —/);
+		expect(text).toMatch(/Whoop: linked, but temporarily unreachable/);
+	});
+
+	// The regression that made a fully-working calendar look like an unbuilt
+	// feature: every layer turned "cannot read it" into "nothing to say", so
+	// the model was handed an empty prompt and invented both a schedule and an
+	// excuse. A linked-but-failing provider must always say so.
+	describe("a linked provider that fails is never silent", () => {
+		const ask = () =>
+			context.buildContext(PROFILE, { message: "what's on my calendar today?" });
+
+		beforeEach(() => {
+			mockList.mockResolvedValue([
+				{ provider: "google_calendar", status: "active" },
+			]);
+		});
+
+		it("reports an unreadable credential as OUR fault, not a reconnect", async () => {
+			mockAccessToken.mockRejectedValue(
+				Object.assign(new Error("cannot decrypt"), {
+					code: "credential_unreadable",
+				})
+			);
+
+			const text = await ask();
+			expect(text).toMatch(/Google Calendar: linked/);
+			expect(text).toMatch(/cannot read the stored credential/);
+			expect(text).toMatch(/NOT something the user can fix by reconnecting/);
+			expect(text).toMatch(/Do NOT guess/);
+			// The specific wrong turn this replaces.
+			expect(text).not.toMatch(/revoked/);
+		});
+
+		it("asks for a reconnect when access really was revoked upstream", async () => {
+			global.fetch.mockResolvedValue(apiResponse({}, { ok: false, status: 403 }));
+
+			const text = await ask();
+			expect(text).toMatch(/access was revoked at Google Calendar/);
+			expect(text).toMatch(/reconnected/);
+			expect(text).toMatch(/Do NOT guess/);
+		});
+
+		it("reports a provider outage as temporary", async () => {
+			global.fetch.mockRejectedValue(new Error("socket hang up"));
+
+			const text = await ask();
+			expect(text).toMatch(/temporarily unreachable/);
+			expect(text).toMatch(/Do NOT guess/);
+		});
+
+		it("says a never-linked provider is not connected, without calling it", async () => {
+			mockList.mockResolvedValue([]);
+
+			const text = await ask();
+			expect(text).toMatch(/Google Calendar: NOT connected/);
+			expect(text).toMatch(/Do NOT guess/);
+			// The confabulation this replaces: silence let the model explain
+			// the missing calendar as setup still pending on Athena's side.
+			expect(text).toMatch(/nothing is pending, broken, or awaiting setup/i);
+			expect(text).toMatch(/connected-apps settings/);
+			// An unlinked provider is still never called.
+			expect(global.fetch).not.toHaveBeenCalled();
+		});
+
+		it("does not mention a provider the message was not about", async () => {
+			mockList.mockResolvedValue([]);
+			const text = await ask();
+			expect(text).not.toMatch(/Whoop/);
+			expect(text).not.toMatch(/Strava/);
+		});
 	});
 
 	it("offers tools only for linked, relevant providers", async () => {

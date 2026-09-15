@@ -359,6 +359,35 @@ async function complete(providerId, { code, state, error, errorDescription }) {
  */
 const refreshInFlight = new Map();
 
+/**
+ * A link flagged `needs_reauth` is retried rather than written off: the flag
+ * is raised on evidence that is often wrong — a rate-limited 403, one shared
+ * calendar the account cannot read — and a refresh token usually outlives it.
+ * A successful refresh puts the row back to 'active' on its own.
+ *
+ * The cooldown is what keeps that from costing anything when the grant really
+ * is dead. Process-local on purpose: a fresh instance retrying once is
+ * harmless, and a column for it would be a migration to hold a hint.
+ *
+ * credential uuid -> epochMs of the last refusal.
+ */
+const reauthBackoff = new Map();
+const REAUTH_RETRY_COOLDOWN_MS = 15 * 60 * 1000;
+const REAUTH_BACKOFF_MAX = 500;
+
+function backoffReauth(uuid) {
+	if (reauthBackoff.size >= REAUTH_BACKOFF_MAX) {
+		reauthBackoff.delete(reauthBackoff.keys().next().value);
+	}
+	reauthBackoff.set(uuid, Date.now());
+}
+
+/** True when a credential already flagged needs_reauth is due another try. */
+function reauthRetryDue(uuid) {
+	const last = reauthBackoff.get(uuid);
+	return !last || Date.now() - last >= REAUTH_RETRY_COOLDOWN_MS;
+}
+
 async function refresh(provider, credential) {
 	const key = credential.uuid;
 	if (refreshInFlight.has(key)) return refreshInFlight.get(key);
@@ -380,6 +409,7 @@ async function refresh(provider, credential) {
 					actor: "connector",
 					detail: tokenErrorMessage(body, "refresh rejected"),
 				});
+				backoffReauth(credential.uuid);
 				return null;
 			}
 			throw httpError(
@@ -393,6 +423,9 @@ async function refresh(provider, credential) {
 		// Providers that rotate must have the new refresh token persisted, or
 		// the link dies at the next expiry.
 		await credentials.updateTokens(credential.uuid, { ...tokens, actor: "refresh" });
+		// updateTokens puts the row back to 'active', so a link flagged over
+		// something transient is simply working again.
+		reauthBackoff.delete(credential.uuid);
 		return tokens.accessToken;
 	})().finally(() => refreshInFlight.delete(key));
 
@@ -417,6 +450,17 @@ async function accessToken(profileId, providerId, { actor = "athena" } = {}) {
 			actor,
 			detail: "access token expired and no refresh token is stored",
 		});
+		return null;
+	}
+	// Already flagged as needing a reconnect: still worth another attempt,
+	// because the flag is raised on evidence that is often wrong — but not on
+	// every message, because if the grant really is dead each attempt is a
+	// round trip that can only fail.
+	if (
+		credential.status &&
+		credential.status === credentials.STATUS_NEEDS_REAUTH &&
+		!reauthRetryDue(credential.uuid)
+	) {
 		return null;
 	}
 	return refresh(provider, credential);
@@ -461,10 +505,20 @@ async function disconnect(actor, providerId, { actorLabel = "user" } = {}) {
 	let revokedUpstream = false;
 
 	if (provider.revokeUrl) {
-		const credential = await credentials.get(actor.profileId, provider.id, {
-			actor: "disconnect",
-		});
-		if (credential) {
+		// A credential we cannot decrypt must not block disconnecting: clearing
+		// our side is the part the user actually asked for, and refusing to
+		// release a link because its token is unreadable is the worst answer.
+		const credential = await credentials
+			.get(actor.profileId, provider.id, { actor: "disconnect" })
+			.catch((err) => {
+				console.warn(
+					`[connectors] ${provider.label} credential unreadable; ` +
+						`skipping upstream revocation:`,
+					err.message
+				);
+				return null;
+			});
+		if (credential && credential.accessToken) {
 			try {
 				const { ok } = await postForm(
 					provider.revokeUrl,
@@ -496,6 +550,8 @@ module.exports = {
 	disconnect,
 	purgeExpiredStates,
 	redirectUri,
+	REAUTH_RETRY_COOLDOWN_MS,
+	clearReauthBackoff: () => reauthBackoff.clear(),
 	resolveReturnTarget,
 	normalizeTokens,
 	STATE_TTL_MINUTES,

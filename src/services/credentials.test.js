@@ -226,6 +226,34 @@ describe("get", () => {
 		expect(cred.needsRefresh).toBe(true);
 	});
 
+	it("returns a needs_reauth credential whose refresh token survived", async () => {
+		const { encrypt } = require("../helpers/crypto");
+		// markNeedsReauth clears the access token and keeps the grant. Refusing
+		// this row here is what made a link flagged over a rate limit fixable
+		// only by sending the user back through consent.
+		respondWith([
+			[
+				row({
+					access_token_enc: null,
+					refresh_token_enc: await encrypt("refresh"),
+					status: "needs_reauth",
+				}),
+			],
+		]);
+
+		const cred = await credentials.get(42, "strava");
+		expect(cred.accessToken).toBeNull();
+		expect(cred.refreshToken).toBe("refresh");
+		expect(cred.expired).toBe(true);
+		expect(cred.needsRefresh).toBe(true);
+		expect(cred.status).toBe("needs_reauth");
+	});
+
+	it("returns null when neither token is left", async () => {
+		respondWith([[row({ access_token_enc: null, refresh_token_enc: null })]]);
+		expect(await credentials.get(42, "strava")).toBeNull();
+	});
+
 	it("treats a token inside the expiry skew as expired", async () => {
 		const { encrypt } = require("../helpers/crypto");
 		respondWith([
@@ -246,12 +274,23 @@ describe("get", () => {
 		expect(sqlLog(/UPDATE user_credential SET last_used_at/)).toHaveLength(0);
 	});
 
-	it("audits and returns null when the ciphertext cannot be read", async () => {
-		// What a key pruned too early would look like.
+	it("audits and throws credential_unreadable when the ciphertext cannot be read", async () => {
+		// What a key pruned too early, or a host with no keyring, looks like.
 		respondWith([[row({ access_token_enc: "v2:k9:aaa:bbb:ccc" })]]);
-		expect(await credentials.get(42, "strava")).toBeNull();
+		await expect(credentials.get(42, "strava")).rejects.toMatchObject({
+			code: "credential_unreadable",
+		});
 		const [audit] = sqlLog(/INSERT INTO user_credential_audit/);
 		expect(audit.params).toContain("failed");
+	});
+
+	it("leaves an unreadable credential intact so the key can come back", async () => {
+		respondWith([[row({ access_token_enc: "v2:k9:aaa:bbb:ccc" })]]);
+		await expect(credentials.get(42, "strava")).rejects.toThrow();
+		// Nothing may null the ciphertext or retire the link: the plaintext is
+		// recoverable as soon as the right key is on the keyring again.
+		expect(sqlLog(/access_token_enc = NULL/)).toHaveLength(0);
+		expect(sqlLog(/SET status =/)).toHaveLength(0);
 	});
 });
 

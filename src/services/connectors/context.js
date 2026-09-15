@@ -2,6 +2,7 @@ const googleCalendar = require("./googleCalendar");
 const strava = require("./strava");
 const whoop = require("./whoop");
 const { isNotConnected } = require("./http");
+const { getProvider } = require("./registry");
 const credentials = require("../credentials");
 
 /**
@@ -14,8 +15,15 @@ const credentials = require("../credentials");
  *                     path where the model picks the query itself.
  *
  * Both are keyword-gated first, so a message about dinner never costs a
- * Strava round trip. A provider that is not linked, or whose API fails, is
- * skipped silently: an integration must never be able to sink a reply.
+ * Strava round trip. A provider the user has NOT linked is skipped silently —
+ * there is nothing to say about it.
+ *
+ * A provider the user HAS linked and that then fails is NOT skipped silently.
+ * It reports the failure into the prompt instead. An integration must never
+ * be able to sink a reply, but staying quiet turned out to be just as bad:
+ * handed no block at all, the model cannot tell a broken integration from an
+ * empty schedule, and fills the silence with a guess — inventing both the
+ * contents and a reason for not having them.
  */
 
 const CONNECTORS = [googleCalendar, strava, whoop];
@@ -30,49 +38,185 @@ function messageNeedsConnectors(message) {
 	return relevantConnectors(message).length > 0;
 }
 
+/**
+ * provider -> status, for every credential row this profile holds.
+ *
+ * Keeps the non-active rows too, because "linked but needs re-authorization"
+ * and "never linked at all" are different things to say to the user, and
+ * collapsing them into one absent-from-the-set answer is what left a revoked
+ * link indistinguishable from a provider the user has never heard of.
+ */
+async function providerStatuses(profileId) {
+	const links = await credentials.list(profileId);
+	const byProvider = new Map();
+	for (const link of links) {
+		// A profile can hold more than one row for a provider — re-linking
+		// after a revoke leaves the old one behind. An active row always wins.
+		if (byProvider.get(link.provider) === "active") continue;
+		byProvider.set(link.provider, link.status);
+	}
+	return byProvider;
+}
+
 /** Providers this profile has an active link for. */
 async function linkedProviders(profileId) {
-	const links = await credentials.list(profileId);
+	const statuses = await providerStatuses(profileId);
 	return new Set(
-		links.filter((l) => l.status === "active").map((l) => l.provider)
+		[...statuses].filter(([, status]) => status === "active").map(([p]) => p)
+	);
+}
+
+/** This provider's display name, for a line the model will read aloud. */
+function labelFor(connector) {
+	try {
+		return getProvider(connector.PROVIDER).label;
+	} catch {
+		return connector.PROVIDER;
+	}
+}
+
+/**
+ * What to tell the model when a provider the user HAS linked could not be
+ * read. Replaces silence, which the model reliably filled with a guess.
+ *
+ * Every variant forbids that guess explicitly, and none of them claims the
+ * user can fix it by reconnecting unless reconnecting is genuinely the fix —
+ * an unreadable credential is a fault on our side, and telling someone to
+ * re-link a healthy account just sends them round the same loop.
+ */
+function unavailableBlock(connector, err) {
+	const label = labelFor(connector);
+	const rule =
+		"State plainly that you cannot see it right now. Do NOT guess, " +
+		"estimate or describe any of its contents, and do NOT invent an " +
+		"explanation for the outage.";
+
+	if (isNotConnected(err) && err.reason === "unreadable") {
+		return (
+			`${label}: linked, but Athena cannot read the stored credential on ` +
+			`this server. This is a fault on Athena's side, NOT something the ` +
+			`user can fix by reconnecting — do not ask them to. ${rule}`
+		);
+	}
+	if (isNotConnected(err)) {
+		return (
+			`${label}: linked, but access was revoked at ${label} and has to be ` +
+			`reconnected before Athena can read it. ${rule}`
+		);
+	}
+	return (
+		`${label}: linked, but temporarily unreachable — ${label} did not ` +
+		`answer. It may work again shortly. ${rule}`
 	);
 }
 
 /**
- * Plain-text grounding for every linked provider the message is about.
+ * What to tell the model about a provider the message is about but the user
+ * has never linked.
+ *
+ * Silence here was the last place a guess could still come from. A linked
+ * provider that fails now says so, but an unlinked one said nothing at all —
+ * and the model cannot tell "you have no calendar connected" from "your
+ * calendar is empty" or from "this feature isn't built yet". Handed nothing,
+ * it invented a reason, and the reason it liked best was a half-finished
+ * Athena: setup still pending on her side, a vault or a migration to wait on.
+ * That is a lie about our own product, and it sends the user off to wait for
+ * something that is not coming instead of clicking Connect.
+ *
+ * So the block states the one fact that is true — nothing is connected — and
+ * closes the door on the invented alternatives explicitly.
+ */
+function notLinkedBlock(connector) {
+	const label = labelFor(connector);
+	return (
+		`${label}: NOT connected. Athena has no access to this account and ` +
+		`cannot see any of its data. Do NOT guess, estimate or describe its ` +
+		`contents. Do NOT invent a reason for not having it: nothing is ` +
+		`pending, broken, or awaiting setup on Athena's side, and this is not ` +
+		`an unbuilt feature — the user simply has not linked the account yet. ` +
+		`If they asked for this data, say plainly that it is not connected and ` +
+		`that they can link it any time from Athena's connected-apps settings. ` +
+		`If they did not ask for it, do not bring it up at all.`
+	);
+}
+
+/**
+ * A provider the user DID link, whose credential is no longer usable —
+ * revoked upstream, or expired past refreshing.
+ *
+ * Distinct from notLinkedBlock on purpose: telling someone who connected
+ * their calendar months ago that they "have not linked it yet" reads as
+ * Athena forgetting, and points them at a first-time setup flow instead of
+ * the reconnect they actually need.
+ */
+function needsReconnectBlock(connector) {
+	const label = labelFor(connector);
+	return (
+		`${label}: linked, but the connection is no longer authorized and has ` +
+		`to be reconnected before Athena can read it. Athena cannot see any of ` +
+		`its data right now. Do NOT guess, estimate or describe its contents, ` +
+		`and do NOT invent a reason for the outage — reconnecting from Athena's ` +
+		`connected-apps settings is the fix. If the user did not ask for this ` +
+		`data, do not bring it up at all.`
+	);
+}
+
+/**
+ * Plain-text grounding for every provider the message is about.
  * Returns null when there is nothing to add.
  *
  * Never throws. Each provider is independent, so a Whoop outage still leaves
- * the calendar block intact.
+ * the calendar block intact — and now also leaves a line saying Whoop failed.
+ *
+ * Every relevant provider produces a block: linked ones their data (or why it
+ * could not be read), unlinked ones a line saying they are not connected. A
+ * provider the message is not about still costs nothing.
  */
 async function buildContext(profileId, { message, days } = {}) {
 	if (!profileId) return null;
 	const relevant = relevantConnectors(message);
 	if (!relevant.length) return null;
 
-	let linked;
+	let statuses;
 	try {
-		linked = await linkedProviders(profileId);
+		statuses = await providerStatuses(profileId);
 	} catch (err) {
+		// We cannot tell linked from unlinked, so we say nothing rather than
+		// assert either one. Silence is wrong here too, but a confident wrong
+		// answer about what the user has connected is worse.
 		console.warn("[connectors] could not list links:", err.message);
 		return null;
 	}
 
-	const wanted = relevant.filter((c) => linked.has(c.PROVIDER));
-	if (!wanted.length) return null;
+	const wanted = relevant.filter((c) => statuses.get(c.PROVIDER) === "active");
+	const stale = relevant.filter((c) => {
+		const status = statuses.get(c.PROVIDER);
+		return status !== undefined && status !== "active";
+	});
+	const unlinked = relevant.filter((c) => !statuses.has(c.PROVIDER));
 
-	const blocks = await Promise.all(
+	const fetched = await Promise.all(
 		wanted.map((c) =>
 			c
 				.buildContext(profileId, days ? { days } : {})
 				.catch((err) => {
-					if (!isNotConnected(err)) {
-						console.warn(`[connectors] ${c.PROVIDER} context failed:`, err.message);
-					}
-					return null;
+					// Every failure here is a link the user believes works —
+					// `wanted` is already filtered to active links — so each
+					// one earns a log line. Suppressing not_connected is what
+					// hid a broken calendar behind an empty prompt.
+					console.warn(`[connectors] ${c.PROVIDER} context failed:`, err.message);
+					return unavailableBlock(c, err);
 				})
 		)
 	);
+
+	// Working links first: what the user actually has outranks what they
+	// don't, and the not-connected lines are footnotes, not the headline.
+	const blocks = [
+		...fetched,
+		...stale.map(needsReconnectBlock),
+		...unlinked.map(notLinkedBlock),
+	];
 
 	const text = blocks.filter(Boolean).join("\n\n");
 	return text || null;

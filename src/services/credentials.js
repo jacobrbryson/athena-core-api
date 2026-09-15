@@ -357,21 +357,44 @@ async function revoke(profileId, provider, { externalAccountId, actor = "user" }
  * Returns null when there is no active credential, so callers branch on
  * "connected or not" rather than catching.
  *
+ * A credential flagged `needs_reauth` is NOT null. markNeedsReauth clears the
+ * access token but keeps the grant, and that grant is usually still good — the
+ * flag is raised by a rate-limited 403 or one unreadable shared calendar at
+ * least as often as by a real revocation. Such a row comes back with a null
+ * accessToken and `expired: true`, so the refresh path tries it and a link
+ * flagged over something transient heals itself. Refusing it here is what made
+ * every hiccup cost the user a manual reconnect.
+ *
+ * THROWS `credential_unreadable` when a credential IS stored but its
+ * ciphertext cannot be opened. That is a server-side fault — a key pruned too
+ * early, a keyring not configured on this host — and must never be conflated
+ * with "not connected": the link is fine, and sending the user off to
+ * reconnect it cannot fix anything.
+ *
  * @returns {Promise<{uuid,provider,accessToken,refreshToken,expiresAt,expired,scopes,externalAccountId}|null>}
  */
 async function get(profileId, provider, { externalAccountId, actor = "athena" } = {}) {
 	assertProvider(provider);
 	const row = await findRow(pool, profileId, provider, externalAccountId);
-	if (!row || row.status === STATUS_REVOKED || !row.access_token_enc) return null;
+	if (!row || row.status === STATUS_REVOKED) return null;
+	// Neither token is nothing to work with. Either one alone is something.
+	if (!row.access_token_enc && !row.refresh_token_enc) return null;
 
-	let accessToken;
+	let accessToken = null;
 	let refreshToken = null;
 	try {
-		accessToken = await decrypt(row.access_token_enc);
+		if (row.access_token_enc) accessToken = await decrypt(row.access_token_enc);
 		if (row.refresh_token_enc) refreshToken = await decrypt(row.refresh_token_enc);
 	} catch (err) {
 		// Unreadable ciphertext is a real incident (a key pruned too early, a
-		// corrupt row) — record it and treat the credential as absent.
+		// keyring missing on this host, a corrupt row) — record it and tell the
+		// caller WHY. Returning null here made this indistinguishable from "not
+		// connected" all the way up to the prompt, which is how a working link
+		// came to look like an unbuilt feature.
+		//
+		// The row is deliberately left untouched: the plaintext is recoverable
+		// the moment the right key is back on the keyring, so this must not
+		// mark the credential dead or clear its ciphertext.
 		console.error(
 			`[credentials] Failed to decrypt ${provider} credential for profile ${profileId}:`,
 			err.message
@@ -384,7 +407,10 @@ async function get(profileId, provider, { externalAccountId, actor = "athena" } 
 			actor,
 			detail: `decrypt failed: ${err.message}`,
 		});
-		return null;
+		throw Object.assign(new Error(`${provider} credential cannot be decrypted`), {
+			status: 503,
+			code: "credential_unreadable",
+		});
 	}
 
 	await pool.query(`UPDATE user_credential SET last_used_at = NOW() WHERE id = ?`, [
@@ -398,16 +424,20 @@ async function get(profileId, provider, { externalAccountId, actor = "athena" } 
 		actor,
 	});
 
+	// No access token means there is nothing to hand back that could work, so
+	// the caller must refresh — the same branch an expiry takes.
+	const expired = !accessToken || isExpired(row);
 	return {
 		uuid: row.uuid,
 		provider: row.provider,
 		kind: row.kind,
+		status: row.status,
 		accessToken,
 		refreshToken,
 		tokenType: row.token_type,
 		expiresAt: row.expires_at,
-		expired: isExpired(row),
-		needsRefresh: isExpired(row) && !!refreshToken,
+		expired,
+		needsRefresh: expired && !!refreshToken,
 		scopes: row.scopes ? row.scopes.split(/\s+/).filter(Boolean) : [],
 		externalAccountId: row.external_account_id || null,
 	};

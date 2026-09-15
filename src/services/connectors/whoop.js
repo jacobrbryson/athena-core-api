@@ -127,12 +127,22 @@ function formatSleep(s) {
 /**
  * Grounding block for the system prompt. Each section is fetched
  * independently so one failing endpoint does not lose the others.
+ *
+ * One section failing is survivable — the other still answers. Both failing
+ * is not, and rethrows rather than returning null: null reads to the caller
+ * as "nothing to say", which is how a total outage came to be presented as a
+ * quiet week. The caller turns the throw into an explicit "Whoop could not be
+ * read" line for the prompt.
  */
 async function buildContext(profileId, { days = 7 } = {}) {
-	const [recovery, sleep] = await Promise.all([
-		listRecovery(profileId, { days }).catch(() => null),
-		listSleep(profileId, { days }).catch(() => null),
+	const results = await Promise.all([
+		listRecovery(profileId, { days }).catch((err) => ({ error: err })),
+		listSleep(profileId, { days }).catch((err) => ({ error: err })),
 	]);
+	const failure = results.find((r) => r && r.error);
+	if (failure && results.every((r) => r && r.error)) throw failure.error;
+
+	const [recovery, sleep] = results.map((r) => (r && r.error ? null : r));
 	if (!recovery && !sleep) return null;
 
 	const lines = [`Whoop — last ${days} days:`];
