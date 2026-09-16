@@ -7,6 +7,7 @@ const sessionTopicService = require("../services/sessionTopic");
 const integrationService = require("../services/integration");
 const connectorContext = require("../services/connectors/context");
 const missionService = require("../services/mission");
+const selfKnowledge = require("../services/selfKnowledge");
 const { audienceForSession } = require("../services/audience");
 
 const { generatePrompt, RESPONSE_SCHEMA } = require("./prompt");
@@ -105,8 +106,28 @@ async function processAiResponse(session, message, clients, ctx = {}) {
 			.buildMemoryContext(session, message, ctx)
 			.catch(() => ({ audience: "child", memoryEnabled: false, promptBlock: null }));
 
+		// What Athena can actually do, scoped to this app and this person, read
+		// from docs/capabilities. Cheap (parsed files, cached) and never throws —
+		// a missing or malformed doc costs her knowledge of one feature, never
+		// the reply.
+		const surface = ctx.guardian
+			? "guardians"
+			: ctx.companion || memoryCtx.audience === "adult"
+				? "companion"
+				: "learning";
+		let capabilityBlock = null;
+		try {
+			capabilityBlock = selfKnowledge.buildCapabilityBlock(message, {
+				surface,
+				audience: memoryCtx.audience,
+			});
+		} catch (e) {
+			console.warn("[gemini] capability block failed:", e.message);
+		}
+
 		const prompt = await generatePrompt(session, topics || [], message, {
 			integrationContext,
+			capabilityBlock,
 			guardian: ctx.guardian,
 			onboarding: ctx.onboarding,
 			mission: ctx.mission,

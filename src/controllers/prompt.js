@@ -755,6 +755,10 @@ async function generatePrompt(session, sessionTopics, message, options = {}) {
 	if (mode !== "teach") {
 		if (options.memoryBlock) systemPrompt += `\n${options.memoryBlock}`;
 		if (options.perceptionBlock) systemPrompt += `\n${options.perceptionBlock}`;
+		// What Athena can actually do, read from docs/capabilities. Without it
+		// she answers "can you see my calendar?" from a guess — and a confident
+		// guess about her own features is believed.
+		if (options.capabilityBlock) systemPrompt += `\n${options.capabilityBlock}`;
 	}
 
 	const contents = [{ role: "system", parts: [{ text: systemPrompt }] }];

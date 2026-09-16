@@ -425,3 +425,24 @@ describe("generatePrompt — Guardian onboarding", () => {
 		expect(system).not.toContain("Signal decoding record");
 	});
 });
+
+describe("generatePrompt — self-knowledge", () => {
+	const block = "# What I actually do\n- **Test capability** — a thing I can do";
+
+	test("the capability block is appended in conversation modes", async () => {
+		const contents = await build("can you do the thing?", { capabilityBlock: block });
+		const system = contents.find((c) => c.role === "system").parts[0].text;
+		expect(system).toContain("Test capability");
+	});
+
+	test("teach mode stays a pure learning exercise", async () => {
+		const contents = await generatePrompt(
+			{ mode: "teach", age: 5, profile_id: null },
+			[],
+			"can you do the thing?",
+			{ capabilityBlock: block }
+		);
+		const system = contents.find((c) => c.role === "system").parts[0].text;
+		expect(system).not.toContain("Test capability");
+	});
+});
