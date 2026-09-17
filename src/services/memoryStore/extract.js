@@ -22,6 +22,8 @@ const pool = require("../../helpers/db");
 const { createEvent } = require("./events");
 
 const TURNS_BEFORE_EXTRACT = Number(process.env.MEMORY_EXTRACT_EVERY_TURNS) || 3;
+const MAX_FACT_WRITES = 8; // durable facts stored per extraction
+const MAX_FACT_CANDIDATES = 25; // how many the model may propose before we stop reading
 const EXPLICIT_CUE = /\b(remember (that|this|my|me|when)|don'?t forget|forget (that|about|what|my)|note that|keep in mind)\b/i;
 const PERSONAL_CUE = /\bmy (name|birthday|wife|husband|partner|son|daughter|kids?|mom|dad|brother|sister|dog|cat|pet|job|boss|favorite|anniversary)\b/i;
 
@@ -178,7 +180,11 @@ async function applyExtraction(session, data, { audience, occurredAt }) {
 	let facts = 0;
 	let moments = 0;
 
-	for (const f of (data.facts || []).slice(0, 8)) {
+	// Cap WRITES, not candidates. The model re-states facts it was already told
+	// about in the prompt, so capping the candidate list let those duplicates
+	// eat the budget and silently drop genuinely new facts off the end.
+	for (const f of (data.facts || []).slice(0, MAX_FACT_CANDIDATES)) {
+		if (facts >= MAX_FACT_WRITES) break;
 		if (!f || typeof f.key !== "string" || !f.key.trim() || typeof f.value !== "string") continue;
 		const confidence = Math.max(0, Math.min(100, Number(f.confidence) || 60));
 		if (confidence < 50) continue;

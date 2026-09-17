@@ -384,6 +384,18 @@ describe("google calendar", () => {
 		expect(Math.round(span)).toBe(60);
 	});
 
+	it("starts the window at the calendar's local midnight, not the server's", () => {
+		// 10pm Wednesday in New York is already Thursday in UTC. A server
+		// running UTC used to start "today" there, dropping this morning's
+		// events and pulling in tomorrow's.
+		const { timeMin } = googleCalendar.window(
+			1,
+			new Date("2026-09-17T02:00:00Z"),
+			"America/New_York"
+		);
+		expect(timeMin).toBe("2026-09-16T04:00:00.000Z");
+	});
+
 	it("starts the window at midnight today, not right now", () => {
 		// "What's on today?" must still list an event from earlier this morning.
 		const { timeMin } = googleCalendar.window(1);

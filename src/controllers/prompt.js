@@ -1,4 +1,5 @@
 const { getMemorySummaryForProfileId } = require("../services/memory");
+const { buildClockBlock } = require("../services/clock");
 
 /**
  * Prompt builder. Selects a prompt *strategy* based on the session's
@@ -742,6 +743,12 @@ async function generatePrompt(session, sessionTopics, message, options = {}) {
 	const mode = session?.mode || "teach";
 	const builder = STRATEGIES[mode] || STRATEGIES.companion;
 	let systemPrompt = await builder(session, sessionTopics || [], options);
+
+	// What day it is. Nothing else in the prompt says so, and a model with no
+	// clock states a date from its training prior with full confidence — every
+	// calendar and memory answer then hangs off the wrong day. The companion
+	// apps send the device timezone; everyone else gets ATHENA_DEFAULT_TZ.
+	systemPrompt += `\n\n${buildClockBlock({ timeZone: options.companion?.timezone })}`;
 
 	// Connected-app context (e.g. live Family Chores data). Appended for any
 	// mode so Athena can answer "what chores do I have?" / "how many coins?".

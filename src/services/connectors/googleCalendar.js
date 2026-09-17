@@ -31,15 +31,23 @@ function matches(message) {
 	return typeof message === "string" && KEYWORDS.test(message);
 }
 
+const { startOfDayIn, addDaysIn } = require("../clock");
+
 const iso = (date) => new Date(date).toISOString();
 
-/** Start of today through `days` later, as RFC3339 — the window Athena reads. */
-function window(days = 7, from = new Date()) {
-	const start = new Date(from);
-	start.setHours(0, 0, 0, 0);
-	const end = new Date(start);
-	end.setDate(end.getDate() + Math.max(1, Math.min(Number(days) || 7, 60)));
-	return { timeMin: iso(start), timeMax: iso(end) };
+/**
+ * Start of today through `days` later, as RFC3339 — the window Athena reads.
+ *
+ * "Today" means the calendar's own timezone, not the server's. The server runs
+ * UTC in production, so without `timeZone` a 9pm-Eastern "what's on today?"
+ * asked for a window starting the next UTC day: this morning's events vanished
+ * and tomorrow's appeared. Omitting the zone keeps the old server-local
+ * behaviour for callers that have no zone to offer.
+ */
+function window(days = 7, from = new Date(), timeZone = null) {
+	const span = Math.max(1, Math.min(Number(days) || 7, 60));
+	const start = startOfDayIn(new Date(from), timeZone);
+	return { timeMin: iso(start), timeMax: iso(addDaysIn(start, span, timeZone)) };
 }
 
 // ---------------------------------------------------------------------------
@@ -139,8 +147,8 @@ const startMs = (event) => {
  * "nothing scheduled".
  */
 async function collectEvents(profileId, { days = 7, maxResults = MAX_EVENTS } = {}) {
-	const { timeMin, timeMax } = window(days);
 	const calendars = await calendarsOrPrimary(profileId);
+	const { timeMin, timeMax } = window(days, new Date(), displayTimeZone(calendars));
 	const limit = Math.min(Number(maxResults) || MAX_EVENTS, MAX_EVENTS);
 
 	const results = await Promise.all(
@@ -202,8 +210,8 @@ async function listEvents(profileId, options = {}) {
  * Overlapping intervals from different calendars are merged into one.
  */
 async function freeBusy(profileId, { days = 7 } = {}) {
-	const { timeMin, timeMax } = window(days);
 	const calendars = await calendarsOrPrimary(profileId);
+	const { timeMin, timeMax } = window(days, new Date(), displayTimeZone(calendars));
 
 	const data = await providerRequest(profileId, PROVIDER, "/freeBusy", {
 		method: "POST",
@@ -326,12 +334,18 @@ async function buildContext(profileId, { days = 7 } = {}) {
 	const { events, calendars } = await collectEvents(profileId, { days });
 	const scope = describeCalendars(calendars);
 	if (!events.length) {
-		return `Google Calendar: nothing scheduled in the next ${days} days (checked ${scope}).`;
+		const zone = displayTimeZone(calendars);
+		return (
+			`Google Calendar: nothing scheduled in the next ${days} days ` +
+			`(checked ${scope}, from ${formatInZone(new Date(), zone)} local time).`
+		);
 	}
 	const timeZone = displayTimeZone(calendars);
 	return [
 		`Google Calendar — next ${days} days across ${scope} ` +
-			`(local time, ${timeZone}):`,
+			`(local time, ${timeZone}). Right now it is ` +
+			`${formatInZone(new Date(), timeZone)}, so the first entry below is the ` +
+			`next one still to come:`,
 		...events.map((event) => formatEvent(event, timeZone)),
 	].join("\n");
 }
@@ -390,14 +404,18 @@ async function executeTool(name, args = {}, { profileId }) {
 		const { events, calendars } = await collectEvents(profileId, {
 			days: args.days,
 		});
-		return { events, time_zone: displayTimeZone(calendars) };
+		const zone = displayTimeZone(calendars);
+		// `now` so the model can tell "still to come" from "already happened"
+		// without guessing today's date.
+		return { events, time_zone: zone, now: formatInZone(new Date(), zone) };
 	}
 	if (name === "get_calendar_free_busy") {
 		const [busy, calendars] = await Promise.all([
 			freeBusy(profileId, { days: args.days }),
 			calendarsOrPrimary(profileId),
 		]);
-		return { busy, time_zone: displayTimeZone(calendars) };
+		const zone = displayTimeZone(calendars);
+		return { busy, time_zone: zone, now: formatInZone(new Date(), zone) };
 	}
 	throw new Error(`Unknown Google Calendar tool: ${name}`);
 }

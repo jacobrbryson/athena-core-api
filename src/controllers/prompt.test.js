@@ -446,3 +446,46 @@ describe("generatePrompt — self-knowledge", () => {
 		expect(system).not.toContain("Test capability");
 	});
 });
+
+describe("generatePrompt — the clock", () => {
+	// Athena once answered "Since today is Monday, September 14" on a Wednesday:
+	// nothing in the prompt said what day it was, so the model supplied one.
+	const today = new Intl.DateTimeFormat("en-US", {
+		timeZone: "America/New_York",
+		weekday: "long",
+		year: "numeric",
+		month: "long",
+		day: "numeric",
+	}).format(new Date());
+
+	test("companion mode states today's real date", async () => {
+		const contents = await build("what's on my calendar?", {});
+		const system = contents.find((c) => c.role === "system").parts[0].text;
+		expect(system).toContain("# Right now");
+		expect(system).toContain(today);
+		expect(system).toMatch(/authoritative/i);
+	});
+
+	test("teach mode gets it too", async () => {
+		const contents = await generatePrompt({ mode: "teach", age: 8 }, [], "hi", {});
+		const system = contents.find((c) => c.role === "system").parts[0].text;
+		expect(system).toContain("# Right now");
+	});
+
+	test("the companion app's timezone decides the day", async () => {
+		// An instant that is already tomorrow in Sydney but still today in NY.
+		const contents = await build("what day is it?", {
+			companion: { device: "web", timezone: "Australia/Sydney" },
+		});
+		const system = contents.find((c) => c.role === "system").parts[0].text;
+		expect(system).toContain("Australia/Sydney");
+	});
+
+	test("a junk timezone falls back instead of breaking the prompt", async () => {
+		const contents = await build("hi", {
+			companion: { device: "web", timezone: "Not/AZone" },
+		});
+		const system = contents.find((c) => c.role === "system").parts[0].text;
+		expect(system).toContain("America/New_York");
+	});
+});
