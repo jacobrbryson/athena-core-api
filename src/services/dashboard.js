@@ -9,7 +9,9 @@ const integration = require('./integration');
 const chores = require('./familyChores');
 const work = require('./connectors/work');
 
-const section = (status, data = null) => ({ status, data, checkedAt: new Date().toISOString() });
+const { technicalDetail } = require('./connectors/context');
+
+const section = (status, data = null, detail = null) => ({ status, data, detail, checkedAt: new Date().toISOString() });
 
 // Last computed dashboard per profile. Read only by the prioritiser, which runs
 // immediately after the client's own /dashboard call and must not re-hit every
@@ -28,10 +30,20 @@ function cachedDashboard(profileId) {
   }
   return entry.data;
 }
+/**
+ * A card that could not be read, with the reason it could not be read.
+ *
+ * `detail` is the provider's own account of the failure, run through the same
+ * redaction the grounding layer uses, and it only exists because every route
+ * into this module is behind requireAdultActor. Without it a blank Work card
+ * and a Gmail API that was never enabled on the project are the same pixel,
+ * and the only move left to the person is to reconnect a link that is fine.
+ */
 function failure(err) {
   // Never expose provider error bodies, internal addresses or credentials.
-  if (err?.code === 'not_connected' && err.reason !== 'unreadable') return section('needs_reauth');
-  return section('error');
+  const detail = technicalDetail(err);
+  if (err?.code === 'not_connected' && err.reason !== 'unreadable') return section('needs_reauth', null, detail);
+  return section('error', null, detail);
 }
 async function read(fn) {
   try { return section('ready', await fn()); } catch (err) { return failure(err); }

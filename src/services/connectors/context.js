@@ -332,6 +332,9 @@ async function executeTool(name, args = {}, { profileId }) {
 
 module.exports = {
 	CONNECTORS,
+	// Exported for the dashboard, which needs the same redaction before it can
+	// show an adult why a card is blank. One sanitizer, not two.
+	technicalDetail,
 	messageNeedsConnectors,
 	relevantConnectors,
 	linkedProviders,

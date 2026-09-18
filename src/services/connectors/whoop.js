@@ -12,6 +12,20 @@ const { providerGet } = require("./http");
 const PROVIDER = "whoop";
 const MAX_LIMIT = 25; // Whoop's own ceiling
 
+/**
+ * The collection reads do not judge link health.
+ *
+ * A dashboard load fans out over recovery, sleep and cycles at once, and one
+ * of them answering 401 says something about that collection's scope — not
+ * about the grant. Letting it flag the link is what made a missing
+ * `read:cycles` present itself as "access expired" on every page refresh,
+ * while recovery and sleep were answering perfectly.
+ *
+ * Link health is judged by getProfile(), the account-level read a real
+ * revocation fails first, and by the token endpoint rejecting a refresh.
+ */
+const COLLECTION_READ = { invalidateOnAuthFailure: false };
+
 const KEYWORDS =
 	/\b(whoop|recovery|recovered|strain|sleep|slept|sleeping|hrv|heart rate variability|resting heart rate|rhr|respiratory rate|readiness|rested|tired|fatigue)\b/i;
 
@@ -43,6 +57,7 @@ async function getProfile(profileId) {
 /** Daily recovery scores: how ready the body is. */
 async function listRecovery(profileId, { days = 7, limit } = {}) {
 	const data = await providerGet(profileId, PROVIDER, "/v2/recovery", {
+		...COLLECTION_READ,
 		query: { start: since(days), limit: limitOf(limit) },
 	});
 	return (data?.records || []).map((r) => ({
@@ -58,6 +73,7 @@ async function listRecovery(profileId, { days = 7, limit } = {}) {
 /** Sleep sessions with duration and efficiency. */
 async function listSleep(profileId, { days = 7, limit } = {}) {
 	const data = await providerGet(profileId, PROVIDER, "/v2/activity/sleep", {
+		...COLLECTION_READ,
 		query: { start: since(days), limit: limitOf(limit) },
 	});
 	return (data?.records || []).map((r) => {
@@ -79,6 +95,7 @@ async function listSleep(profileId, { days = 7, limit } = {}) {
 /** Workouts as Whoop scores them — strain, not distance. */
 async function listWorkouts(profileId, { days = 7, limit } = {}) {
 	const data = await providerGet(profileId, PROVIDER, "/v2/activity/workout", {
+		...COLLECTION_READ,
 		query: { start: since(days), limit: limitOf(limit) },
 	});
 	return (data?.records || []).map((r) => ({
@@ -94,6 +111,7 @@ async function listWorkouts(profileId, { days = 7, limit } = {}) {
 /** Daily physiological cycles, which carry day strain. */
 async function listCycles(profileId, { days = 7, limit } = {}) {
 	const data = await providerGet(profileId, PROVIDER, "/v2/cycle", {
+		...COLLECTION_READ,
 		query: { start: since(days), limit: limitOf(limit) },
 	});
 	return (data?.records || []).map((r) => ({

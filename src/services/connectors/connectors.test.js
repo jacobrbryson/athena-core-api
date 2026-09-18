@@ -17,6 +17,7 @@ const strava = require("./strava");
 const whoop = require("./whoop");
 const context = require("./context");
 const { buildUrl, isNotConnected } = require("./http");
+const { getProvider } = require("./registry");
 
 const PROFILE = 42;
 
@@ -534,6 +535,34 @@ describe("whoop", () => {
 			.mockResolvedValueOnce(apiResponse({ records: [] }))
 			.mockResolvedValue(apiResponse({}, { ok: false, status: 500 }));
 		await expect(whoop.buildContext(PROFILE)).resolves.toMatch(/Whoop/);
+	});
+
+	it("asks for the cycles scope that day strain is read under", () => {
+		// /v2/cycle is scoped separately from recovery. Without it the strain
+		// card 401s on every dashboard load.
+		expect(getProvider("whoop").scopes).toEqual(
+			expect.arrayContaining(["read:cycles"])
+		);
+	});
+
+	it("does not flag the link when one collection answers 401", async () => {
+		// A dashboard load reads recovery, sleep and cycles at once. One of
+		// them refused is a scope problem with that collection, not a revoked
+		// grant — flagging it here is what put "access expired" on the panel
+		// after every page refresh.
+		global.fetch.mockResolvedValue(apiResponse({}, { ok: false, status: 401 }));
+		await expect(whoop.listCycles(PROFILE)).rejects.toMatchObject({
+			code: "not_connected",
+		});
+		expect(mockInvalidate).not.toHaveBeenCalled();
+	});
+
+	it("still flags the link when the account-level profile read is refused", async () => {
+		global.fetch.mockResolvedValue(apiResponse({}, { ok: false, status: 401 }));
+		await expect(whoop.getProfile(PROFILE)).rejects.toMatchObject({
+			code: "not_connected",
+		});
+		expect(mockInvalidate).toHaveBeenCalledWith(PROFILE, "whoop", expect.any(String));
 	});
 });
 

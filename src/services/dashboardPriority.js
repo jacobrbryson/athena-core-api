@@ -60,12 +60,17 @@ function describe(summary, pendingCount) {
 	const sleep = latest(summary?.sleep?.data?.filter((s) => !s.nap));
 	const chores = summary?.familyChores?.data?.chores || [];
 	const issues = summary?.jira?.data?.issues || [];
+	const mail = summary?.gmail?.data?.messages?.length ?? null;
+	const mentions = summary?.slack?.data?.messages?.length ?? null;
+	const strain = latest(summary?.strain?.data)?.day_strain ?? null;
+	const activities = summary?.activity?.data?.activities?.length ?? null;
 
 	return [
 		{
 			id: "calendar",
 			title: "Calendar",
 			source: status("calendar"),
+			empty: events.length === 0,
 			signals: {
 				eventsNext7Days: events.length,
 				nextEventTitle: next?.title || null,
@@ -77,17 +82,23 @@ function describe(summary, pendingCount) {
 			id: "health",
 			title: "Health & Performance",
 			source: status("recovery"),
+			empty:
+				recovery?.recovery_score == null &&
+				sleep == null &&
+				strain == null &&
+				!(activities > 0),
 			signals: {
 				recoveryScore: recovery?.recovery_score ?? null,
 				hoursAsleepLastNight: sleep ? Math.round(sleep.hours_asleep * 10) / 10 : null,
-				dayStrain: latest(summary?.strain?.data)?.day_strain ?? null,
-				recentActivities: summary?.activity?.data?.activities?.length ?? null,
+				dayStrain: strain,
+				recentActivities: activities,
 			},
 		},
 		{
 			id: "family",
 			title: "Family",
 			source: status("familyChores"),
+			empty: chores.length === 0,
 			signals: {
 				choresToday: chores.length,
 				choresOutstanding: chores.filter((c) => !c.completed).length,
@@ -97,31 +108,45 @@ function describe(summary, pendingCount) {
 			id: "work",
 			title: "Work",
 			source: status("jira"),
+			// Three sub-sources, any one of which can carry the card. Jira being
+			// unlinked says nothing about whether there is unread mail.
+			empty: !issues.length && !(mail > 0) && !(mentions > 0),
 			signals: {
 				assignedOpenIssues: issues.length,
-				unreadInboxMessages: summary?.gmail?.data?.messages?.length ?? null,
-				slackMentions: summary?.slack?.data?.messages?.length ?? null,
+				unreadInboxMessages: mail,
+				slackMentions: mentions,
 			},
 		},
 		{
 			id: "news",
 			title: "News & Updates",
 			source: "ready",
+			// null, not false: the feeds are read from a different endpoint, so
+			// this sheet genuinely cannot say whether there is anything in them.
+			// Never treated as empty, and so never demoted for looking it.
+			empty: null,
 			signals: { note: "Background reading from the person's own RSS feeds." },
 		},
 		{
 			id: "projects",
 			title: "Projects",
 			source: status("jira"),
+			empty: issues.length === 0,
 			signals: { activeProjects: new Set(issues.map((i) => i.project)).size },
 		},
 		{
 			id: "notifications",
 			title: "Notifications",
 			source: "ready",
+			empty: !pendingCount,
 			signals: {
 				awaitingYourApproval: pendingCount,
-				note: "Things Athena has offered to do and cannot do until approved.",
+				// Phrased from the count. The old note described a waiting
+				// decision whether or not one existed, and an empty bell then
+				// read as the most urgent thing on the page.
+				note: pendingCount
+					? "Things Athena has offered to do and cannot do until approved."
+					: "Nothing is waiting on a decision.",
 			},
 		},
 	];
@@ -132,13 +157,45 @@ const PROMPT = (cards) =>
 	`signals behind each one:\n\n${JSON.stringify(cards, null, 1)}\n\n` +
 	`Put them in the order this person should look at them, most important first.\n\n` +
 	`Weigh it the way a thoughtful assistant would:\n` +
+	`- A card marked "empty": true has nothing behind it right now. It cannot ` +
+	`be urgent, whatever its title suggests, and belongs below every card that ` +
+	`has something in it.\n` +
 	`- Something starting very soon, or already under way, beats everything.\n` +
-	`- A decision only they can make (awaiting approval) outranks information.\n` +
+	`- A decision only they can make outranks information — when there is one ` +
+	`actually waiting.\n` +
 	`- A source that is not connected, or has nothing in it, sinks.\n` +
 	`- Low recovery next to a heavy day is worth raising; a good night is not.\n` +
 	`- Background reading comes last unless nothing else needs them.\n\n` +
 	`Return every id exactly once, no others, as JSON:\n` +
 	`{"order":[{"id":"...","why":"under 12 words, addressed to them"}]}`;
+
+/**
+ * An empty card may not outrank one with something in it.
+ *
+ * The prompt asks for this, but asking is not enough: "Notifications" reads as
+ * urgent on its name alone, and an empty bell was ranking above a calendar
+ * with the day's meetings in it. Emptiness is knowable here without a model,
+ * so it is decided here — and the order the model chose survives intact within
+ * each group.
+ *
+ * `empty: null` (News, whose feeds this sheet cannot see) never sinks.
+ *
+ * A card that falls only because it is empty also loses its reason: whatever
+ * the model wrote to justify raising it described content that is not there,
+ * and "2 approvals need you" under an empty card is worse than no line at all.
+ */
+function applyEmptyFloor(order, empty) {
+	const filled = order.filter((e) => empty.get(e.id) !== true);
+	const blank = order.filter((e) => empty.get(e.id) === true);
+	if (!filled.length || !blank.length) return order;
+
+	const wasAt = new Map(order.map((e, i) => [e.id, i]));
+	return [...filled, ...blank].map((entry, i) =>
+		empty.get(entry.id) === true && i !== wasAt.get(entry.id)
+			? { ...entry, why: null }
+			: entry
+	);
+}
 
 /** Coerce a model answer into a complete, duplicate-free ordering of CARDS. */
 function normalize(raw) {
@@ -174,6 +231,15 @@ async function getPriority(profileId, user) {
 	}
 	const pending = await actions.listPending(profileId).catch(() => []);
 	const cards = describe(summary, pending.length);
+	const empty = new Map(cards.map((c) => [c.id, c.empty]));
+
+	// Nothing on the page has anything in it. Usually this is a snapshot taken
+	// before the providers answered, and there is no "more important" to find —
+	// so leave the order alone rather than spend a model call shuffling empties
+	// and then cache the result for ten minutes.
+	if (cards.every((c) => c.empty !== false)) {
+		return { order: DEFAULT_ORDER, source: "default", generatedAt: new Date().toISOString() };
+	}
 
 	try {
 		const { data, model } = await llm.generateJson({
@@ -187,7 +253,7 @@ async function getPriority(profileId, user) {
 			},
 		});
 		const value = {
-			order: normalize(data?.order),
+			order: applyEmptyFloor(normalize(data?.order), empty),
 			source: "athena",
 			model: model || null,
 			generatedAt: new Date().toISOString(),

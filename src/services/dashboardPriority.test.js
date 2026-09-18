@@ -35,6 +35,22 @@ function ready() {
 	actions.listPending.mockResolvedValue([{ uuid: "a1" }]);
 }
 
+/** Everything connected but empty, except a calendar with the day in it. */
+function quietExceptCalendar() {
+	dashboard.cachedDashboard.mockReturnValue({
+		calendar: source("ready", { events: [{ title: "Design review", start: new Date(Date.now() + 1800_000).toISOString(), allDay: false }], timeZone: "UTC", days: 7 }),
+		recovery: source("ready", []),
+		sleep: source("ready", []),
+		strain: source("ready", []),
+		activity: source("ready", { days: 7, activities: [] }),
+		familyChores: source("ready", { name: "F", chores: [] }),
+		jira: source("ready", { issues: [], partial: false }),
+		slack: source("ready", { workspace: "w", messages: [] }),
+		gmail: source("ready", { account: "a	b.c", messages: [] }),
+	});
+	actions.listPending.mockResolvedValue([]); // nothing awaiting approval
+}
+
 let profile = 0;
 beforeEach(() => {
 	jest.clearAllMocks();
@@ -132,6 +148,95 @@ describe("getPriority", () => {
 		expect(result.source).toBe("default");
 		expect(result.order.map((e) => e.id)).toEqual(ALL);
 		expect(llm.generateJson).not.toHaveBeenCalled();
+	});
+
+	describe("an empty card cannot outrank a full one", () => {
+		it("sinks the notifications card when nothing is awaiting approval", async () => {
+			// The reported bug: an empty bell ranked above a calendar holding
+			// the day's meetings, on the strength of its name alone.
+			quietExceptCalendar();
+			llm.generateJson.mockResolvedValue({
+				data: { order: ["notifications", "calendar", "health", "family", "work", "projects", "news"].map((id) => ({ id, why: `${id} reason` })) },
+				model: "test",
+			});
+
+			const { order } = await priority.getPriority(profile, {});
+
+			expect(order[0].id).toBe("calendar");
+			expect(order.map((e) => e.id).indexOf("notifications")).toBeGreaterThan(
+				order.map((e) => e.id).indexOf("calendar")
+			);
+			expect(order).toHaveLength(ALL.length);
+		});
+
+		it("drops the reason from a card it demoted, so no line claims content that is not there", async () => {
+			quietExceptCalendar();
+			llm.generateJson.mockResolvedValue({
+				data: { order: ["notifications", "calendar", "health", "family", "work", "projects", "news"].map((id) => ({ id, why: `${id} reason` })) },
+				model: "test",
+			});
+
+			const { order } = await priority.getPriority(profile, {});
+
+			expect(order.find((e) => e.id === "notifications").why).toBeNull();
+			// A card that kept its place keeps its reason.
+			expect(order.find((e) => e.id === "calendar").why).toBe("calendar reason");
+		});
+
+		it("leaves a full card where the model put it, bell included", async () => {
+			// The default fixture HAS a pending approval, so notifications is
+			// not empty and the floor must not touch it.
+			llm.generateJson.mockResolvedValue({
+				data: { order: ["notifications", "calendar", "health", "work", "family", "projects", "news"].map((id) => ({ id, why: `${id} reason` })) },
+				model: "test",
+			});
+
+			const { order } = await priority.getPriority(profile, {});
+
+			expect(order[0]).toEqual({ id: "notifications", why: "notifications reason" });
+		});
+
+		it("never sinks News, whose feeds this sheet cannot see", async () => {
+			quietExceptCalendar();
+			llm.generateJson.mockResolvedValue({
+				data: { order: ["news", "calendar", "health", "family", "work", "projects", "notifications"].map((id) => ({ id })) },
+				model: "test",
+			});
+
+			const { order } = await priority.getPriority(profile, {});
+
+			expect(order.slice(0, 2).map((e) => e.id)).toEqual(["news", "calendar"]);
+		});
+
+		it("does not rank at all when every card is empty", async () => {
+			quietExceptCalendar();
+			dashboard.cachedDashboard.mockReturnValue({
+				calendar: source("ready", { events: [], timeZone: "UTC", days: 7 }),
+				recovery: source("not_connected"), sleep: source("not_connected"),
+				strain: source("not_connected"), activity: source("not_connected"),
+				familyChores: source("not_connected"), jira: source("not_connected"),
+				slack: source("not_connected"), gmail: source("not_connected"),
+			});
+
+			const result = await priority.getPriority(profile, {});
+
+			expect(llm.generateJson).not.toHaveBeenCalled();
+			expect(result.source).toBe("default");
+			expect(result.order.map((e) => e.id)).toEqual(ALL);
+		});
+
+		it("tells the model which cards are empty", async () => {
+			quietExceptCalendar();
+			llm.generateJson.mockResolvedValue({ data: { order: ALL.map((id) => ({ id })) }, model: "test" });
+
+			await priority.getPriority(profile, {});
+			const [sheet] = llm.generateJson.mock.calls[0][0].contents[0].parts[0].text.split("Put them in the order");
+
+			expect(sheet).toContain('"empty": true');
+			expect(sheet).toContain('"empty": false');
+			// An empty bell must not describe a decision that is not waiting.
+			expect(sheet).toContain("Nothing is waiting on a decision.");
+		});
 	});
 
 	it("sends counts and timings, never raw provider payloads", async () => {

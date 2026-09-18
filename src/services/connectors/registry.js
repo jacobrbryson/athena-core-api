@@ -189,6 +189,12 @@ const PROVIDERS = {
 		revokeUrl: null,
 		scopes: [
 			"read:recovery",
+			// /v2/cycle carries day strain, and Whoop scopes it separately from
+			// recovery. Omitting it did not fail at link time — it failed on the
+			// first dashboard read, with a 401 that http.js could only read as a
+			// revoked grant, so every page load flagged a healthy link
+			// needs_reauth.
+			"read:cycles",
 			"read:sleep",
 			"read:workout",
 			"read:profile",
