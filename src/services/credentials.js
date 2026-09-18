@@ -25,7 +25,18 @@ const { withTransaction } = require("./parent-helpers");
  * the routes do, and pass down a profile the caller provably owns.
  */
 
-const PROVIDERS = new Set(["google_calendar", "strava", "whoop", "openai"]);
+/**
+ * Every provider a credential may be stored for: the OAuth connectors the
+ * registry can link, plus "openai", which is an api_key the user pastes and
+ * so has no registry descriptor.
+ *
+ * Derived from the registry rather than repeated here. Listing them by hand
+ * is what broke GET /integrations: gmail, jira and slack were added to the
+ * registry, statusAll() asks this module about every registry provider, and
+ * the missing names turned the whole Integrations panel into a 400.
+ */
+const { PROVIDER_IDS } = require("./connectors/registry");
+const PROVIDERS = new Set([...PROVIDER_IDS, "openai"]);
 const KINDS = new Set(["oauth2", "api_key"]);
 
 const STATUS_ACTIVE = "active";

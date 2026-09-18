@@ -45,6 +45,38 @@ function identityFromField(field, idKey, nameKeys) {
 }
 
 const PROVIDERS = {
+  gmail: {
+    id: 'gmail', label: 'Gmail',
+    authorizeUrl: 'https://accounts.google.com/o/oauth2/v2/auth', tokenUrl: 'https://oauth2.googleapis.com/token',
+    revokeUrl: 'https://oauth2.googleapis.com/revoke', revokeMethod: 'POST', revokeBody: token => ({ token }),
+    scopes: ['https://www.googleapis.com/auth/gmail.readonly'], scopeSeparator: ' ',
+    clientIdSecret: 'GOOGLE_OAUTH_CLIENT_ID', clientSecretSecret: 'GOOGLE_OAUTH_CLIENT_SECRET',
+    pkce: true, authorizeParams: { access_type: 'offline', prompt: 'consent select_account' },
+    tokenAuth: 'body', consentType: null, rotatesRefreshToken: false,
+    apiBase: 'https://gmail.googleapis.com/gmail/v1', identify: null,
+    identifyAsync: async (_tokens, { accessToken, apiBase }) => {
+      const response = await fetch(`${apiBase}/users/me/profile`, { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(10000) });
+      if (!response.ok) return null;
+      const data = await response.json();
+      return data.emailAddress ? { externalAccountId: data.emailAddress, displayName: data.emailAddress } : null;
+    },
+  },
+  jira: {
+    id: 'jira', label: 'Jira Cloud', authorizeUrl: 'https://auth.atlassian.com/authorize', tokenUrl: 'https://auth.atlassian.com/oauth/token',
+    revokeUrl: null, scopes: ['read:jira-work', 'offline_access'], scopeSeparator: ' ',
+    clientIdSecret: 'JIRA_CLIENT_ID', clientSecretSecret: 'JIRA_CLIENT_SECRET', pkce: false,
+    authorizeParams: { audience: 'api.atlassian.com', prompt: 'consent' }, tokenAuth: 'body', tokenFormat: 'json',
+    consentType: null, rotatesRefreshToken: true, apiBase: 'https://api.atlassian.com', identify: null,
+  },
+  slack: {
+    id: 'slack', label: 'Slack', authorizeUrl: 'https://slack.com/oauth/v2/authorize', tokenUrl: 'https://slack.com/api/oauth.v2.access',
+    revokeUrl: null, scopes: ['search:read'], scopeParameter: 'user_scope', scopeSeparator: ',',
+    clientIdSecret: 'SLACK_CLIENT_ID', clientSecretSecret: 'SLACK_CLIENT_SECRET', pkce: false,
+    authorizeParams: {}, tokenAuth: 'body', consentType: null, rotatesRefreshToken: true, apiBase: 'https://slack.com/api',
+    // Initial user grants are nested; a rotated user token is top-level.
+    tokenPayload: (body, refreshing) => body.ok === false ? body : body.authed_user || (refreshing && body.token_type === 'user' ? body : {}),
+    identify: body => body.authed_user?.id ? { externalAccountId: body.authed_user.id, displayName: body.team?.name || 'Slack' } : null,
+  },
 	// -----------------------------------------------------------------
 	// Google Calendar
 	// -----------------------------------------------------------------

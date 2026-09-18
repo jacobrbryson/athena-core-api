@@ -125,6 +125,14 @@ async function disconnectConnector(req, res) {
 	try {
 		const actor = await actingUser(req);
 		const result = await oauth.disconnect(actor, req.params.provider);
+		// A disconnected source changes what every dashboard card can show.
+		// Best effort: a socket problem must not fail the disconnect itself.
+		try {
+			require("../services/dashboardPriority").invalidate(actor.profileId);
+			require("../websocket/wsServer").pushDashboardUpdate(actor.googleId, "connector_disconnected");
+		} catch (e) {
+			console.warn("[connectors] dashboard push failed:", e.message);
+		}
 		return res.json({ success: true, ...result });
 	} catch (err) {
 		return sendError(res, err, "Failed to disconnect");

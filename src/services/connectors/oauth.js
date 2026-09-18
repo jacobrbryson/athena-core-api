@@ -137,18 +137,18 @@ async function purgeExpiredStates() {
 // Token endpoint
 // ---------------------------------------------------------------------------
 
-async function postForm(url, params, { headers = {} } = {}) {
+async function postForm(url, params, { headers = {}, json = false } = {}) {
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), TOKEN_REQUEST_TIMEOUT_MS);
 	try {
 		const response = await fetch(url, {
 			method: "POST",
 			headers: {
-				"Content-Type": "application/x-www-form-urlencoded",
+				"Content-Type": json ? "application/json" : "application/x-www-form-urlencoded",
 				Accept: "application/json",
 				...headers,
 			},
-			body: new URLSearchParams(params).toString(),
+			body: json ? JSON.stringify(params) : new URLSearchParams(params).toString(),
 			signal: controller.signal,
 		});
 		const text = await response.text();
@@ -244,7 +244,7 @@ async function begin(actor, providerId, { redirectTo } = {}) {
 		client_id: clientId,
 		redirect_uri: redirectUri(provider.id),
 		response_type: "code",
-		scope: provider.scopes.join(provider.scopeSeparator),
+		[provider.scopeParameter || 'scope']: provider.scopes.join(provider.scopeSeparator),
 		state,
 		...provider.authorizeParams,
 	});
@@ -298,8 +298,9 @@ async function complete(providerId, { code, state, error, errorDescription }) {
 			...(record.code_verifier ? { code_verifier: record.code_verifier } : {}),
 		});
 
-		const { ok, body } = await postForm(provider.tokenUrl, params, { headers });
-		if (!ok || !body.access_token) {
+		const { ok, body } = await postForm(provider.tokenUrl, params, { headers, json: provider.tokenFormat === 'json' });
+		const tokenBody = provider.tokenPayload ? provider.tokenPayload(body, false) : body;
+		if (!ok || body.ok === false || !tokenBody.access_token) {
 			throw httpError(
 				tokenErrorMessage(body, `${provider.label} rejected the authorization`),
 				502,
@@ -307,7 +308,7 @@ async function complete(providerId, { code, state, error, errorDescription }) {
 			);
 		}
 
-		const tokens = normalizeTokens(body);
+		const tokens = normalizeTokens(tokenBody);
 		let identity = provider.identify ? provider.identify(body) : null;
 		// Providers whose token response carries no account info need an
 		// authenticated call to identify it. Best-effort: failing to learn the
@@ -399,8 +400,9 @@ async function refresh(provider, credential) {
 			refresh_token: credential.refreshToken,
 		});
 
-		const { ok, status, body } = await postForm(provider.tokenUrl, params, { headers });
-		if (!ok || !body.access_token) {
+		const { ok, status, body } = await postForm(provider.tokenUrl, params, { headers, json: provider.tokenFormat === 'json' });
+		const tokenBody = provider.tokenPayload ? provider.tokenPayload(body, true) : body;
+		if (!ok || body.ok === false || !tokenBody.access_token) {
 			// 400/401 from a token endpoint means the grant is dead (revoked at
 			// the provider, or expired). Anything else may be transient, so
 			// don't tear down a working link over a 502.
@@ -419,7 +421,7 @@ async function refresh(provider, credential) {
 			);
 		}
 
-		const tokens = normalizeTokens(body);
+		const tokens = normalizeTokens(tokenBody);
 		// Providers that rotate must have the new refresh token persisted, or
 		// the link dies at the next expiry.
 		await credentials.updateTokens(credential.uuid, { ...tokens, actor: "refresh" });

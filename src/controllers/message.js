@@ -9,13 +9,13 @@ const { processAiResponse } = require("./gemini");
 const missionService = require("../services/mission");
 const gameService = require("../services/game");
 const {
-	broadcastToGuardian,
-	broadcastToAdventure,
+  broadcastToGuardian,
+  broadcastToAdventure,
 } = require("../websocket/wsServer");
 const config = require("../config");
 
 const trimStr = (v, max) =>
-	typeof v === "string" && v.trim() ? v.trim().slice(0, max) : null;
+  typeof v === "string" && v.trim() ? v.trim().slice(0, max) : null;
 
 /**
  * Extract the optional client-supplied prompt context from a message body.
@@ -24,369 +24,393 @@ const trimStr = (v, max) =>
  * first/returning flag so the AI can drive the first-contact exchange.
  */
 function parseMessageContext(body = {}) {
-	const guardian = body.guardian
-		? {
-				displayName: trimStr(body.guardian.display_name, 80),
-				adventureKey: trimStr(body.guardian.adventure_key, 64),
-				city: trimStr(body.guardian.city, 120),
-				// linkedProfileId is deliberately NOT read from the body — it
-				// selects whose memories and connected accounts Athena reads.
-				// It is filled in below from the verified session token.
-				linkedProfileId: null,
-		  }
-		: undefined;
+  const guardian = body.guardian
+    ? {
+        displayName: trimStr(body.guardian.display_name, 80),
+        adventureKey: trimStr(body.guardian.adventure_key, 64),
+        city: trimStr(body.guardian.city, 120),
+        // linkedProfileId is deliberately NOT read from the body — it
+        // selects whose memories and connected accounts Athena reads.
+        // It is filled in below from the verified session token.
+        linkedProfileId: null,
+      }
+    : undefined;
 
-	const onboarding =
-		body.onboarding && typeof body.onboarding === "object"
-			? {
-					priorAthenaLine: trimStr(body.onboarding.priorAthenaLine, 600),
-					firstContact: Boolean(body.onboarding.firstContact),
-					// Scripted story beat this reply answers. Whitelisted — an
-					// unrecognized beat falls back to the default first/returning nudges.
-					beat:
-						body.onboarding.beat === "ratatouille_alarm"
-							? "ratatouille_alarm"
-							: undefined,
-			  }
-			: undefined;
+  const onboarding =
+    body.onboarding && typeof body.onboarding === "object"
+      ? {
+          priorAthenaLine: trimStr(body.onboarding.priorAthenaLine, 600),
+          firstContact: Boolean(body.onboarding.firstContact),
+          // Scripted story beat this reply answers. Whitelisted — an
+          // unrecognized beat falls back to the default first/returning nudges.
+          beat:
+            body.onboarding.beat === "ratatouille_alarm"
+              ? "ratatouille_alarm"
+              : undefined,
+        }
+      : undefined;
 
-	// Active-mission steering, sourced from the Guardians app's missions.json.
-	// `pendingFamilies` lets Athena name the families still to reach out to.
-	let mission;
-	if (body.mission && typeof body.mission === "object") {
-		const directive = trimStr(body.mission.directive, 800);
-		if (directive) {
-			const pendingFamilies = Array.isArray(body.mission.pendingFamilies)
-				? body.mission.pendingFamilies
-						.map((f) => trimStr(f, 80))
-						.filter(Boolean)
-						.slice(0, 20)
-				: [];
-			mission = {
-				id: trimStr(body.mission.id, 80),
-				title: trimStr(body.mission.title, 120),
-				directive,
-				pendingFamilies,
-			};
+  // Active-mission steering, sourced from the Guardians app's missions.json.
+  // `pendingFamilies` lets Athena name the families still to reach out to.
+  let mission;
+  if (body.mission && typeof body.mission === "object") {
+    const directive = trimStr(body.mission.directive, 800);
+    if (directive) {
+      const pendingFamilies = Array.isArray(body.mission.pendingFamilies)
+        ? body.mission.pendingFamilies
+            .map((f) => trimStr(f, 80))
+            .filter(Boolean)
+            .slice(0, 20)
+        : [];
+      mission = {
+        id: trimStr(body.mission.id, 80),
+        title: trimStr(body.mission.title, 120),
+        directive,
+        pendingFamilies,
+      };
 
-			// Convergence (Mission 2) extras: the family's own piece, progress,
-			// and — once complete — the revealed destination.
-			const fragment = trimStr(body.mission.fragment, 120);
-			if (fragment) mission.fragment = fragment;
-			if (body.mission.reporting && typeof body.mission.reporting === "object") {
-				const reported = Number(body.mission.reporting.reported);
-				const total = Number(body.mission.reporting.total);
-				const pending = Array.isArray(body.mission.reporting.pending)
-					? body.mission.reporting.pending
-							.map((f) => trimStr(f, 80))
-							.filter(Boolean)
-							.slice(0, 20)
-					: [];
-				if (Number.isFinite(reported) && Number.isFinite(total)) {
-					mission.reporting = { reported, total, pending };
-				}
-			}
-			mission.complete = Boolean(body.mission.complete);
-			mission.decrypted = Boolean(body.mission.decrypted);
-			const destination = trimStr(body.mission.destination, 160);
-			if (destination) mission.destination = destination;
-		}
-	}
+      // Convergence (Mission 2) extras: the family's own piece, progress,
+      // and — once complete — the revealed destination.
+      const fragment = trimStr(body.mission.fragment, 120);
+      if (fragment) mission.fragment = fragment;
+      if (
+        body.mission.reporting &&
+        typeof body.mission.reporting === "object"
+      ) {
+        const reported = Number(body.mission.reporting.reported);
+        const total = Number(body.mission.reporting.total);
+        const pending = Array.isArray(body.mission.reporting.pending)
+          ? body.mission.reporting.pending
+              .map((f) => trimStr(f, 80))
+              .filter(Boolean)
+              .slice(0, 20)
+          : [];
+        if (Number.isFinite(reported) && Number.isFinite(total)) {
+          mission.reporting = { reported, total, pending };
+        }
+      }
+      mission.complete = Boolean(body.mission.complete);
+      mission.decrypted = Boolean(body.mission.decrypted);
+      const destination = trimStr(body.mission.destination, 160);
+      if (destination) mission.destination = destination;
+    }
+  }
 
-	// Signal Decoder lifetime count — a pure flavor data point so Athena can
-	// acknowledge the Guardian's decoding help. Never gates or advances anything.
-	let decodes;
-	if (body.decodes && typeof body.decodes === "object") {
-		const total = Number(body.decodes.total);
-		if (Number.isFinite(total) && total > 0) {
-			decodes = { total: Math.min(Math.floor(total), 100000) };
-		}
-	}
+  // Signal Decoder lifetime count — a pure flavor data point so Athena can
+  // acknowledge the Guardian's decoding help. Never gates or advances anything.
+  let decodes;
+  if (body.decodes && typeof body.decodes === "object") {
+    const total = Number(body.decodes.total);
+    if (Number.isFinite(total) && total > 0) {
+      decodes = { total: Math.min(Math.floor(total), 100000) };
+    }
+  }
 
-	// Companion-app surface context: which device Athena is on, whether the
-	// person is driving (short spoken replies), and their timezone (so memory
-	// recall reads "yesterday" in their local day).
-	let companion;
-	if (body.companion && typeof body.companion === "object") {
-		const device = ["web", "android", "car"].includes(body.companion.device)
-			? body.companion.device
-			: "web";
-		const tz = trimStr(body.companion.timezone, 64);
-		let timezone = null;
-		if (tz) {
-			try {
-				new Intl.DateTimeFormat("en-US", { timeZone: tz });
-				timezone = tz;
-			} catch {
-				timezone = null;
-			}
-		}
-		companion = { device, driving: body.companion.driving === true, timezone };
-	}
+  // Companion-app surface context: which device Athena is on, whether the
+  // person is driving (short spoken replies), and their timezone (so memory
+  // recall reads "yesterday" in their local day).
+  let companion;
+  if (body.companion && typeof body.companion === "object") {
+    const device = ["web", "android", "car"].includes(body.companion.device)
+      ? body.companion.device
+      : "web";
+    const tz = trimStr(body.companion.timezone, 64);
+    let timezone = null;
+    if (tz) {
+      try {
+        new Intl.DateTimeFormat("en-US", { timeZone: tz });
+        timezone = tz;
+      } catch {
+        timezone = null;
+      }
+    }
+    companion = { device, driving: body.companion.driving === true, timezone };
+  }
 
-	return {
-		guardian: guardian && (guardian.displayName || guardian.adventureKey) ? guardian : undefined,
-		onboarding,
-		mission,
-		decodes,
-		companion,
-	};
+  return {
+    guardian:
+      guardian && (guardian.displayName || guardian.adventureKey)
+        ? guardian
+        : undefined,
+    onboarding,
+    mission,
+    decodes,
+    companion,
+  };
 }
 
 async function getMessage(req, res) {
-	try {
-		const ip = extractIp(req);
-		const uuid = req.query.sessionId;
+  try {
+    const ip = extractIp(req);
+    const uuid = req.query.sessionId;
 
-		if (typeof uuid !== "string" || !uuid.trim())
-			return res
-				.status(400)
-				.json({ success: false, message: "Missing session UUID" });
+    if (typeof uuid !== "string" || !uuid.trim())
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing session UUID" });
 
-		const session = await sessionService.getAuthorizedSession(uuid, {
-			ip,
-			callerProfileId: await resolveCallerProfileId(req),
-		});
-		if (!session)
-			return res
-				.status(404)
-				.json({ success: false, message: "Session not found" });
+    const callerProfileId = await resolveCallerProfileId(req);
+    const session = await sessionService.getAuthorizedSession(uuid, {
+      ip,
+      callerProfileId,
+    });
+    if (!session)
+      return res
+        .status(404)
+        .json({ success: false, message: "Session not found" });
 
-		const chats = await messageService.getMessages(session.id);
+    // Scoped to what this caller was present for — but only on a
+    // profile-bound session, which is the only kind that has participants.
+    // An anonymous or Guardians session carries no spans, and filtering by
+    // spans that do not exist would hand back an empty transcript.
+    const chats = await messageService.getMessages(
+      session.id,
+      session.profile_id != null ? callerProfileId : null,
+    );
 
-		res.json(chats);
-	} catch (err) {
-		console.error("Error fetching chat:", err);
-		res.status(500).json({ success: false, message: "DB error" });
-	}
+    res.json(chats);
+  } catch (err) {
+    console.error("Error fetching chat:", err);
+    res.status(500).json({ success: false, message: "DB error" });
+  }
 }
 
 async function addMessage(req, res, clients) {
-	try {
-		const ip = extractIp(req);
-		const { sessionId, text: rawText } = req.body || {};
-		const text = rawText?.trim();
+  try {
+    const ip = extractIp(req);
+    const { sessionId, text: rawText } = req.body || {};
+    const text = rawText?.trim();
 
-		if (typeof sessionId !== "string" || !sessionId.trim() || !text)
-			return res
-				.status(400)
-				.json({ success: false, message: "Missing UUID or message" });
+    if (typeof sessionId !== "string" || !sessionId.trim() || !text)
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing UUID or message" });
 
-		if (typeof text !== "string") {
-			return res
-				.status(400)
-				.json({ success: false, message: "Message must be a string" });
-		}
+    if (typeof text !== "string") {
+      return res
+        .status(400)
+        .json({ success: false, message: "Message must be a string" });
+    }
 
-		const session = await sessionService.getAuthorizedSession(sessionId, {
-			ip,
-			callerProfileId: await resolveCallerProfileId(req),
-		});
-		if (!session)
-			return res
-				.status(404)
-				.json({ success: false, message: "Session not found" });
+    const callerProfileId = await resolveCallerProfileId(req);
+    const session = await sessionService.getAuthorizedSession(sessionId, {
+      ip,
+      callerProfileId,
+    });
+    if (!session)
+      return res
+        .status(404)
+        .json({ success: false, message: "Session not found" });
 
-		if (
-			session.session_message_count_24h >=
-			config.PUBLIC_SESSION_MESSAGE_DAILY_LIMIT
-		) {
-			return res.status(429).json({
-				success: false,
-				message: `Session daily limit reached (${config.PUBLIC_SESSION_MESSAGE_DAILY_LIMIT})`,
-			});
-		}
+    if (
+      session.session_message_count_24h >=
+      config.PUBLIC_SESSION_MESSAGE_DAILY_LIMIT
+    ) {
+      return res.status(429).json({
+        success: false,
+        message: `Session daily limit reached (${config.PUBLIC_SESSION_MESSAGE_DAILY_LIMIT})`,
+      });
+    }
 
-		if (
-			session.ip_message_count_24h >= config.PUBLIC_IP_MESSAGE_DAILY_LIMIT
-		) {
-			return res.status(429).json({
-				success: false,
-				message: `IP daily limit reached (${config.PUBLIC_IP_MESSAGE_DAILY_LIMIT})`,
-			});
-		}
+    if (session.ip_message_count_24h >= config.PUBLIC_IP_MESSAGE_DAILY_LIMIT) {
+      return res.status(429).json({
+        success: false,
+        message: `IP daily limit reached (${config.PUBLIC_IP_MESSAGE_DAILY_LIMIT})`,
+      });
+    }
 
-		const ctx = parseMessageContext(req.body);
-		// Verified guardian identity (from the forwarded session token) — used to
-		// attribute in-chat mission reporting to the right family. Never trusted
-		// from the body.
-		ctx.guardianAuth = decodeGuardianFromRequest(req);
+    const ctx = parseMessageContext(req.body);
+    // Who is talking this turn. On a shared session this is not the same as
+    // session.profile_id, and Athena's history has to be built for the person
+    // in front of her.
+    ctx.speakerProfileId = callerProfileId ?? null;
+    // Verified guardian identity (from the forwarded session token) — used to
+    // attribute in-chat mission reporting to the right family. Never trusted
+    // from the body.
+    ctx.guardianAuth = decodeGuardianFromRequest(req);
 
-		// Which Athena profile this guardian is, resolved from the verified
-		// token rather than the body. Guardians sessions are never bound to a
-		// profile (the app has no profile_uuid to send), so without this the
-		// guardian's own memories and connected accounts — calendar included —
-		// are invisible to Athena in the Guardians console.
-		if (ctx.guardianAuth?.guardian_id) {
-			const linkedProfileId = await guardianAuth
-				.linkedProfileIdForGuardian(ctx.guardianAuth.guardian_id)
-				.catch(() => null);
-			if (linkedProfileId) {
-				ctx.guardian = { ...(ctx.guardian || {}), linkedProfileId };
-			}
-		}
+    // Which Athena profile this guardian is, resolved from the verified
+    // token rather than the body. Guardians sessions are never bound to a
+    // profile (the app has no profile_uuid to send), so without this the
+    // guardian's own memories and connected accounts — calendar included —
+    // are invisible to Athena in the Guardians console.
+    if (ctx.guardianAuth?.guardian_id) {
+      const linkedProfileId = await guardianAuth
+        .linkedProfileIdForGuardian(ctx.guardianAuth.guardian_id)
+        .catch(() => null);
+      if (linkedProfileId) {
+        ctx.guardian = { ...(ctx.guardian || {}), linkedProfileId };
+      }
+    }
 
-		// The onboarding "communication check" invites very short replies
-		// ("hi", "ok"), so relax the usual minimum for those turns only.
-		const minLength = ctx.onboarding ? 1 : 3;
-		if (text?.length < minLength) {
-			return res.status(400).json({
-				success: false,
-				message: "Text length short",
-			});
-		}
+    // The onboarding "communication check" invites very short replies
+    // ("hi", "ok"), so relax the usual minimum for those turns only.
+    const minLength = ctx.onboarding ? 1 : 3;
+    if (text?.length < minLength) {
+      return res.status(400).json({
+        success: false,
+        message: "Text length short",
+      });
+    }
 
-		// The 256-char cap suits the kids' product; adults in the Companion app
-		// write real paragraphs.
-		const maxLength =
-			session.profile_id && (await audienceForProfile(session.profile_id).catch(() => "child")) === "adult"
-				? 2000
-				: 256;
-		if (text?.length > maxLength) {
-			return res.status(400).json({
-				success: false,
-				message: "Text length too long",
-			});
-		}
+    // The 256-char cap suits the kids' product; adults in the Companion app
+    // write real paragraphs.
+    const maxLength =
+      session.profile_id &&
+      (await audienceForProfile(session.profile_id).catch(() => "child")) ===
+        "adult"
+        ? 2000
+        : 256;
+    if (text?.length > maxLength) {
+      return res.status(400).json({
+        success: false,
+        message: "Text length too long",
+      });
+    }
 
-		// Lake Norman mission state is server-owned. Apply any deterministic
-		// message transition first, then replace client steering with the durable
-		// phase and private backend briefing used for this same Athena response.
-		if (
-			ctx.guardianAuth?.adventure_key === missionService.LAKE_NORMAN_ADVENTURE
-		) {
-			const adventureKey = ctx.guardianAuth.adventure_key;
-			const guardianId = ctx.guardianAuth.guardian_id;
-			try {
-				if (missionService.getIndexDef(adventureKey)) {
-					// Mission 3 "The First Watch". Reading a card code to Athena in chat
-					// IS the report — the loop the kids actually love — and because the
-					// index is network-shared it advances the mission for EVERY Guardian,
-					// not just the one who typed it.
-					const transition = await missionService.applyIndexMessageTransition(
-						adventureKey,
-						guardianId,
-						text
-					);
-					ctx.mission = await missionService.getIndexPromptContext(
-						adventureKey,
-						guardianId,
-						transition
-					);
-					// Shared state changed: fan out to every Guardian in the campaign so
-					// all eight panels update, not just this Guardian's own devices.
-					if (transition?.kind === "code_accepted") {
-						await missionService.issueIndexClue(adventureKey, guardianId);
-						broadcastToAdventure(adventureKey, { rpc: "indexUpdate" });
-					}
-				} else {
-					const transition = await missionService.applyMessageTransition(
-						adventureKey,
-						guardianId,
-						text
-					);
-					ctx.mission = await missionService.getMissionPromptContext(
-						adventureKey,
-						transition
-					);
-				}
-			} catch (err) {
-				console.warn("[message] mission state unavailable:", err.message);
-			}
-		}
+    // Lake Norman mission state is server-owned. Apply any deterministic
+    // message transition first, then replace client steering with the durable
+    // phase and private backend briefing used for this same Athena response.
+    if (
+      ctx.guardianAuth?.adventure_key === missionService.LAKE_NORMAN_ADVENTURE
+    ) {
+      const adventureKey = ctx.guardianAuth.adventure_key;
+      const guardianId = ctx.guardianAuth.guardian_id;
+      try {
+        if (missionService.getIndexDef(adventureKey)) {
+          // Mission 3 "The First Watch". Reading a card code to Athena in chat
+          // IS the report — the loop the kids actually love — and because the
+          // index is network-shared it advances the mission for EVERY Guardian,
+          // not just the one who typed it.
+          const transition = await missionService.applyIndexMessageTransition(
+            adventureKey,
+            guardianId,
+            text,
+          );
+          ctx.mission = await missionService.getIndexPromptContext(
+            adventureKey,
+            guardianId,
+            transition,
+          );
+          // Shared state changed: fan out to every Guardian in the campaign so
+          // all eight panels update, not just this Guardian's own devices.
+          if (transition?.kind === "code_accepted") {
+            await missionService.issueIndexClue(adventureKey, guardianId);
+            broadcastToAdventure(adventureKey, { rpc: "indexUpdate" });
+          }
+        } else {
+          const transition = await missionService.applyMessageTransition(
+            adventureKey,
+            guardianId,
+            text,
+          );
+          ctx.mission = await missionService.getMissionPromptContext(
+            adventureKey,
+            transition,
+          );
+        }
+      } catch (err) {
+        console.warn("[message] mission state unavailable:", err.message);
+      }
+    }
 
-		// Rescue Ratatouille trail state is likewise server-owned. A key typed or
-		// spoken in chat counts as "reporting to Athena": it's accepted here (the
-		// decryption still happens in the panel) and the transition + live
-		// progress steer this same Athena response.
-		if (
-			ctx.guardianAuth?.adventure_key === missionService.RATATOUILLE_ADVENTURE
-		) {
-			try {
-				const transition = await missionService.applyTrailMessageTransition(
-					ctx.guardianAuth.adventure_key,
-					ctx.guardianAuth.guardian_id,
-					text
-				);
-				ctx.mission = await missionService.getTrailPromptContext(
-					ctx.guardianAuth.adventure_key,
-					ctx.guardianAuth.guardian_id,
-					transition
-				);
-				// A key accepted in chat changes shared trail state — nudge every
-				// device on this credential to re-fetch the mission panel.
-				if (transition === "key_accepted") {
-					broadcastToGuardian(ctx.guardianAuth.guardian_id, {
-						rpc: "trailUpdate",
-					});
-				}
-			} catch (err) {
-				console.warn("[message] trail state unavailable:", err.message);
-			}
-		}
+    // Rescue Ratatouille trail state is likewise server-owned. A key typed or
+    // spoken in chat counts as "reporting to Athena": it's accepted here (the
+    // decryption still happens in the panel) and the transition + live
+    // progress steer this same Athena response.
+    if (
+      ctx.guardianAuth?.adventure_key === missionService.RATATOUILLE_ADVENTURE
+    ) {
+      try {
+        const transition = await missionService.applyTrailMessageTransition(
+          ctx.guardianAuth.adventure_key,
+          ctx.guardianAuth.guardian_id,
+          text,
+        );
+        ctx.mission = await missionService.getTrailPromptContext(
+          ctx.guardianAuth.adventure_key,
+          ctx.guardianAuth.guardian_id,
+          transition,
+        );
+        // A key accepted in chat changes shared trail state — nudge every
+        // device on this credential to re-fetch the mission panel.
+        if (transition === "key_accepted") {
+          broadcastToGuardian(ctx.guardianAuth.guardian_id, {
+            rpc: "trailUpdate",
+          });
+        }
+      } catch (err) {
+        console.warn("[message] trail state unavailable:", err.message);
+      }
+    }
 
-		// Card games are adjudicated server-side BEFORE the prompt is built, so
-		// the moves Athena narrates have actually happened and her hand is real
-		// rather than improvised. Never blocks the conversation.
-		try {
-			ctx.game = await gameService.applyGameMessage(
-				session.id,
-				text,
-				session.profile_id || null
-			);
-		} catch (err) {
-			console.warn("[message] game state unavailable:", err.message);
-		}
+    // Card games are adjudicated server-side BEFORE the prompt is built, so
+    // the moves Athena narrates have actually happened and her hand is real
+    // rather than improvised. Never blocks the conversation.
+    try {
+      ctx.game = await gameService.applyGameMessage(
+        session.id,
+        text,
+        session.profile_id || null,
+      );
+    } catch (err) {
+      console.warn("[message] game state unavailable:", err.message);
+    }
 
-		const humanChatUuid = await messageService.addMessage(
-			session.id,
-			true,
-			text,
-			session.mode
-		);
+    // Attributed to the caller, not to the session's owner. With two
+    // guardians in one conversation those are different people, and a
+    // transcript that cannot tell them apart makes Athena confidently put one
+    // guardian's words in the other's mouth.
+    const humanChatUuid = await messageService.addMessage(
+      session.id,
+      true,
+      text,
+      session.mode,
+      callerProfileId ?? session.profile_id ?? null,
+    );
 
-		await sessionService.updateSession(session.id, { is_busy: true });
+    await sessionService.updateSession(session.id, { is_busy: true });
 
-		const sessionClients = clients.get(session.uuid);
-		if (sessionClients) {
-			const payload = JSON.stringify({
-				rpc: "sessionStatus",
-				session: {
-					is_busy: true,
-				},
-			});
-			for (const ws of sessionClients) {
-				if (ws.readyState === ws.OPEN) {
-					ws.send(payload);
-				}
-			}
-		}
+    const sessionClients = clients.get(session.uuid);
+    if (sessionClients) {
+      const payload = JSON.stringify({
+        rpc: "sessionStatus",
+        session: {
+          is_busy: true,
+        },
+      });
+      for (const ws of sessionClients) {
+        if (ws.readyState === ws.OPEN) {
+          ws.send(payload);
+        }
+      }
+    }
 
-		res.json({
-			message: {
-				uuid: humanChatUuid,
-				text,
-				is_human: true,
-				created_at: Date.now(),
-			},
-			session: {
-				sessionId: session.uuid,
-				is_busy: true,
-			},
-		});
+    res.json({
+      message: {
+        uuid: humanChatUuid,
+        text,
+        is_human: true,
+        created_at: Date.now(),
+      },
+      session: {
+        sessionId: session.uuid,
+        is_busy: true,
+      },
+    });
 
-		processAiResponse(session, text, clients, ctx);
-	} catch (err) {
-		console.error("Error in addMessage (Pre-AI):", err);
-		if (!res.headersSent) {
-			res
-				.status(500)
-				.json({ success: false, message: "Failed to process message" });
-		}
-	}
+    processAiResponse(session, text, clients, ctx);
+  } catch (err) {
+    console.error("Error in addMessage (Pre-AI):", err);
+    if (!res.headersSent) {
+      res
+        .status(500)
+        .json({ success: false, message: "Failed to process message" });
+    }
+  }
 }
 
 module.exports = {
-	getMessage,
-	addMessage,
+  getMessage,
+  addMessage,
 };

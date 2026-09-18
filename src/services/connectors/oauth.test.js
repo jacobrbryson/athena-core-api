@@ -34,6 +34,7 @@ const mockHasConsent = jest.fn();
 jest.mock("../consent", () => ({ hasConsent: mockHasConsent }));
 
 const oauth = require("./oauth");
+const { PROVIDER_IDS } = require("./registry");
 
 const ACTOR = { profileId: 42, googleId: "google-42" };
 
@@ -511,10 +512,8 @@ describe("status", () => {
 	it("lists every supported provider", async () => {
 		mockCredentials.status.mockResolvedValue(null);
 		const all = await oauth.statusAll(ACTOR);
-		expect(all.map((p) => p.provider).sort()).toEqual([
-			"google_calendar",
-			"strava",
-			"whoop",
-		]);
+		// Read from the registry, not a hand-kept copy of it: this assertion
+		// went stale the moment gmail, jira and slack were added.
+		expect(all.map((p) => p.provider).sort()).toEqual([...PROVIDER_IDS].sort());
 	});
 });

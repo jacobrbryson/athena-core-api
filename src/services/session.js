@@ -1,6 +1,7 @@
 const { v4: uuidv4 } = require("uuid");
 const pool = require("../helpers/db");
 const { buildUpdateClauses } = require("../helpers/query");
+const participants = require("./sessionParticipant");
 
 /**
  * Creates a new session record in the database.
@@ -8,38 +9,47 @@ const { buildUpdateClauses } = require("../helpers/query");
  * @returns {Promise<string>} The UUID of the new session.
  */
 async function addSession(ipAddress, options = {}) {
-	const sessionId = uuidv4();
-	const mode =
-		typeof options.mode === "string" && options.mode.trim()
-			? options.mode.trim()
-			: "teach";
-	const profileId = Number.isFinite(Number(options.profileId))
-		? Number(options.profileId)
-		: null;
-	const familyId = Number.isFinite(Number(options.familyId))
-		? Number(options.familyId)
-		: null;
+  const sessionId = uuidv4();
+  const mode =
+    typeof options.mode === "string" && options.mode.trim()
+      ? options.mode.trim()
+      : "teach";
+  const profileId = Number.isFinite(Number(options.profileId))
+    ? Number(options.profileId)
+    : null;
+  const familyId = Number.isFinite(Number(options.familyId))
+    ? Number(options.familyId)
+    : null;
 
-	await pool.query(
-		"INSERT INTO session (uuid, ip_address, mode, profile_id, family_id) VALUES (?, ?, ?, ?, ?)",
-		[sessionId, ipAddress, mode, profileId, familyId]
-	);
+  const [result] = await pool.query(
+    "INSERT INTO session (uuid, ip_address, mode, profile_id, family_id) VALUES (?, ?, ?, ?, ?)",
+    [sessionId, ipAddress, mode, profileId, familyId],
+  );
 
-	return sessionId;
+  // The person it was created for is present from the first moment. Every
+  // bound session needs a span or the transcript filter, which is fail-closed,
+  // would hide their own conversation from them.
+  if (profileId != null && result?.insertId) {
+    await participants
+      .joinSession(result.insertId, profileId, { via: "owner" })
+      .catch((e) => console.warn("[session] owner participant:", e.message));
+  }
+
+  return sessionId;
 }
 
 /** Resolve a profile.id (and its family) from a profile uuid, or null. */
 async function resolveProfileBinding(profileUuid) {
-	if (typeof profileUuid !== "string" || !profileUuid.trim()) return {};
-	const [rows] = await pool.query(
-		`SELECT p.id AS profile_id, cp.family_id
+  if (typeof profileUuid !== "string" || !profileUuid.trim()) return {};
+  const [rows] = await pool.query(
+    `SELECT p.id AS profile_id, cp.family_id
      FROM profile p
      LEFT JOIN child_profiles cp ON cp.profile_id = p.id
      WHERE p.uuid = ? LIMIT 1;`,
-		[profileUuid.trim()]
-	);
-	if (!rows.length) return {};
-	return { profileId: rows[0].profile_id, familyId: rows[0].family_id || null };
+    [profileUuid.trim()],
+  );
+  if (!rows.length) return {};
+  return { profileId: rows[0].profile_id, familyId: rows[0].family_id || null };
 }
 
 /**
@@ -54,8 +64,8 @@ async function resolveProfileBinding(profileUuid) {
  * @returns {Promise<object | undefined>} The session record or undefined.
  */
 async function getSessionByUuidAndIp(uuid, ip = null) {
-	const [rows] = await pool.query(
-		`SELECT 
+  const [rows] = await pool.query(
+    `SELECT 
     s.id,
     s.ip_address,
 		s.uuid,
@@ -82,10 +92,10 @@ async function getSessionByUuidAndIp(uuid, ip = null) {
     ) AS ip_message_count_24h
 FROM session s
 WHERE s.uuid = ?${ip ? " AND s.ip_address = ?" : ""} LIMIT 1;`,
-		ip ? [uuid, ip] : [uuid]
-	);
+    ip ? [uuid, ip] : [uuid],
+  );
 
-	return rows[0];
+  return rows[0];
 }
 
 /**
@@ -107,17 +117,79 @@ WHERE s.uuid = ?${ip ? " AND s.ip_address = ?" : ""} LIMIT 1;`,
  * @param {object} opts { ip, callerProfileId }
  * @returns {Promise<object|null>} the session, or null if absent/unauthorized.
  */
-async function getAuthorizedSession(uuid, { ip = null, callerProfileId = null } = {}) {
-	if (!uuid) return null;
-	const session = await getSessionByUuidAndIp(uuid, null);
-	if (!session) return null;
+async function getAuthorizedSession(
+  uuid,
+  { ip = null, callerProfileId = null } = {},
+) {
+  if (!uuid) return null;
+  const session = await getSessionByUuidAndIp(uuid, null);
+  if (!session) return null;
 
-	if (session.profile_id != null) {
-		return Number(callerProfileId) === Number(session.profile_id) ? session : null;
-	}
-	// Anonymous session — nothing to authenticate against but the network.
-	if (!ip || session.ip_address !== ip) return null;
-	return session;
+  if (session.profile_id != null) {
+    if (Number(callerProfileId) === Number(session.profile_id)) return session;
+    // A second guardian who has already been admitted to this conversation
+    // (see sessionParticipant.mayJoin — shared active family, adult role,
+    // proven by signed token). This read path only RECOGNIZES membership; it
+    // never grants it, so nothing here can widen its own access.
+    if (
+      callerProfileId != null &&
+      (await participants
+        .isParticipant(session.id, callerProfileId)
+        .catch(() => false))
+    ) {
+      return session;
+    }
+    return null;
+  }
+  // Anonymous session — nothing to authenticate against but the network.
+  if (!ip || session.ip_address !== ip) return null;
+  return session;
+}
+
+/**
+ * Admit a proven profile into a conversation that is not theirs.
+ *
+ * This is the ONE place membership is granted, so it is the one place to read
+ * when asking how somebody came to be in a session. `getAuthorizedSession`
+ * only ever recognizes an existing membership; it cannot create one.
+ *
+ * The caller must already have proven this profile with a signed token — the
+ * controller passes `resolveCallerProfileId(req)`, never anything from the
+ * body or query. `mayJoin` then requires a shared active family and an adult
+ * role, so a session uuid on its own still admits nobody.
+ *
+ * Returns the session on success, null when this caller may not join — which
+ * the controller treats exactly as it always treated an unauthorized session:
+ * by starting a new one.
+ */
+async function admitToSession(uuid, callerProfileId) {
+  if (!uuid || callerProfileId == null) return null;
+  const session = await getSessionByUuidAndIp(uuid, null);
+  if (!session) return null;
+  if (!(await participants.mayJoin(session, callerProfileId))) return null;
+
+  // From the START of the conversation, not from this moment. They were in
+  // the room while it happened; authenticating is not arriving. Opening the
+  // span at the switch would give them a blank transcript and leave Athena
+  // with nothing to continue — the exact failure this exists to fix.
+  await participants.joinSession(session.id, callerProfileId, {
+    via: "joined",
+    joinedAt: session.created_at || null,
+  });
+
+  // Reading somebody else's conversation is an access event, so it leaves a
+  // record like every other one. Failing to write it must not fail the join —
+  // the person is already in the room — but it is logged loudly.
+  try {
+    await pool.query(
+      "INSERT INTO athena_access_audit (subject, action, actor) VALUES (?, ?, ?)",
+      [session.uuid, "session_joined", String(callerProfileId)],
+    );
+  } catch (err) {
+    console.error("[session] join audit failed:", err.message);
+  }
+
+  return session;
 }
 
 /**
@@ -128,30 +200,27 @@ async function getAuthorizedSession(uuid, { ip = null, callerProfileId = null } 
  * @returns {Promise<object>} The result object from the database query.
  */
 async function updateSession(sessionId, updates) {
-	const allowedUpdates = {
-		age: "number",
-		is_busy: "boolean",
-		wisdom_points: "number",
-		mode: "string",
-	};
+  const allowedUpdates = {
+    age: "number",
+    is_busy: "boolean",
+    wisdom_points: "number",
+    mode: "string",
+  };
 
-	try {
-		const { setClauses, values } = buildUpdateClauses(
-			updates,
-			allowedUpdates
-		);
-		const queryValues = [...values, sessionId];
-		const sql = `UPDATE session SET ${setClauses} WHERE id = ?`;
+  try {
+    const { setClauses, values } = buildUpdateClauses(updates, allowedUpdates);
+    const queryValues = [...values, sessionId];
+    const sql = `UPDATE session SET ${setClauses} WHERE id = ?`;
 
-		const [result] = await pool.query(sql, queryValues);
-		return result;
-	} catch (error) {
-		console.error(
-			`[Session Service] Failed to update session ${sessionId}:`,
-			error.message
-		);
-		return { message: error.message };
-	}
+    const [result] = await pool.query(sql, queryValues);
+    return result;
+  } catch (error) {
+    console.error(
+      `[Session Service] Failed to update session ${sessionId}:`,
+      error.message,
+    );
+    return { message: error.message };
+  }
 }
 
 /**
@@ -162,20 +231,30 @@ async function updateSession(sessionId, updates) {
  * never silently reassigned.
  */
 async function bindSessionProfile(sessionId, profileId, familyId = null) {
-	if (!Number.isFinite(Number(profileId))) return { affectedRows: 0 };
-	const [result] = await pool.query(
-		`UPDATE session SET profile_id = ?, family_id = ?
+  if (!Number.isFinite(Number(profileId))) return { affectedRows: 0 };
+  const [result] = await pool.query(
+    `UPDATE session SET profile_id = ?, family_id = ?
 		 WHERE id = ? AND profile_id IS NULL`,
-		[Number(profileId), Number.isFinite(Number(familyId)) ? Number(familyId) : null, sessionId]
-	);
-	return result;
+    [
+      Number(profileId),
+      Number.isFinite(Number(familyId)) ? Number(familyId) : null,
+      sessionId,
+    ],
+  );
+  if ((result?.affectedRows ?? 0) > 0) {
+    await participants
+      .joinSession(sessionId, profileId, { via: "owner" })
+      .catch((e) => console.warn("[session] bind participant:", e.message));
+  }
+  return result;
 }
 
 module.exports = {
-	addSession,
-	getSessionByUuidAndIp,
-	getAuthorizedSession,
-	updateSession,
-	resolveProfileBinding,
-	bindSessionProfile,
+  addSession,
+  getSessionByUuidAndIp,
+  getAuthorizedSession,
+  admitToSession,
+  updateSession,
+  resolveProfileBinding,
+  bindSessionProfile,
 };

@@ -27,6 +27,18 @@ See [`README.md`](README.md) for the full contract.
 
 ## 2026
 
+- 2026-09-18 — Fixed clipped navigation sprites and added consistent hover, press, and keyboard-focus feedback across Companion controls, with reduced-motion support — `companion-dashboard.md` (status: partial)
+
+- 2026-09-18 — Two guardians can now share one conversation with Athena: when
+  one signs in on the device the other was using, she carries on the same
+  conversation instead of starting over, uses their names, and says who is
+  taking part. Only adults in the same family can join, everyone in a shared
+  conversation can read all of it including the part before they signed in, and
+  if a child is present she stays on the child-safe settings for everyone —
+  `shared-conversations.md` (status: partial)
+
+- 2026-09-18 — Companion opens to a responsive Today dashboard with desktop sidebar, mobile navigation, saved family/work memories, editable chat shortcuts, connected-app status, and a compact briefing drawer; live summary feeds are not yet available — `companion-dashboard.md` (status: partial)
+
 - 2026-09-18 — Athena can reach a paired phone: what she raises unprompted now
   arrives as a notification, so she no longer has to wait for the app to be
   opened. It is a separate switch from initiative itself, one notification at a

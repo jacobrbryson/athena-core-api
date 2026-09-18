@@ -8,6 +8,14 @@ const { requireAuth, requireAuthOrDevice } = require("../middleware/auth");
  */
 const router = express.Router();
 
+// Inherits the global access boundary, then authenticates and resolves the
+// adult caller. No caller-supplied profile or provider URL is accepted.
+router.get('/dashboard', requireAuth, require('../controllers/dashboard').summary);
+router.get('/dashboard/priority', requireAuth, require('../controllers/dashboard').priority);
+router.get('/dashboard/news', requireAuth, require('../controllers/dashboard').newsFeed);
+router.get('/dashboard/news/sources', requireAuth, require('../controllers/dashboard').newsFeed);
+router.put('/dashboard/news/sources', requireAuth, express.json({ limit: '20kb' }), require('../controllers/dashboard').newsFeed);
+
 // Public: the on-device model manifest carries no secrets, and devices poll it
 // before (and after) pairing.
 router.get("/llm/manifest", companion.llmManifest);

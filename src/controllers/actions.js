@@ -11,6 +11,23 @@
 const actions = require("../services/actions");
 const registry = require("../services/actions/registry");
 const memory = require("../services/memory");
+const { pushDashboardUpdate } = require("../websocket/wsServer");
+const dashboardPriority = require("../services/dashboardPriority");
+
+/**
+ * Tell this person's open dashboards that their pending-approval list moved.
+ * Deciding a proposal is the one dashboard change that happens while they are
+ * looking at it, so it is pushed rather than waited for. Best effort: a socket
+ * problem must never turn a completed approval into a failed request.
+ */
+function announce(req, profileId, reason) {
+	try {
+		dashboardPriority.invalidate(profileId);
+		pushDashboardUpdate(req.user?.googleId || req.user?.google_id, reason);
+	} catch (err) {
+		console.warn("[actions] dashboard push failed:", err.message);
+	}
+}
 
 /**
  * The caller's profile, or a refusal.
@@ -125,6 +142,7 @@ async function confirm(req, res) {
 		const result = await actions.confirm(caller.profileId, req.params.uuid, {
 			familyId: caller.familyId,
 		});
+		announce(req, caller.profileId, "action_confirmed");
 		return res.json({ success: true, action: result });
 	} catch (err) {
 		return fail(res, err, "Failed to carry that out");
@@ -136,6 +154,7 @@ async function decline(req, res) {
 	if (!caller) return undefined;
 	try {
 		const result = await actions.decline(caller.profileId, req.params.uuid);
+		announce(req, caller.profileId, "action_declined");
 		return res.json({ success: true, action: result });
 	} catch (err) {
 		return fail(res, err, "Failed to decline that");

@@ -21,11 +21,14 @@ const messageService = require("../message");
 const pool = require("../../helpers/db");
 const { createEvent } = require("./events");
 
-const TURNS_BEFORE_EXTRACT = Number(process.env.MEMORY_EXTRACT_EVERY_TURNS) || 3;
+const TURNS_BEFORE_EXTRACT =
+  Number(process.env.MEMORY_EXTRACT_EVERY_TURNS) || 3;
 const MAX_FACT_WRITES = 8; // durable facts stored per extraction
 const MAX_FACT_CANDIDATES = 25; // how many the model may propose before we stop reading
-const EXPLICIT_CUE = /\b(remember (that|this|my|me|when)|don'?t forget|forget (that|about|what|my)|note that|keep in mind)\b/i;
-const PERSONAL_CUE = /\bmy (name|birthday|wife|husband|partner|son|daughter|kids?|mom|dad|brother|sister|dog|cat|pet|job|boss|favorite|anniversary)\b/i;
+const EXPLICIT_CUE =
+  /\b(remember (that|this|my|me|when)|don'?t forget|forget (that|about|what|my)|note that|keep in mind)\b/i;
+const PERSONAL_CUE =
+  /\bmy (name|birthday|wife|husband|partner|son|daughter|kids?|mom|dad|brother|sister|dog|cat|pet|job|boss|favorite|anniversary)\b/i;
 
 const inFlight = new Set();
 const pendingTurns = new Map(); // sessionId -> human turns since last extraction
@@ -33,58 +36,62 @@ const pendingTurns = new Map(); // sessionId -> human turns since last extractio
 const CATEGORY_LIST = [...memory.CATEGORIES];
 
 const EXTRACT_SCHEMA = {
-	type: "object",
-	properties: {
-		facts: {
-			type: "array",
-			items: {
-				type: "object",
-				properties: {
-					category: { type: "string", enum: CATEGORY_LIST },
-					key: { type: "string" },
-					value: { type: "string" },
-					confidence: { type: "number" },
-				},
-				required: ["category", "key", "value", "confidence"],
-			},
-		},
-		moments: {
-			type: "array",
-			items: {
-				type: "object",
-				properties: {
-					title: { type: "string" },
-					summary: { type: "string" },
-					importance: { type: "number" },
-				},
-				required: ["title", "summary", "importance"],
-			},
-		},
-		forget: { type: "array", items: { type: "string" } },
-	},
-	required: ["facts", "moments", "forget"],
+  type: "object",
+  properties: {
+    facts: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          category: { type: "string", enum: CATEGORY_LIST },
+          key: { type: "string" },
+          value: { type: "string" },
+          confidence: { type: "number" },
+        },
+        required: ["category", "key", "value", "confidence"],
+      },
+    },
+    moments: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          title: { type: "string" },
+          summary: { type: "string" },
+          importance: { type: "number" },
+        },
+        required: ["title", "summary", "importance"],
+      },
+    },
+    forget: { type: "array", items: { type: "string" } },
+  },
+  required: ["facts", "moments", "forget"],
 };
 
 function checkShape(data) {
-	if (!data || typeof data !== "object") return "not an object";
-	for (const k of ["facts", "moments", "forget"]) {
-		if (!Array.isArray(data[k])) return `missing ${k}[]`;
-	}
-	return null;
+  if (!data || typeof data !== "object") return "not an object";
+  for (const k of ["facts", "moments", "forget"]) {
+    if (!Array.isArray(data[k])) return `missing ${k}[]`;
+  }
+  return null;
 }
 
 function buildPrompt({ lines, knownFacts, audience }) {
-	const known = knownFacts.length
-		? knownFacts.map((f) => `- ${f.category}: ${f.key}${f.value ? ` = ${f.value}` : ""}`).join("\n")
-		: "(none yet)";
-	const audienceRules =
-		audience === "adult"
-			? `- Never store passwords, financial account numbers, or government ID numbers, even if mentioned.
+  const known = knownFacts.length
+    ? knownFacts
+        .map(
+          (f) => `- ${f.category}: ${f.key}${f.value ? ` = ${f.value}` : ""}`,
+        )
+        .join("\n")
+    : "(none yet)";
+  const audienceRules =
+    audience === "adult"
+      ? `- Never store passwords, financial account numbers, or government ID numbers, even if mentioned.
 - Health, relationships, and beliefs: only if the person clearly shared them as something about their life, never inferred.`
-			: `- THIS IS A CHILD. Store ONLY interests, favorite things, hobbies, pets and pets' names, and what they like to learn.
+      : `- THIS IS A CHILD. Store ONLY interests, favorite things, hobbies, pets and pets' names, and what they like to learn.
 - NEVER store: other people's names, addresses, towns, schools, phone numbers, emails, ages of others, anything about health, bodies, or family conflict.`;
 
-	return `You maintain Athena's long-term memory about one person. Read the NEW conversation lines and extract only what is worth remembering long-term.
+  return `You maintain Athena's long-term memory about one person. Read the NEW conversation lines and extract only what is worth remembering long-term.
 
 Already known facts (category: key = value):
 ${known}
@@ -108,32 +115,33 @@ ${lines.join("\n")}`;
  * whether to launch an extraction in the background.
  */
 function afterTurn(session, userText, { audience, memoryEnabled }) {
-	if (!session?.profile_id || !memoryEnabled) return;
-	const count = (pendingTurns.get(session.id) || 0) + 1;
-	pendingTurns.set(session.id, count);
-	const cue = EXPLICIT_CUE.test(userText || "") || PERSONAL_CUE.test(userText || "");
-	if (cue || count >= TURNS_BEFORE_EXTRACT) {
-		pendingTurns.set(session.id, 0);
-		extractSession(session, { audience }).catch((err) =>
-			console.warn("[memory] extraction failed:", err.message)
-		);
-	}
+  if (!session?.profile_id || !memoryEnabled) return;
+  const count = (pendingTurns.get(session.id) || 0) + 1;
+  pendingTurns.set(session.id, count);
+  const cue =
+    EXPLICIT_CUE.test(userText || "") || PERSONAL_CUE.test(userText || "");
+  if (cue || count >= TURNS_BEFORE_EXTRACT) {
+    pendingTurns.set(session.id, 0);
+    extractSession(session, { audience }).catch((err) =>
+      console.warn("[memory] extraction failed:", err.message),
+    );
+  }
 }
 
 async function getCursor(sessionId) {
-	const [rows] = await pool.query(
-		`SELECT last_created_at FROM memory_extraction_cursor WHERE session_id = ? LIMIT 1;`,
-		[sessionId]
-	);
-	return rows[0]?.last_created_at || null;
+  const [rows] = await pool.query(
+    `SELECT last_created_at FROM memory_extraction_cursor WHERE session_id = ? LIMIT 1;`,
+    [sessionId],
+  );
+  return rows[0]?.last_created_at || null;
 }
 
 async function setCursor(sessionId, createdAt) {
-	await pool.query(
-		`INSERT INTO memory_extraction_cursor (session_id, last_created_at) VALUES (?, ?)
+  await pool.query(
+    `INSERT INTO memory_extraction_cursor (session_id, last_created_at) VALUES (?, ?)
      ON DUPLICATE KEY UPDATE last_created_at = VALUES(last_created_at);`,
-		[sessionId, createdAt]
-	);
+    [sessionId, createdAt],
+  );
 }
 
 /**
@@ -141,96 +149,137 @@ async function setCursor(sessionId, createdAt) {
  * Returns { facts, moments, forgotten } counts (all zero when nothing new).
  */
 async function extractSession(session, { audience = "child" } = {}) {
-	const empty = { facts: 0, moments: 0, forgotten: 0 };
-	if (!session?.profile_id || inFlight.has(session.id)) return empty;
-	inFlight.add(session.id);
-	try {
-		const since = await getCursor(session.id);
-		const messages = await messageService.getMessagesSince(session.id, since, 40);
-		if (!messages.some((m) => m.is_human)) return empty;
+  const empty = { facts: 0, moments: 0, forgotten: 0 };
+  if (!session?.profile_id || inFlight.has(session.id)) return empty;
+  inFlight.add(session.id);
+  try {
+    const since = await getCursor(session.id);
+    const all = await messageService.getMessagesSince(session.id, since, 40);
+    if (!all.some((m) => m.is_human)) return empty;
 
-		const knownFacts = await memory.getMemorySummaryForProfileId(session.profile_id, 50);
-		const lines = messages.map(
-			(m) => `[${m.is_human ? "person" : "athena"}] ${String(m.text).replace(/\s+/g, " ").slice(0, 600)}`
-		);
+    // `applyExtraction` writes everything it finds to `session.profile_id`, so
+    // only that person's own words may feed it. A session can hold two
+    // guardians now (0030_session_participant), and extracting across them
+    // would file one person's disclosures as the other's memories — the exact
+    // thing a shared conversation must not do.
+    //
+    // Athena's own turns stay: they are the context that makes a reply like
+    // "yes, the 14th" mean anything. The other guardian's turns are dropped
+    // rather than relabelled, because a model given both names will attribute
+    // across them however firmly it is told not to.
+    const owner = Number(session.profile_id);
+    const messages = all.filter(
+      (m) =>
+        !m.is_human ||
+        m.profile_id == null || // written before speakers were recorded
+        Number(m.profile_id) === owner,
+    );
 
-		const { data } = await llm.generateJson({
-			task: "extract",
-			audience,
-			schema: EXTRACT_SCHEMA,
-			contents: buildPrompt({ lines, knownFacts, audience }),
-			check: checkShape,
-			temperature: 0.1,
-		});
+    // Somebody else did all the talking. Nothing to remember for this profile,
+    // but the cursor still moves — otherwise their turns are re-read on every
+    // pass, forever.
+    if (!messages.some((m) => m.is_human)) {
+      await setCursor(session.id, all[all.length - 1].created_at);
+      return empty;
+    }
 
-		const result = await applyExtraction(session, data, {
-			audience,
-			occurredAt: messages[messages.length - 1].created_at,
-		});
-		await setCursor(session.id, messages[messages.length - 1].created_at);
-		return result;
-	} finally {
-		inFlight.delete(session.id);
-	}
+    const knownFacts = await memory.getMemorySummaryForProfileId(
+      session.profile_id,
+      50,
+    );
+    const lines = messages.map(
+      (m) =>
+        `[${m.is_human ? "person" : "athena"}] ${String(m.text).replace(/\s+/g, " ").slice(0, 600)}`,
+    );
+
+    const { data } = await llm.generateJson({
+      task: "extract",
+      audience,
+      schema: EXTRACT_SCHEMA,
+      contents: buildPrompt({ lines, knownFacts, audience }),
+      check: checkShape,
+      temperature: 0.1,
+    });
+
+    const result = await applyExtraction(session, data, {
+      audience,
+      occurredAt: messages[messages.length - 1].created_at,
+    });
+    // Advance past everything read, not just everything extracted from, or
+    // another participant's turns are reconsidered on every pass.
+    await setCursor(session.id, all[all.length - 1].created_at);
+    return result;
+  } finally {
+    inFlight.delete(session.id);
+  }
 }
 
 async function applyExtraction(session, data, { audience, occurredAt }) {
-	const profileId = session.profile_id;
-	const familyId = session.family_id || null;
-	let facts = 0;
-	let moments = 0;
+  const profileId = session.profile_id;
+  const familyId = session.family_id || null;
+  let facts = 0;
+  let moments = 0;
 
-	// Cap WRITES, not candidates. The model re-states facts it was already told
-	// about in the prompt, so capping the candidate list let those duplicates
-	// eat the budget and silently drop genuinely new facts off the end.
-	for (const f of (data.facts || []).slice(0, MAX_FACT_CANDIDATES)) {
-		if (facts >= MAX_FACT_WRITES) break;
-		if (!f || typeof f.key !== "string" || !f.key.trim() || typeof f.value !== "string") continue;
-		const confidence = Math.max(0, Math.min(100, Number(f.confidence) || 60));
-		if (confidence < 50) continue;
-		const existing = await memory.getFactSlot(profileId, f.category, f.key);
-		if (existing && !existing.deleted_at) {
-			if (existing.source === "parent") continue; // parent-curated: never overwritten by AI
-			if (existing.source === "user" && confidence < 80) continue;
-			if ((existing.memory_value || "") === f.value) continue;
-		}
-		await memory.upsertMemoryForProfile(profileId, familyId, {
-			category: f.category,
-			key: f.key,
-			value: f.value,
-			source: "ai",
-			confidence,
-			visibility: "private",
-		});
-		facts += 1;
-	}
+  // Cap WRITES, not candidates. The model re-states facts it was already told
+  // about in the prompt, so capping the candidate list let those duplicates
+  // eat the budget and silently drop genuinely new facts off the end.
+  for (const f of (data.facts || []).slice(0, MAX_FACT_CANDIDATES)) {
+    if (facts >= MAX_FACT_WRITES) break;
+    if (
+      !f ||
+      typeof f.key !== "string" ||
+      !f.key.trim() ||
+      typeof f.value !== "string"
+    )
+      continue;
+    const confidence = Math.max(0, Math.min(100, Number(f.confidence) || 60));
+    if (confidence < 50) continue;
+    const existing = await memory.getFactSlot(profileId, f.category, f.key);
+    if (existing && !existing.deleted_at) {
+      if (existing.source === "parent") continue; // parent-curated: never overwritten by AI
+      if (existing.source === "user" && confidence < 80) continue;
+      if ((existing.memory_value || "") === f.value) continue;
+    }
+    await memory.upsertMemoryForProfile(profileId, familyId, {
+      category: f.category,
+      key: f.key,
+      value: f.value,
+      source: "ai",
+      confidence,
+      visibility: "private",
+    });
+    facts += 1;
+  }
 
-	for (const m of (data.moments || []).slice(0, 2)) {
-		if (!m || typeof m.summary !== "string" || !m.summary.trim()) continue;
-		await createEvent({
-			profileId,
-			familyId,
-			kind: "conversation",
-			title: typeof m.title === "string" ? m.title : null,
-			content: m.summary,
-			importance: m.importance,
-			occurredAt,
-			source: "ai",
-			visibility: "private",
-			sessionId: session.id,
-			metadata: { audience },
-		});
-		moments += 1;
-	}
+  for (const m of (data.moments || []).slice(0, 2)) {
+    if (!m || typeof m.summary !== "string" || !m.summary.trim()) continue;
+    await createEvent({
+      profileId,
+      familyId,
+      kind: "conversation",
+      title: typeof m.title === "string" ? m.title : null,
+      content: m.summary,
+      importance: m.importance,
+      occurredAt,
+      source: "ai",
+      visibility: "private",
+      sessionId: session.id,
+      metadata: { audience },
+    });
+    moments += 1;
+  }
 
-	const forgotten = await memory.forgetFactsByKey(profileId, (data.forget || []).slice(0, 10));
-	return { facts, moments, forgotten };
+  const forgotten = await memory.forgetFactsByKey(
+    profileId,
+    (data.forget || []).slice(0, 10),
+  );
+  return { facts, moments, forgotten };
 }
 
 /** Nightly sweep: extract any session with unprocessed messages from the last 2 days. */
 async function extractPendingSessions({ limit = 200, audienceFor } = {}) {
-	const [sessions] = await pool.query(
-		`SELECT s.id, s.profile_id, s.family_id FROM session s
+  const [sessions] = await pool.query(
+    `SELECT s.id, s.profile_id, s.family_id FROM session s
      LEFT JOIN memory_extraction_cursor c ON c.session_id = s.id
      WHERE s.profile_id IS NOT NULL
        AND EXISTS (
@@ -239,32 +288,39 @@ async function extractPendingSessions({ limit = 200, audienceFor } = {}) {
            AND (c.last_created_at IS NULL OR m.created_at > c.last_created_at)
        )
      LIMIT ?;`,
-		[limit]
-	);
-	const totals = { sessions: 0, facts: 0, moments: 0, forgotten: 0, failed: 0 };
-	for (const s of sessions) {
-		try {
-			const audience = audienceFor ? await audienceFor(s.profile_id) : "child";
-			if (audienceFor?.memoryEnabled && !(await audienceFor.memoryEnabled(s.profile_id))) continue;
-			const r = await extractSession(s, { audience });
-			totals.sessions += 1;
-			totals.facts += r.facts;
-			totals.moments += r.moments;
-			totals.forgotten += r.forgotten;
-		} catch (err) {
-			totals.failed += 1;
-			console.warn(`[memory] nightly extraction failed for session ${s.id}:`, err.message);
-		}
-	}
-	return totals;
+    [limit],
+  );
+  const totals = { sessions: 0, facts: 0, moments: 0, forgotten: 0, failed: 0 };
+  for (const s of sessions) {
+    try {
+      const audience = audienceFor ? await audienceFor(s.profile_id) : "child";
+      if (
+        audienceFor?.memoryEnabled &&
+        !(await audienceFor.memoryEnabled(s.profile_id))
+      )
+        continue;
+      const r = await extractSession(s, { audience });
+      totals.sessions += 1;
+      totals.facts += r.facts;
+      totals.moments += r.moments;
+      totals.forgotten += r.forgotten;
+    } catch (err) {
+      totals.failed += 1;
+      console.warn(
+        `[memory] nightly extraction failed for session ${s.id}:`,
+        err.message,
+      );
+    }
+  }
+  return totals;
 }
 
 module.exports = {
-	afterTurn,
-	extractSession,
-	applyExtraction,
-	extractPendingSessions,
-	buildPrompt,
-	EXTRACT_SCHEMA,
-	EXPLICIT_CUE,
+  afterTurn,
+  extractSession,
+  applyExtraction,
+  extractPendingSessions,
+  buildPrompt,
+  EXTRACT_SCHEMA,
+  EXPLICIT_CUE,
 };

@@ -26,7 +26,7 @@ const credentials = require("../credentials");
  * contents and a reason for not having them.
  */
 
-const CONNECTORS = [googleCalendar, strava, whoop];
+const CONNECTORS = [googleCalendar, strava, whoop, ...require('./work').connectors];
 
 /** Connectors whose keyword gate the message trips. */
 function relevantConnectors(message) {

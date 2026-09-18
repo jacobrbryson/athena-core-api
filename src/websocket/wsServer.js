@@ -17,6 +17,13 @@ const guardianClients = new Map(); // guardian_id => Set<ws>
 // adventure rather than per credential.
 const adventureClients = new Map(); // adventure_key => Set<ws>
 
+// Account-keyed registry: every socket a signed-in adult has open, across all
+// of their tabs and sessions. The Companion dashboard updates itself from
+// pushes rather than a refresh button, and the things that move it (a proposal
+// answered, an app connected) happen in request handlers that know the caller
+// but not which chat session their dashboard happens to be sitting in.
+const userClients = new Map(); // google_id => Set<ws>
+
 function sendToSockets(sockets, payload) {
 	if (!sockets || !sockets.size) return;
 	const serialized = JSON.stringify(payload);
@@ -43,6 +50,21 @@ function broadcastToGuardian(guardianId, payload) {
  */
 function broadcastToAdventure(adventureKey, payload) {
 	sendToSockets(adventureClients.get(adventureKey), payload);
+}
+
+/**
+ * Push a payload to every socket belonging to one signed-in account. No-op
+ * when nothing is open — the Companion dashboard also re-reads on focus, so a
+ * missed push costs freshness, never correctness.
+ */
+function broadcastToUser(googleId, payload) {
+	if (!googleId) return;
+	sendToSockets(userClients.get(String(googleId)), payload);
+}
+
+/** Tell an account's open dashboards that their underlying data moved. */
+function pushDashboardUpdate(googleId, reason = null) {
+	broadcastToUser(googleId, { rpc: "dashboardUpdated", reason });
 }
 
 function startWebSocketServer(server) {
@@ -98,6 +120,14 @@ function startWebSocketServer(server) {
 			guardianClients.set(guardianId, guardianSet);
 		}
 
+		// ...and under the account, for dashboard pushes to every open tab.
+		const googleId = decoded.google_id ? String(decoded.google_id) : null;
+		if (googleId) {
+			const userSet = userClients.get(googleId) || new Set();
+			userSet.add(ws);
+			userClients.set(googleId, userSet);
+		}
+
 		// ...and under their adventure, for network-shared mission fan-out.
 		const adventureKey =
 			decoded.kind === "guardian" && decoded.adventure_key
@@ -137,6 +167,15 @@ function startWebSocketServer(server) {
 					}
 				}
 			}
+			if (googleId) {
+				const userSet = userClients.get(googleId);
+				if (userSet) {
+					userSet.delete(ws);
+					if (userSet.size === 0) {
+						userClients.delete(googleId);
+					}
+				}
+			}
 			if (adventureKey) {
 				const adventureSet = adventureClients.get(adventureKey);
 				if (adventureSet) {
@@ -161,4 +200,6 @@ module.exports = {
 	startWebSocketServer,
 	broadcastToGuardian,
 	broadcastToAdventure,
+	broadcastToUser,
+	pushDashboardUpdate,
 };
