@@ -33,6 +33,8 @@ const consentRouter = require("./consent");
 const memoryRouter = require("./memory");
 const integrationRouter = require("./integration");
 const companionRouter = require("./companion");
+const actionsRouter = require("./actions");
+const initiativeRouter = require("./initiative");
 
 /**
  * Router factory
@@ -114,6 +116,8 @@ module.exports = (clients) => {
 	router.use("/catalog", catalogRouter);
 	router.use("/family", familyRouter);
 	router.use("/consent", consentRouter);
+	router.use("/actions", actionsRouter);
+	router.use("/initiative", initiativeRouter);
 	router.use("/memory", memoryRouter);
 	router.use("/integrations", integrationRouter);
 	router.use("/", companionRouter);

@@ -19,6 +19,13 @@ const THRESHOLDS = {
 	embeddingCoverage: 0.95,
 	promoteLocalPassRate: 0.9,
 	demoteLocalPassRate: 0.75,
+	// Below this share of welcome interruptions, a trigger is costing more
+	// attention than it returns.
+	initiativeAcceptance: 0.5,
+	// Don't judge a trigger on a handful of reactions.
+	initiativeMinReactions: 5,
+	// Nudges that expired before anyone could see them: budget spent on nothing.
+	initiativeUnseen: 0.5,
 };
 
 /** Rule-based findings: [{ severity, area, title, evidence }]. */
@@ -65,6 +72,43 @@ function ruleFindings({ metrics, evals, config }) {
 		}
 	} else if (mem) {
 		add("medium", "memory", "Memory metrics unavailable", mem.reason);
+	}
+
+	// Initiative: is she earning the right to interrupt?
+	//
+	// Reviewed per trigger, and only once a trigger has had enough reactions to
+	// mean anything. The point of these findings is that an unwelcome rule gets
+	// changed or retired rather than quietly training people to ignore her.
+	const init = metrics.initiative;
+	if (init?.available && init.enabledProfiles > 0) {
+		for (const [id, t] of Object.entries(init.byTrigger)) {
+			const answered = t.engaged + t.dismissed;
+			if (answered >= THRESHOLDS.initiativeMinReactions && t.acceptance !== null && t.acceptance < THRESHOLDS.initiativeAcceptance) {
+				add("high", "initiative", `${id}: only ${(t.acceptance * 100).toFixed(0)}% of interruptions were welcome`, `${t.engaged} engaged vs ${t.dismissed} dismissed over 7 days — tighten the rule or retire it`);
+			}
+			// Muting is a far stronger signal than dismissing: it is the person
+			// saying "never again", and one of those is worth investigating.
+			if (t.mutedBy > 0) {
+				add("medium", "initiative", `${id} has been muted by ${t.mutedBy} person(s)`, "someone turned this trigger off entirely rather than just dismissing it");
+			}
+			// Athena went quiet on this by herself. Not a failure — the loop
+			// working — but a human should know a trigger stopped firing for
+			// real people without anyone changing code.
+			if (t.learned?.suppressed > 0) {
+				add("medium", "initiative", `${id}: Athena has stopped raising this for ${t.learned.suppressed} person(s)`, `learned from how it landed${t.learned.avgScore !== null ? `; average standing ${t.learned.avgScore}` : ""} — review the rule, or leave it suppressed`);
+			}
+			// Firing into the void. Usually a TTL shorter than the gap between
+			// app opens, which means the interruption budget was spent on
+			// something nobody could ever have seen.
+			if (t.sent >= 5 && t.unseen / t.sent > THRESHOLDS.initiativeUnseen) {
+				add("medium", "initiative", `${id}: ${((t.unseen / t.sent) * 100).toFixed(0)}% of these expired before anyone saw them`, `${t.unseen}/${t.sent} in 7 days — the TTL is shorter than people's habits`);
+			}
+		}
+		if (init.sent7d === 0) {
+			add("opportunity", "initiative", "Initiative is switched on but Athena has not spoken first all week", "either nothing triggered, or the budget is too tight to ever fire");
+		}
+	} else if (init && !init.available) {
+		add("medium", "initiative", "Initiative metrics unavailable", init.reason);
 	}
 
 	// Abilities: is a local model good enough to take more traffic — or too weak?

@@ -59,9 +59,20 @@ const PROVIDERS = {
 		revokeUrl: env("GOOGLE_OAUTH_REVOKE_URL", "https://oauth2.googleapis.com/revoke"),
 		revokeMethod: "POST",
 		revokeBody: (token) => ({ token }),
+		// calendar.events is read AND write on events, and supersedes
+		// calendar.events.readonly. It is what the action layer's
+		// create_calendar_event needs; calendar.readonly stays for the
+		// calendarList fan-out, which events scope alone does not cover.
+		//
+		// Accounts linked before this changed hold the old readonly pair and
+		// keep working for reads. They cannot write, and Google says so with
+		// 403 insufficientPermissions — googleCalendar.js re-types that into
+		// `needs_reauth` so the person is asked to re-link for writing rather
+		// than told their link is broken. include_granted_scopes below makes
+		// that re-link additive.
 		scopes: [
 			"https://www.googleapis.com/auth/calendar.readonly",
-			"https://www.googleapis.com/auth/calendar.events.readonly",
+			"https://www.googleapis.com/auth/calendar.events",
 			"openid",
 			"email",
 		],

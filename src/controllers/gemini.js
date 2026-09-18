@@ -8,6 +8,8 @@ const integrationService = require("../services/integration");
 const connectorContext = require("../services/connectors/context");
 const missionService = require("../services/mission");
 const selfKnowledge = require("../services/selfKnowledge");
+const actions = require("../services/actions");
+const initiative = require("../services/initiative");
 const { audienceForSession } = require("../services/audience");
 
 const { generatePrompt, RESPONSE_SCHEMA } = require("./prompt");
@@ -125,9 +127,41 @@ async function processAiResponse(session, message, clients, ctx = {}) {
 			console.warn("[gemini] capability block failed:", e.message);
 		}
 
+		// What Athena can DO this turn, as opposed to describe. Scoped to the
+		// providers this person has linked and the consent their family gave, and
+		// null for everyone else — a null block is how she stays read-only
+		// instead of offering to change things she cannot touch.
+		//
+		// Adult sessions only. A child or Guardian session never proposes
+		// actions: the account is the parent’s and the conversation is not.
+		let actionBlock = null;
+		const mayPropose =
+			!!session.profile_id && memoryCtx.audience === "adult" && !ctx.guardian;
+		if (mayPropose) {
+			try {
+				actionBlock = actions.promptBlock(await actions.availableFor(session.profile_id));
+			} catch (e) {
+				console.warn("[gemini] action block failed:", e.message);
+			}
+		}
+
+		// Anything she raised unprompted in the last few hours, so a reply to one
+		// of them is a continuation rather than a non sequitur. Adult sessions
+		// only, same as the actions block, and never fatal.
+		let initiativeBlock = null;
+		if (mayPropose) {
+			try {
+				initiativeBlock = await initiative.promptBlock(session.profile_id);
+			} catch (e) {
+				console.warn("[gemini] initiative block failed:", e.message);
+			}
+		}
+
 		const prompt = await generatePrompt(session, topics || [], message, {
 			integrationContext,
 			capabilityBlock,
+			actionBlock,
+			initiativeBlock,
 			guardian: ctx.guardian,
 			onboarding: ctx.onboarding,
 			mission: ctx.mission,
@@ -202,6 +236,24 @@ async function processAiResponse(session, message, clients, ctx = {}) {
 			});
 		}
 
+		// Did that message answer something Athena raised herself? If so, read
+		// what it signalled and move that trigger's standing accordingly.
+		//
+		// Background and non-blocking, like memory extraction: it costs a small
+		// local model call and must never delay or break a reply. It runs on
+		// the fast path rather than waiting for the nightly sweep because
+		// "stop sending me this" has to take effect immediately — the second
+		// unwanted nudge after you asked her to stop is the one that loses the
+		// person.
+		if (mayPropose && !fellBack) {
+			initiative
+				.openNudgeFor(session.profile_id)
+				.then((open) =>
+					open ? initiative.appraiseReply(session.profile_id, open, message) : null
+				)
+				.catch((e) => console.warn("[gemini] nudge appraisal failed:", e.message));
+		}
+
 		// In-chat mission reporting: when Athena flags that the Guardian reported
 		// their cooperative-mission piece, record it for their family (idempotent;
 		// the stored fragment is backend-authored, so it can't be spoofed). The
@@ -221,6 +273,32 @@ async function processAiResponse(session, message, clients, ctx = {}) {
 				);
 			} catch (e) {
 				console.warn("[gemini] mission contribution failed:", e.message);
+			}
+		}
+
+		// Turn a `proposed_action` into a real pending proposal, if it survives
+		// the registry. Everything about it is untrusted model output, so
+		// actions.propose() re-derives what is available rather than believing
+		// the prompt only offered legal things, and returns null for every
+		// "she should not have proposed that" case. Never blocks the reply: the
+		// reply is already saved and the proposal is an extra.
+		//
+		// A standing authority makes propose() execute inline, so `proposal`
+		// here may already be done or failed rather than pending. The client
+		// renders from `status`, which is why both go down the same rpc.
+		let proposal = null;
+		if (mayPropose && parsedResponse.proposed_action && !fellBack) {
+			try {
+				proposal = await actions.propose(
+					session.profile_id,
+					session.id,
+					parsedResponse.proposed_action
+				);
+			} catch (e) {
+				// A standing-authority execution that failed at the provider lands
+				// here. The athena_action row is already terminal with the error on
+				// it, so the person can still see what happened in their history.
+				console.warn("[gemini] action proposal failed:", e.message);
 			}
 		}
 
@@ -275,6 +353,13 @@ async function processAiResponse(session, message, clients, ctx = {}) {
 				created_at: Date.now(),
 			},
 		});
+
+		// After the message on purpose: the card is the follow-up to what she
+		// just said, and a card that arrives first reads as Athena acting
+		// before she explained herself.
+		if (proposal) {
+			broadcast({ rpc: "actionProposed", action: proposal });
+		}
 	} catch (err) {
 		console.error("Error during AI response processing:", err);
 		// IMPORTANT: Send an error status back to the client via WS if possible

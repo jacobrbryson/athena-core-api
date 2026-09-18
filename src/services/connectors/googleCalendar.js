@@ -1,12 +1,19 @@
 const { providerGet, providerRequest, isNotConnected } = require("./http");
 
 /**
- * Google Calendar reads.
+ * Google Calendar reads, and the two writes the action layer can propose.
  *
- * Read-only by design: Athena answers "am I free Thursday?" and "what's on
- * today?" but does not create or move anything yet. Writing to someone's
- * calendar is a different consent conversation, and the scopes requested in
- * registry.js are readonly to match.
+ * Reads are unconditional; writes are not. `createEvent` and `deleteEvent`
+ * are never called from a context builder or a tool loop — only from
+ * services/actions, after a person approved the specific proposal. That is
+ * why they take an already-validated params object and do no interpretation
+ * of their own: all the judgement happened upstream, under human eyes.
+ *
+ * Writing needs the `calendar.events` scope, which an account linked before
+ * the action layer shipped does not have. Google answers those with 403
+ * insufficientPermissions, which http.js reads as a dead grant — so both
+ * writers translate it into a typed `needs_reauth` error instead, and the
+ * person is asked to re-link rather than told their calendar broke.
  *
  * EVERY calendar the account can read is included, not just `primary`. Shared
  * household calendars are where most families actually keep their plans, and
@@ -246,6 +253,10 @@ function normalizeEvent(item, calendar = null) {
 	const start = item.start?.dateTime || item.start?.date || null;
 	const end = item.end?.dateTime || item.end?.date || null;
 	return {
+		// The provider's own event id. Carried so a caller can point at one
+		// specific occurrence later: the initiative triggers dedupe on it, and
+		// without it "your 2pm is soon" would be re-announced on every run.
+		id: item.id || null,
 		title: item.summary || "(no title)",
 		start,
 		end,
@@ -351,6 +362,97 @@ async function buildContext(profileId, { days = 7 } = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Writes (action layer only)
+// ---------------------------------------------------------------------------
+
+/**
+ * A 403 that means "this grant predates the write scope", told apart from a
+ * 403 that means the grant is gone.
+ *
+ * Google reports a missing scope as insufficientPermissions / ACCESS_TOKEN_SCOPE_
+ * INSUFFICIENT. http.js has already decided an unexplained 403 is revocation
+ * and invalidated the link by the time we see it; re-typing it here is what
+ * turns "reconnect, your calendar is broken" into the true "re-link to let me
+ * add events", which is a different sentence and a different consent.
+ */
+function asWriteAuthError(err) {
+	const text = `${err && err.message ? err.message : ""}`.toLowerCase();
+	if (
+		err &&
+		(err.status === 403 || err.code === "not_connected") &&
+		/insufficient|scope|permission/.test(text)
+	) {
+		return Object.assign(
+			new Error(
+				"Athena can read this calendar but not write to it yet — re-link Google Calendar to allow adding events"
+			),
+			{ status: 409, code: "needs_reauth", provider: PROVIDER }
+		);
+	}
+	return err;
+}
+
+/**
+ * Create one event on the calendar the person nominated (default: primary).
+ *
+ * `sendUpdates: "none"` is deliberate and load-bearing. An event with
+ * attendees mails every one of them the moment it is inserted, which would
+ * make one approved proposal into outbound messages to other people that
+ * nobody approved. The action registry refuses attendees for the same reason;
+ * this is the second lock on the same door.
+ */
+async function createEvent(profileId, params = {}) {
+	const body = {
+		summary: params.title,
+		...(params.description ? { description: params.description } : {}),
+		...(params.location ? { location: params.location } : {}),
+		...(params.all_day
+			? {
+					start: { date: params.start },
+					end: { date: params.end || params.start },
+				}
+			: {
+					start: { dateTime: params.start, ...(params.time_zone ? { timeZone: params.time_zone } : {}) },
+					end: { dateTime: params.end, ...(params.time_zone ? { timeZone: params.time_zone } : {}) },
+				}),
+	};
+	let created;
+	try {
+		created = await providerRequest(
+			profileId,
+			PROVIDER,
+			`/calendars/${encodeURIComponent(params.calendar_id || "primary")}/events`,
+			{ method: "POST", body, query: { sendUpdates: "none" } }
+		);
+	} catch (err) {
+		throw asWriteAuthError(err);
+	}
+	return {
+		ref: created?.id || null,
+		event: created ? normalizeEvent(created) : null,
+		html_link: created?.htmlLink || null,
+	};
+}
+
+/**
+ * Delete an event Athena created. Scoped by the caller's own profile id, so a
+ * params-supplied event id can only ever address that person's calendars.
+ */
+async function deleteEvent(profileId, params = {}) {
+	try {
+		await providerRequest(
+			profileId,
+			PROVIDER,
+			`/calendars/${encodeURIComponent(params.calendar_id || "primary")}/events/${encodeURIComponent(params.event_id)}`,
+			{ method: "DELETE", query: { sendUpdates: "none" } }
+		);
+	} catch (err) {
+		throw asWriteAuthError(err);
+	}
+	return { ref: params.event_id };
+}
+
+// ---------------------------------------------------------------------------
 // Gemini tools
 // ---------------------------------------------------------------------------
 
@@ -427,6 +529,12 @@ module.exports = {
 	listEvents,
 	freeBusy,
 	buildContext,
+	createEvent,
+	deleteEvent,
+	// Events plus the calendar list they came from, in one call. Exported for
+	// the initiative triggers, which need the account's own timezone to say
+	// "2pm" and would otherwise re-fetch the calendar list to get it.
+	collectEvents,
 	FUNCTION_DECLARATIONS,
 	executeTool,
 	// exported for tests

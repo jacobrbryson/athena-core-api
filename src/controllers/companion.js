@@ -5,6 +5,7 @@
 const memoryStore = require("../services/memoryStore");
 const perception = require("../services/perception");
 const devices = require("../services/devices");
+const push = require("../services/push");
 const llm = require("../services/llm");
 const { resolveActor, requireAdultActor } = require("../helpers/actor");
 
@@ -147,6 +148,41 @@ function llmManifest(req, res) {
 	return res.json(llm.manifest());
 }
 
+/**
+ * POST /devices/push-token — a device says where it can be reached.
+ *
+ * Device-authenticated only. The Companion app cannot register on a handset's
+ * behalf: only the handset knows its own FCM registration, and only it can
+ * tell when that registration has been replaced. Re-registering is the normal
+ * case, not an error — the client is expected to send its current token on
+ * every launch.
+ */
+async function registerPushToken(req, res) {
+	if (req.user?.kind !== "device") {
+		return res.status(403).json({ success: false, message: "Device token required" });
+	}
+	try {
+		const result = await push.registerToken(req.user.deviceId, req.body?.token, {
+			provider: req.body?.provider || "fcm",
+		});
+		return res.json({ success: true, ...result });
+	} catch (err) {
+		return fail(res, err, "Failed to register for notifications");
+	}
+}
+
+/** DELETE /devices/push-token — notifications turned off on the handset. */
+async function forgetPushToken(req, res) {
+	if (req.user?.kind !== "device") {
+		return res.status(403).json({ success: false, message: "Device token required" });
+	}
+	try {
+		return res.json({ success: true, ...(await push.forgetToken(req.user.deviceId)) });
+	} catch (err) {
+		return fail(res, err, "Failed to turn off notifications");
+	}
+}
+
 /** POST /llm/device-report — a paired device reports what it now runs. */
 async function deviceReport(req, res) {
 	if (req.user?.kind !== "device") {
@@ -259,6 +295,8 @@ module.exports = {
 	llmStatus,
 	llmManifest,
 	deviceReport,
+	registerPushToken,
+	forgetPushToken,
 	createPairingCode,
 	redeemPairingCode,
 	listDevices,

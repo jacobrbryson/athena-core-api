@@ -27,6 +27,32 @@ See [`README.md`](README.md) for the full contract.
 
 ## 2026
 
+- 2026-09-18 — Athena can reach a paired phone: what she raises unprompted now
+  arrives as a notification, so she no longer has to wait for the app to be
+  opened. It is a separate switch from initiative itself, one notification at a
+  time, and inside exactly the same limits. She also learns from how each one
+  lands — asking her to stop sending something stops it immediately, and a kind
+  of thing that keeps being waved away is quietly dropped, shown with its reason
+  and a way to turn it back on — `initiative.md`, `devices.md`
+  (status: partial)
+
+- 2026-09-18 — Athena can start a conversation instead of only answering one:
+  she says something when an event is about to begin, when two things on the
+  calendar clash, or when a heavy day lands on a bad night's recovery. It is
+  off until switched on, capped at three a day, silent overnight, and every
+  rule can be muted on its own. Everything she raises is marked as hers in the
+  conversation, and the new Initiative panel lists what she said and how each
+  one landed — `initiative.md` (status: partial)
+
+- 2026-09-17 — Athena can now offer to *do* things, not only say them: she
+  proposes adding a calendar event or saving a fact, and it happens only when
+  the person taps Approve on the card. Everything she has done, and everything
+  she asked and was refused, is listed in the new Actions panel, where a person
+  can also tell her to stop asking for one kind of thing. Google Calendar now
+  asks for permission to add events, so an existing calendar link needs
+  reconnecting before she can write to it — `actions.md`, `google-calendar.md`
+  (status: partial)
+
 - 2026-09-15 — Athena became aware of her own feature set: capability files now
   load into her system prompt per message, so she can say what she can do and
   point to the menu that turns it on instead of guessing — `README.md`,

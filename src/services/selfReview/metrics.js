@@ -155,14 +155,103 @@ async function memoryMetrics(space) {
 	});
 }
 
+/**
+ * Did Athena's interruptions earn their place?
+ *
+ * The measurement that matters is per TRIGGER, not overall: one bad rule
+ * hidden inside a good average is exactly the thing that makes people switch
+ * the whole feature off. Acceptance is engaged / (engaged + dismissed), and
+ * a nudge nobody ever saw is excluded from both — it was never an
+ * interruption, and counting it as a tolerated one would flatter a trigger
+ * that only looks harmless because it fires while people are asleep.
+ *
+ * A mute is tracked separately and weighted far more heavily in the findings:
+ * dismissing is "not now", muting is "never again".
+ */
+async function initiativeMetrics() {
+	return section(async () => {
+		const [rows] = await pool.query(
+			`SELECT trigger_id,
+				COUNT(*) AS sent,
+				COALESCE(SUM(delivered_at IS NOT NULL), 0) AS seen,
+				COALESCE(SUM(status = 'engaged'), 0) AS engaged,
+				COALESCE(SUM(status = 'dismissed'), 0) AS dismissed,
+				COALESCE(SUM(pushed_at IS NOT NULL), 0) AS pushed,
+				-- Unseen means nobody could have seen it by ANY route. A nudge
+				-- that was pushed reached a lock screen even if the app was
+				-- never opened, so counting it as unseen would understate her
+				-- reach and teach the review the wrong lesson about TTLs.
+				COALESCE(SUM(status = 'expired' AND delivered_at IS NULL AND pushed_at IS NULL), 0) AS unseen
+			 FROM athena_nudge
+			 WHERE created_at >= NOW() - INTERVAL 7 DAY
+			 GROUP BY trigger_id;`
+		);
+		// What she has taught herself. A trigger she suppressed is one that
+		// stopped firing without anyone editing code, which is exactly the kind
+		// of change a nightly report exists to surface.
+		const [learned] = await pool.query(
+			`SELECT trigger_id,
+				COUNT(*) AS people,
+				COALESCE(SUM(suppressed_at IS NOT NULL), 0) AS suppressed,
+				AVG(score) AS avg_score
+			 FROM athena_trigger_score GROUP BY trigger_id;`
+		);
+		const [mutes] = await pool.query(
+			`SELECT trigger_id, COUNT(*) AS n FROM athena_trigger_mute GROUP BY trigger_id;`
+		);
+		const [[people]] = await pool.query(
+			`SELECT COALESCE(SUM(enabled), 0) AS enabled, COUNT(*) AS known
+			 FROM athena_initiative_pref;`
+		);
+		const mutedBy = Object.fromEntries(mutes.map((m) => [m.trigger_id, Number(m.n)]));
+		const learnedBy = Object.fromEntries(
+			learned.map((l) => [
+				l.trigger_id,
+				{
+					people: Number(l.people),
+					suppressed: Number(l.suppressed),
+					avgScore: l.avg_score === null ? null : +Number(l.avg_score).toFixed(2),
+				},
+			])
+		);
+		const byTrigger = {};
+		let sent = 0;
+		for (const r of rows) {
+			const engaged = Number(r.engaged);
+			const dismissed = Number(r.dismissed);
+			const answered = engaged + dismissed;
+			sent += Number(r.sent);
+			byTrigger[r.trigger_id] = {
+				sent: Number(r.sent),
+				seen: Number(r.seen),
+				pushed: Number(r.pushed),
+				engaged,
+				dismissed,
+				unseen: Number(r.unseen),
+				mutedBy: mutedBy[r.trigger_id] || 0,
+				learned: learnedBy[r.trigger_id] || null,
+				// null, not 0: "nobody has reacted yet" and "everybody hated it"
+				// are different facts and must not produce the same finding.
+				acceptance: answered ? +(engaged / answered).toFixed(2) : null,
+			};
+		}
+		return {
+			sent7d: sent,
+			enabledProfiles: Number(people.enabled),
+			byTrigger,
+		};
+	});
+}
+
 async function collectMetrics({ embeddingSpace }) {
-	const [last24h, baseline7d, chat, memory] = await Promise.all([
+	const [last24h, baseline7d, chat, memory, initiative] = await Promise.all([
 		modelMetrics(24, 0),
 		modelMetrics(24 * 8, 24),
 		chatMetrics(),
 		memoryMetrics(embeddingSpace),
+		initiativeMetrics(),
 	]);
-	return { models: { last24h, baseline7d }, chat, memory };
+	return { models: { last24h, baseline7d }, chat, memory, initiative };
 }
 
 module.exports = { collectMetrics, summarizeCalls, percentile };

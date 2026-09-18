@@ -25,6 +25,8 @@ const pool = require("../helpers/db");
 const llm = require("../services/llm");
 const memoryStore = require("../services/memoryStore");
 const { startOfLocalDay, DEFAULT_TZ } = require("../services/memoryStore/timeRange");
+const actions = require("../services/actions");
+const initiative = require("../services/initiative");
 const { collectMetrics } = require("../services/selfReview/metrics");
 const { runEvals } = require("../services/selfReview/evals");
 const { ruleFindings, writePlan, fallbackPlan, renderMarkdown } = require("../services/selfReview/plan");
@@ -87,6 +89,20 @@ async function maintenance({ dryRun }) {
 	// same night instead of leaving it unsearchable until tomorrow.
 	await step("news", () => memoryStore.ingestNews(), results);
 	await step("embeddingBackfill", () => memoryStore.backfillEmbeddings({ limit: 1000 }), results);
+	// Retire proposals nobody answered. Cheap, idempotent, and the reason the
+	// action table never accumulates rows that read as pending forever — an
+	// approvable-looking card from last Tuesday is worse than no card.
+	await step("actionExpiry", async () => ({ expired: await actions.expireStale() }), results);
+	// Same for nudges nobody answered. An interruption that is still sitting
+	// there tomorrow was never an interruption, and leaving it pending would
+	// let it surface hours after it stopped being true.
+	await step("nudgeExpiry", async () => ({ expired: await initiative.expireStale() }), results);
+	// Fold in every outcome the fast path did not see — nudges that were
+	// dismissed, and nudges that reached someone and were never answered — so a
+	// trigger nobody wants gets quieter on its own instead of waiting for
+	// somebody to read a report about it. Runs AFTER expiry so the night's
+	// unanswered nudges are already terminal and get counted.
+	await step("nudgeAppraisal", () => initiative.sweepAppraisals(), results);
 	return results;
 }
 

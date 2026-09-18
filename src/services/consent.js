@@ -17,6 +17,11 @@ const CONSENT_TYPES = new Set([
 	// the `required` list in getConsentSnapshot: it is opt-in for families who
 	// connect one, not a precondition for using Athena at all.
 	"health_data",
+	// Gate on Athena proposing actions that change something outside her own
+	// memory — see services/actions. Also opt-in and also not `required`:
+	// a family that never accepts this keeps a read-only Athena, which is the
+	// product working as intended, not a blocked setup.
+	"action_authority",
 ]);
 
 function normalizeConsentType(value) {
@@ -168,9 +173,32 @@ async function hasConsent(googleId, consentType) {
 	}
 }
 
+/**
+ * hasConsent for a caller we know by profile rather than google id.
+ *
+ * The action layer works in profile ids all the way down (a paired car has no
+ * google id to offer), so it cannot use hasConsent directly. Same contract:
+ * any failure answers false, because a consent check that throws must not
+ * become a consent check that passed.
+ */
+async function hasConsentForProfile(profileId, consentType) {
+	const type = normalizeConsentType(consentType);
+	if (!type || !profileId) return false;
+	try {
+		const family = await getFamilyForProfile(profileId);
+		if (!family) return false;
+		const snapshot = await getConsentSnapshot(family.id);
+		return snapshot.consents?.[type]?.accepted === true;
+	} catch (err) {
+		console.warn("[consent] hasConsentForProfile check failed:", err.message);
+		return false;
+	}
+}
+
 module.exports = {
 	CONSENT_TYPES,
 	hasConsent,
+	hasConsentForProfile,
 	recordConsent,
 	getConsentStatus,
 	getConsentHistory,

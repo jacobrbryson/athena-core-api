@@ -26,6 +26,27 @@ const RESPONSE_SCHEMA = {
 		// Optional. Set true only when a Guardian indicates they are reporting /
 		// locking in their family's mission piece (see Current Mission below).
 		mission_report: { type: "boolean" },
+		// Optional. One thing Athena wants to DO rather than say — see
+		// services/actions. Filling this in does NOT perform anything: the
+		// backend validates it against the action registry, creates a pending
+		// proposal, and a person approves or declines it. That is deliberately
+		// the only shape of actuation she has, so a prompt injection carried in
+		// (say) a calendar event title can at worst produce a card someone
+		// declines.
+		//
+		// `params` is intentionally untyped. Each action declares its own
+		// parameters (actions/registry.js) and normalizes them server-side;
+		// pinning a union of every action's fields in here would make adding an
+		// action a change to the reply schema of every conversation mode.
+		proposed_action: {
+			type: "object",
+			properties: {
+				id: { type: "string" },
+				params: { type: "object" },
+				rationale: { type: "string" },
+			},
+			required: ["id", "params"],
+		},
 	},
 	required: [
 		"response",
@@ -766,6 +787,17 @@ async function generatePrompt(session, sessionTopics, message, options = {}) {
 		// she answers "can you see my calendar?" from a guess — and a confident
 		// guess about her own features is believed.
 		if (options.capabilityBlock) systemPrompt += `\n${options.capabilityBlock}`;
+		// What she can DO this turn, scoped to what this person has linked and
+		// consented to. Null (the common case) means she is read-only right now
+		// and must not offer to change anything — this block is the only thing
+		// that tells her the `proposed_action` field is live.
+		if (options.actionBlock) systemPrompt += `\n\n${options.actionBlock}`;
+		// What she has already raised unprompted. Without it she brings something
+		// up, the person answers "how long have I got?", and she has no idea what
+		// they mean — which reads as having forgotten a thing she said a minute
+		// ago, and is what makes initiative feel like a notification robot bolted
+		// to a chatbot.
+		if (options.initiativeBlock) systemPrompt += `\n\n${options.initiativeBlock}`;
 	}
 
 	const contents = [{ role: "system", parts: [{ text: systemPrompt }] }];

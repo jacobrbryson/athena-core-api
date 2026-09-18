@@ -19,6 +19,8 @@
 		"rotate:keys": "node src/jobs/rotate-keys.js",
 		"rotate:keys:dry": "node src/jobs/rotate-keys.js --dry-run",
 		"rotate:keys:reencrypt": "node src/jobs/rotate-keys.js --reencrypt",
+		"initiative": "node src/jobs/initiative.js",
+		"initiative:dry": "node src/jobs/initiative.js --dry-run",
 		"nightly": "node src/jobs/nightly.js",
 		"nightly:dry": "node src/jobs/nightly.js --dry-run",
 		"nightly:review": "node src/jobs/nightly.js --only review",

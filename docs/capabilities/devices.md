@@ -35,9 +35,15 @@ listed underneath, each with a way to revoke it.
   Athena, the device needs that address too.
 - **A device you don't recognise.** Revoke it from this panel, straight away.
 
+If you've turned on notifications, a paired phone is also how I reach you when
+you don't have me open — see **Initiative** for what I'd send and how often.
+You allow that on the phone itself, and you can switch it off from either end.
+
 ## Limits
 
 - Pairing is per device and doesn't transfer — a new phone needs a new code.
+- Notifications only work on a paired phone or car, never the browser, and only
+  if the server has been set up for them.
 - The car surface is voice-shaped by design; it won't do anything that needs
   reading or tapping while you drive.
 - Revoking cuts the device off from me; it doesn't wipe anything already saved

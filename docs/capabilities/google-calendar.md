@@ -45,7 +45,12 @@ and tells Google to revoke it.
 
 ## Limits
 
-- Read-only. I can't create, move, or cancel anything, or reply to an invite.
+- I can **add** an event if you approve it first — see the Actions panel. I
+  still can't move, edit or cancel anything, or reply to an invite.
+- Adding events needs a newer Google connection than reading does. If you
+  linked your calendar before that existed, I can read it but not add to it
+  until you reconnect it.
+- I can only add to your primary calendar, and I can't invite anyone.
 - Upcoming events and free/busy — not your calendar's full history.
 - One Google account.
 - I don't watch your calendar in the background. I look when you ask, so I
@@ -63,4 +68,11 @@ and tells Google to revoke it.
 - Grounding: `src/services/connectors/context.js`.
 - Diagnostic: `diagnose-calendar.js` at the `core_api` root — read-only, run
   with `node diagnose-calendar.js`.
-- Tests: `src/services/connectors/connectors.test.js`.
+- Writes: `createEvent` / `deleteEvent` in the same connector, called only
+  from `src/services/actions` after a human approved the proposal — never
+  from a context builder or tool loop. The descriptor requests
+  `calendar.events` (read+write); a pre-existing link holds
+  `calendar.events.readonly` and gets a typed `needs_reauth` on write rather
+  than being torn down as a dead grant.
+- Tests: `src/services/connectors/connectors.test.js`,
+  `src/services/actions/actions.test.js`.

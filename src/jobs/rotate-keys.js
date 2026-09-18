@@ -54,6 +54,10 @@ const ENCRYPTED_COLUMNS = [
 		idColumn: "id",
 		columns: ["access_token_enc", "refresh_token_enc"],
 	},
+	// Push registrations. Not a credential Athena uses, but anyone holding one
+	// can put a notification on that person's lock screen — a capability worth
+	// rotating like any other.
+	{ table: "paired_device", idColumn: "id", columns: ["push_token_enc"] },
 ];
 
 const log = (...m) =>
