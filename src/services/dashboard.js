@@ -79,9 +79,14 @@ async function getDashboard(profileId, user) {
         : new Date(e.end || e.start).getTime() > Date.now());
       return { events, timeZone, days: 7 };
     }),
-    provider('whoop', () => whoop.listRecovery(profileId, { days: 7, limit: 7 }), true),
+    // Recovery and cycles reach back a fortnight, not a week: the resting
+    // heart rate and HRV they carry only mean anything against a baseline, and
+    // a baseline built from the three or four days either side of today moves
+    // with whatever it is supposed to be measuring. The panels still draw the
+    // last seven; the extra days exist to be compared against.
+    provider('whoop', () => whoop.listRecovery(profileId, { days: 14, limit: 14 }), true),
     provider('whoop', () => whoop.listSleep(profileId, { days: 7, limit: 7 }), true),
-    provider('whoop', () => whoop.listCycles(profileId, { days: 7, limit: 7 }), true),
+    provider('whoop', () => whoop.listCycles(profileId, { days: 14, limit: 14 }), true),
     provider('strava', async () => ({ activities: await strava.listActivities(profileId, { days: 7, perPage: 30 }), days: 7 }), true),
     (async () => {
       try {

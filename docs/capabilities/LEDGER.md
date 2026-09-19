@@ -1,5 +1,7 @@
 # Capability ledger
 
+- 2026-09-19 — Android dashboard viewport now stays above system navigation and the keyboard, keeping the bottom menu reachable — `android-companion.md` (status: planned)
+
 - 2026-09-19 — Added an Android Companion scene sharing the mobile dashboard, native Google sign-in and automatic phone registration; device acceptance and release remain pending — `android-companion.md` (status: planned)
 
 Append-only record of what changed in Athena's user-visible capabilities.
@@ -77,6 +79,28 @@ See [`README.md`](README.md) for the full contract.
   conversation can read all of it including the part before they signed in, and
   if a child is present she stays on the child-safe settings for everyone —
   `shared-conversations.md` (status: partial)
+
+- 2026-09-19 — Athena no longer rations herself. The daily cap, the
+  ninety-minute gap, the per-trigger cooldown, the one-thing-per-pass rule and
+  the learned suppression are gone, at the owner's instruction: every one of
+  them worked by discarding something true and recording nothing about having
+  done so, so a quiet day and a gagged day looked identical. If she notices
+  three things, she says three things. Quiet hours now hold a notification
+  until the window ends instead of skipping the pass, so nothing is lost
+  overnight, and notifications stack instead of replacing one another. What
+  still stops her: the opt-in, your mute, one-per-occurrence, and each rule's
+  own shelf life — `initiative.md` (status: partial)
+
+- 2026-09-19 — Athena can reach a browser as well as a phone, and you can
+  check any of it without waiting for her to have something to say: a test
+  notification reports device by device which ones it reached and what the
+  others said when they refused, and "why she's been quiet" names the limit
+  currently stopping her, counts down to when she may next speak, and runs
+  every rule for real so "nothing to say" and "your calendar is down" stop
+  looking identical. Browser notifications are their own permission, granted
+  per browser, and a test deliberately skips her limits — you asked for it, so
+  it is not an interruption and she learns nothing from it — `initiative.md`
+  (status: partial)
 
 - 2026-09-18 — Companion opens to a responsive Today dashboard with desktop sidebar, mobile navigation, saved family/work memories, editable chat shortcuts, connected-app status, and a compact briefing drawer; live summary feeds are not yet available — `companion-dashboard.md` (status: partial)
 

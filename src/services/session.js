@@ -38,6 +38,54 @@ async function addSession(ipAddress, options = {}) {
   return sessionId;
 }
 
+/**
+ * This person's current conversation, starting one if they have none.
+ *
+ * For channels that arrive without a session of their own — a text message is
+ * the first — where the alternative is a brand-new session per inbound
+ * message. That would give Athena a second, thinner memory of the same person
+ * and make "what did we decide?" depend on which device they happened to ask
+ * from.
+ *
+ * Reuses a session only while it is recent. An SMS answered into a thread from
+ * three weeks ago would be replying inside a conversation neither party
+ * remembers having; a day is long enough that a morning and an evening text
+ * are the same thread, and short enough that a stale one is not resurrected.
+ */
+async function getOrCreateForProfile(profileId, { ip = "sms", mode = null } = {}) {
+  const id = Number(profileId);
+  if (!Number.isFinite(id) || id <= 0) throw new Error("A profile is required");
+
+  const [rows] = await pool.query(
+    `SELECT id, ip_address, uuid, created_at, age, is_busy, wisdom_points,
+            mode, profile_id, family_id
+     FROM session
+     WHERE profile_id = ? AND created_at >= NOW() - INTERVAL 1 DAY
+     ORDER BY created_at DESC LIMIT 1`,
+    [id],
+  );
+  if (rows[0]) return rows[0];
+
+  const [[profile]] = await pool.query(
+    `SELECT cp.family_id FROM profile p
+     LEFT JOIN child_profiles cp ON cp.profile_id = p.id
+     WHERE p.id = ? LIMIT 1`,
+    [id],
+  );
+  const uuid = await addSession(ip, {
+    profileId: id,
+    familyId: profile?.family_id || null,
+    ...(mode ? { mode } : {}),
+  });
+  const [fresh] = await pool.query(
+    `SELECT id, ip_address, uuid, created_at, age, is_busy, wisdom_points,
+            mode, profile_id, family_id
+     FROM session WHERE uuid = ? LIMIT 1`,
+    [uuid],
+  );
+  return fresh[0];
+}
+
 /** Resolve a profile.id (and its family) from a profile uuid, or null. */
 async function resolveProfileBinding(profileUuid) {
   if (typeof profileUuid !== "string" || !profileUuid.trim()) return {};
@@ -251,6 +299,7 @@ async function bindSessionProfile(sessionId, profileId, familyId = null) {
 
 module.exports = {
   addSession,
+  getOrCreateForProfile,
   getSessionByUuidAndIp,
   getAuthorizedSession,
   admitToSession,

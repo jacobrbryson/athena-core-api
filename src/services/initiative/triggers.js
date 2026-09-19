@@ -16,12 +16,19 @@
  * With rules, `facts` on the nudge row IS the reason, and a trigger that
  * fires too often is a threshold somebody can change.
  *
+ * Triggers used to carry a `cooldownMs` — a per-trigger minimum gap. It was
+ * removed with the rest of the interruption budget (see index.js): it worked
+ * by discarding observations, and it was doing nothing that `dedupeKey` was
+ * not already doing correctly. Every dedupe key here is per-occurrence — an
+ * event id, a sorted clash pair, a local date — so the same thing is raised
+ * exactly once without any need for a clock.
+ *
  * Descriptor fields:
  *   id           stored in athena_nudge.trigger_id
  *   label        how the settings panel names it
  *   sources      which links must be live for this to be worth evaluating
  *   urgency      low | normal | high — feeds the budget's gap rules
- *   cooldownMs   minimum quiet time before THIS trigger may fire again
+
  *   ttlMs        how long the observation stays worth saying
  *   describe     one line for the settings panel
  *   evaluate(profileId, ctx) -> null | { dedupeKey, facts, ttlMs?, urgency? }
@@ -67,9 +74,6 @@ const TRIGGERS = [
 		label: "Something starting soon",
 		sources: ["google_calendar"],
 		urgency: "high",
-		// Long enough that she cannot mention the same meeting twice even if
-		// the dedupe key were to change under her.
-		cooldownMs: 45 * MINUTE,
 		ttlMs: 20 * MINUTE,
 		describe: "Tell me when something on my calendar is about to start.",
 
@@ -113,7 +117,6 @@ const TRIGGERS = [
 		label: "Two things booked at once",
 		sources: ["google_calendar"],
 		urgency: "normal",
-		cooldownMs: 6 * 60 * MINUTE,
 		ttlMs: 3 * 60 * MINUTE,
 		describe: "Point out when two things on my calendar overlap.",
 
@@ -165,7 +168,6 @@ const TRIGGERS = [
 		// initiative is worth building rather than just notifications.
 		sources: ["whoop", "google_calendar"],
 		urgency: "normal",
-		cooldownMs: 20 * 60 * MINUTE,
 		ttlMs: 4 * 60 * MINUTE,
 		describe: "Mention it when my day looks heavy and my recovery is low.",
 

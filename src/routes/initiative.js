@@ -1,6 +1,14 @@
 const express = require("express");
 const {
 	getStatus,
+	getDiagnostics,
+	getWebPushKey,
+	registerWebPush,
+	forgetWebPush,
+	startSms,
+	confirmSms,
+	forgetSms,
+	testNotification,
 	getPending,
 	updatePref,
 	react,
@@ -21,6 +29,21 @@ const router = express.Router();
 router.use(requireAuthOrDevice);
 
 router.get("/", getStatus);
+// Why she is quiet. Above /:uuid/* like the mutes, and a GET because it only
+// ever reports — ?evaluate=1 runs the real triggers without writing anything.
+router.get("/diagnostics", getDiagnostics);
+// This browser's own subscription. Session-authenticated rather than
+// device-authenticated: a browser has nowhere safe to keep a device token.
+router.get("/web-push", getWebPushKey);
+router.put("/web-push", express.json(), registerWebPush);
+router.delete("/web-push", forgetWebPush);
+// A phone number, which has to prove it is theirs before she will text it.
+router.post("/sms", express.json(), startSms);
+router.put("/sms", express.json(), confirmSms);
+router.delete("/sms", forgetSms);
+// Proves the path to this person's own devices. A person asking to be
+// notified is not an interruption, so it skips the budget and writes no nudge.
+router.post("/test-notification", express.json(), testNotification);
 // Fetching marks them delivered — see the controller.
 router.get("/pending", getPending);
 router.put("/pref", express.json(), updatePref);

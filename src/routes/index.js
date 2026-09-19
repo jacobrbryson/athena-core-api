@@ -35,6 +35,7 @@ const integrationRouter = require("./integration");
 const companionRouter = require("./companion");
 const actionsRouter = require("./actions");
 const initiativeRouter = require("./initiative");
+const smsRouter = require("./sms");
 
 /**
  * Router factory
@@ -118,6 +119,9 @@ module.exports = (clients) => {
 	router.use("/consent", consentRouter);
 	router.use("/actions", actionsRouter);
 	router.use("/initiative", initiativeRouter);
+	// Twilio, which has no session and no device token. It authenticates by
+	// signing the request; the controller verifies that before anything else.
+	router.use("/sms", smsRouter);
 	router.use("/memory", memoryRouter);
 	router.use("/integrations", integrationRouter);
 	router.use("/", companionRouter);

@@ -2,43 +2,67 @@
  * Initiative: Athena speaking first.
  *
  * Every word she said before this was a reply. This is the part that starts
- * a conversation, and almost all of the code below exists to stop her.
+ * a conversation.
  *
  * ## The split
  *
- *   RULES decide WHETHER to interrupt   (triggers.js — deterministic)
+ *   RULES decide WHETHER to speak      (triggers.js — deterministic)
  *   the MODEL decides only HOW to word it (one short call, here)
  *
  * See triggers.js for why. The consequence worth stating here is that
  * `facts` on the row is the real reason she spoke, independent of anything
  * the model said about itself.
  *
- * ## The budget
+ * ## There is no interruption budget
  *
- * A system that interrupts people is only tolerable if interrupting is
- * expensive. Six separate limits, each of which can refuse alone:
+ * There used to be one: a daily cap, a ninety-minute gap between anything she
+ * said, a per-trigger cooldown, one nudge per pass, and a learned score that
+ * could suppress a trigger outright. It was built on the view that a system
+ * which interrupts people is only tolerable if interrupting is expensive.
  *
- *   opt-in       no athena_initiative_pref row means silence. That is the
+ * The owner removed it on 2026-09-19, for a reason the old design had no
+ * answer to: every one of those limits worked by DISCARDING a true
+ * observation. Not deferring it — dropping it. The fourth thing worth saying
+ * on a busy day was never said, and nothing anywhere recorded that it had
+ * been thrown away, so the failure was invisible from both sides. "I don't
+ * want to miss anything because of a budget" is the whole specification.
+ *
+ * What remains is everything that costs nothing to keep, because none of it
+ * can lose an observation:
+ *
+ *   opt-in       no athena_initiative_pref row means silence. Still the
  *                default for every person who has never been asked.
- *   quiet hours  local to them, wrapping midnight
- *   daily cap    a hard ceiling per local day (default 3)
- *   spacing      a minimum gap since the last nudge of ANY kind
- *   cooldown     a longer per-trigger gap, from the registry
+ *   mutes        an explicit instruction to stop raising one kind of thing.
  *   dedupe       one nudge per occurrence, ever, enforced by a unique key
- *                rather than by this code remembering to check
+ *                rather than by this code remembering to check. This prevents
+ *                REPETITION, which is not the same as missing something.
+ *   TTL          each trigger says how long its own observation stays worth
+ *                saying. "Your 2pm is in fifteen minutes" is not worth
+ *                delivering at four o'clock.
+ *   quiet hours  now a DEFERRAL, not a refusal — see below.
  *
  * The dedupe key being a database constraint is deliberate: it makes the
  * evaluator safe to run from the scheduled job and in-process at the same
- * time, because a duplicate is a failed INSERT rather than a second
- * interruption.
+ * time, because a duplicate is a failed INSERT rather than a second nudge.
  *
- * ## The feedback loop
+ * ## Quiet hours hold, they do not drop
  *
- * Interruptions that nobody welcomes must get rarer, not persist because
- * they were someone's good idea once. Every nudge records how it landed,
- * and the nightly review rolls those up per trigger — see
- * selfReview/metrics.js. A person can also mute one trigger outright, which
- * is a stronger and more honest signal than a dismissal.
+ * The old behaviour skipped the pass entirely, so anything true at 3am was
+ * lost. Now the nudge is still written and still waiting in the morning; only
+ * the PUSH is held, so nobody is woken. `releaseHeld` pushes them once the
+ * quiet window ends. A nudge whose own TTL expires overnight still expires —
+ * that is the trigger's statement about its own shelf life, not a budget.
+ *
+ * Setting quiet_from === quiet_to turns the window off entirely.
+ *
+ * ## The feedback loop still runs, but it no longer silences
+ *
+ * Every nudge still records how it landed and the nightly review still rolls
+ * those up per trigger (selfReview/metrics.js), because knowing which kinds
+ * of thing land badly is worth having. What that score may no longer do is
+ * suppress a trigger by itself: a suppression is a miss, and misses are the
+ * thing that was removed. It orders and it informs; it does not gag. Muting
+ * is still available and is a person's own decision.
  */
 
 const { randomUUID } = require("node:crypto");
@@ -53,15 +77,6 @@ const appraise = require("./appraise");
 const push = require("../push");
 
 const MINUTE = 60_000;
-
-/**
- * The minimum gap between any two nudges, whatever fired them.
- *
- * Separate from the per-trigger cooldown on purpose: three different
- * triggers each behaving perfectly still add up to three interruptions in
- * five minutes, which is the thing people actually resent.
- */
-const MIN_GAP_MS = 90 * MINUTE;
 
 /** Longest a nudge may sit unseen, whatever its trigger asked for. */
 const MAX_TTL_MS = 6 * 60 * MINUTE;
@@ -247,16 +262,19 @@ function inQuietHours(pref, now = new Date()) {
 }
 
 /**
- * Everything the budget needs about what has already been said, in one query.
- * Counts the LOCAL day rather than the last 24 hours, so "three a day" means
- * what a person would mean by it.
+ * How much she has said today, and when she last did.
  *
- * The day boundary is computed in JS and passed in as a UTC instant, rather
- * than with MySQL's CONVERT_TZ. CONVERT_TZ needs the named-timezone tables to
- * have been loaded into the server, and when they haven't it returns NULL —
- * which would make the comparison match nothing, report zero nudges today,
- * and silently disable the daily cap. A budget that fails open is worse than
- * no budget, so it does not get to depend on a server's tz tables.
+ * Nothing gates on either number any more — they are reporting, for the
+ * diagnostics panel and the nightly review. Kept counting the LOCAL day
+ * rather than the last 24 hours, because that is what a person means by
+ * "today".
+ *
+ * The day boundary is computed in JS and passed in as a UTC instant rather
+ * than with MySQL's CONVERT_TZ, which needs named-timezone tables loaded into
+ * the server and returns NULL when they are not — silently matching nothing.
+ * That used to be able to disable the daily cap; now it would merely misreport
+ * a count, but a number that is wrong in a way nobody can see is still worth
+ * not having.
  */
 async function recentActivity(profileId, pref, now = new Date()) {
 	const dayStart = startOfDayIn(now, pref.timezone || DEFAULT_TZ);
@@ -268,7 +286,18 @@ async function recentActivity(profileId, pref, now = new Date()) {
 	return { today: Number(row?.today || 0), lastAt: row?.last_at ? new Date(row.last_at) : null };
 }
 
-/** Per-trigger cooldown: when did THIS trigger last fire for this person? */
+/** Written but not yet pushed, and still inside its own TTL. */
+async function heldCount(profileId) {
+	const [[row]] = await pool.query(
+		`SELECT COUNT(*) AS held FROM athena_nudge
+		 WHERE profile_id = ? AND pushed_at IS NULL AND expires_at > NOW()
+		   AND status IN ('pending', 'delivered')`,
+		[profileId]
+	);
+	return Number(row?.held || 0);
+}
+
+/** When did THIS trigger last fire for this person? Reporting only. */
 async function lastFired(profileId, triggerId) {
 	const [[row]] = await pool.query(
 		"SELECT MAX(created_at) AS last_at FROM athena_nudge WHERE profile_id = ? AND trigger_id = ?",
@@ -278,17 +307,18 @@ async function lastFired(profileId, triggerId) {
 }
 
 /**
- * May Athena interrupt this person at all right now? Returns a reason string
- * when the answer is no, so the job's log says which limit bit rather than
- * only that nothing happened.
+ * May Athena speak to this person at all? Returns a reason string when not.
+ *
+ * One question now, where there were five. Consent is the only thing left
+ * that can refuse outright, because it is the only one that was never about
+ * rationing: somebody who has not opted in has not agreed to be spoken to,
+ * which is a different statement from "you have had enough for today".
+ *
+ * Quiet hours are deliberately NOT here. They hold the push; they do not stop
+ * the pass, or the nudge would be lost rather than delayed.
  */
-async function budgetCheck(profileId, pref, now = new Date()) {
+async function budgetCheck(profileId, pref) {
 	if (!pref.enabled) return "not enabled";
-	if (inQuietHours(pref, now)) return "quiet hours";
-	if (pref.daily_cap <= 0) return "daily cap is zero";
-	const { today, lastAt } = await recentActivity(profileId, pref, now);
-	if (today >= pref.daily_cap) return `daily cap reached (${today}/${pref.daily_cap})`;
-	if (lastAt && now.getTime() - lastAt.getTime() < MIN_GAP_MS) return "too soon after the last one";
 	return null;
 }
 
@@ -352,18 +382,26 @@ async function linkedProviders(profileId) {
 }
 
 /**
- * Evaluate every trigger for one person and write at most ONE nudge.
+ * Evaluate every trigger for one person and write a nudge for EVERY one that
+ * fired.
  *
- * One, not all that fired: if her calendar is a mess she should say the most
- * urgent thing, not deliver a briefing. The rest will still be true on the
- * next run, by which time the spacing rule has had its say.
+ * It used to write exactly one — the most urgent — on the reasoning that if
+ * her calendar is a mess she should say the most important thing rather than
+ * deliver a briefing, and that the rest would still be true next run. The
+ * second half of that was the flaw: with a ninety-minute gap and a daily cap
+ * behind it, "still true next run" usually meant never. Two things starting
+ * in the same twenty minutes is exactly when you least want to be told about
+ * only one of them.
  *
- * Returns { nudge } on success, or { skipped } with the reason.
+ * Ordering still matters even though nothing is dropped, because it decides
+ * what a person reads first.
+ *
+ * Returns { nudges: [...] }, or { skipped } with the reason none were written.
  */
 async function evaluateProfile(profileId, { now = new Date() } = {}) {
 	const pref = await getPref(profileId);
-	const blocked = await budgetCheck(profileId, pref, now);
-	if (blocked) return { skipped: blocked };
+	const blocked = await budgetCheck(profileId, pref);
+	if (blocked) return { skipped: blocked, nudges: [] };
 
 	// The same live check every other model-consuming path makes. A background
 	// run is charged to ATHENA_BACKGROUND_GOOGLE_ID; without a valid identity
@@ -379,15 +417,11 @@ async function evaluateProfile(profileId, { now = new Date() } = {}) {
 
 	const candidates = [];
 	for (const trigger of triggers.TRIGGERS) {
+		// A mute is a person's own instruction and still refuses. A learned
+		// suppression no longer does: it was the last mechanism that could
+		// silently drop a true observation, which is the thing being removed.
 		if (mutedSet.has(trigger.id)) continue;
-		// Suppressed by what happened last time she raised this. Her own
-		// judgement, not the person's mute — reversible from the settings
-		// panel, and it can only ever silence, never enable.
-		if (scores[trigger.id]?.suppressed) continue;
 		if (trigger.sources.some((s) => !linked.has(s))) continue;
-
-		const since = await lastFired(profileId, trigger.id);
-		if (since && now.getTime() - since.getTime() < trigger.cooldownMs) continue;
 
 		let hit = null;
 		try {
@@ -400,12 +434,11 @@ async function evaluateProfile(profileId, { now = new Date() } = {}) {
 		}
 		if (hit && hit.dedupeKey) candidates.push({ trigger, hit });
 	}
-	if (!candidates.length) return { skipped: "nothing to say" };
+	if (!candidates.length) return { skipped: "nothing to say", nudges: [] };
 
-	// Urgency first, then how well this trigger has been received by THIS
-	// person. The learned score breaks ties and demotes a merely-tolerated
-	// trigger below a welcomed one — it competes for the fixed budget rather
-	// than enlarging it, which is the only kind of learning she is allowed.
+	// Urgency first, then how well this trigger has been received by this
+	// person. The score no longer decides WHETHER she speaks, only what lands
+	// at the top of the list.
 	const RANK = { high: 3, normal: 2, low: 1 };
 	candidates.sort((a, b) => {
 		const byUrgency =
@@ -413,45 +446,192 @@ async function evaluateProfile(profileId, { now = new Date() } = {}) {
 		if (byUrgency !== 0) return byUrgency;
 		return (scores[b.trigger.id]?.score ?? 0.5) - (scores[a.trigger.id]?.score ?? 0.5);
 	});
-	const { trigger, hit } = candidates[0];
 
-	const text = await word(trigger, hit.facts);
-	const ttl = Math.min(hit.ttlMs || trigger.ttlMs, MAX_TTL_MS);
-	const uuid = randomUUID();
+	// Held rather than skipped: the nudge is written and waiting in the
+	// morning, and only the push is withheld so nobody is woken.
+	const quiet = inQuietHours(pref, now);
+	const written = [];
+	let deduped = 0;
 
-	const [result] = await pool.query(
-		`INSERT IGNORE INTO athena_nudge
-			(uuid, profile_id, trigger_id, dedupe_key, urgency, text, facts, expires_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND))`,
-		[
-			uuid,
-			profileId,
-			trigger.id,
-			String(hit.dedupeKey).slice(0, 190),
-			hit.urgency || trigger.urgency,
-			text.slice(0, 500),
-			JSON.stringify(hit.facts || {}),
-			Math.round(ttl / 1000),
-		]
+	for (const { trigger, hit } of candidates) {
+		const text = await word(trigger, hit.facts);
+		const ttl = Math.min(hit.ttlMs || trigger.ttlMs, MAX_TTL_MS);
+		const uuid = randomUUID();
+
+		const [result] = await pool.query(
+			`INSERT IGNORE INTO athena_nudge
+				(uuid, profile_id, trigger_id, dedupe_key, urgency, text, facts, expires_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND))`,
+			[
+				uuid,
+				profileId,
+				trigger.id,
+				String(hit.dedupeKey).slice(0, 190),
+				hit.urgency || trigger.urgency,
+				text.slice(0, 500),
+				JSON.stringify(hit.facts || {}),
+				Math.round(ttl / 1000),
+			]
+		);
+		// INSERT IGNORE rather than a read-then-write: the unique key is what
+		// actually guarantees one nudge per occurrence, and losing that race is
+		// a correct outcome, not an error.
+		if (!result.affectedRows) {
+			deduped += 1;
+			continue;
+		}
+		written.push({ uuid, trigger_id: trigger.id, text });
+	}
+
+	if (!written.length) {
+		return { skipped: deduped ? "already said (deduped)" : "nothing to say", nudges: [] };
+	}
+
+	let pushed = 0;
+	if (!quiet) {
+		for (const nudge of written) {
+			// Best-effort by design: a nudge that was written and could not be
+			// pushed is still a nudge, and they will see it next time they open
+			// the app — exactly as before push existed.
+			const delivery = await push.deliverNudge(profileId, nudge).catch((err) => {
+				console.warn("[initiative] push failed:", err.message);
+				return { sent: 0 };
+			});
+			if (delivery.sent > 0) pushed += 1;
+		}
+	}
+
+	return { nudges: written, pushed, held: quiet ? written.length : 0 };
+}
+
+/**
+ * Push anything that was written during quiet hours once the window has
+ * passed.
+ *
+ * Without this, holding the push would be indistinguishable from dropping it
+ * for anyone who does not open the app of their own accord — which is the
+ * population push exists for. Called at the top of every pass.
+ *
+ * Only nudges still inside their own TTL are released: something whose shelf
+ * life ran out overnight has genuinely stopped being worth saying, and that
+ * is the trigger's judgement rather than a budget's.
+ */
+async function releaseHeld(profileId, pref, now = new Date()) {
+	if (!pref.enabled || inQuietHours(pref, now)) return { released: 0 };
+	const [rows] = await pool.query(
+		`SELECT uuid, trigger_id, text FROM athena_nudge
+		 WHERE profile_id = ? AND pushed_at IS NULL AND expires_at > NOW()
+		   AND status IN ('pending', 'delivered')
+		 ORDER BY created_at ASC LIMIT 20`,
+		[profileId]
 	);
-	// INSERT IGNORE rather than a read-then-write: the unique key is what
-	// actually guarantees one nudge per occurrence, and losing that race is a
-	// correct outcome, not an error.
-	if (!result.affectedRows) return { skipped: "already said (deduped)" };
+	let released = 0;
+	for (const nudge of rows) {
+		const delivery = await push
+			.deliverNudge(profileId, nudge)
+			.catch(() => ({ sent: 0 }));
+		if (delivery.sent > 0) released += 1;
+	}
+	return { released };
+}
 
-	const nudge = { uuid, trigger_id: trigger.id, text };
-	// Reach their phone if they asked to be reached there. Best-effort by
-	// design: a nudge that was written and could not be pushed is still a
-	// nudge, and they will see it next time they open the app — exactly as
-	// before push existed.
-	const delivery = await push
-		.deliverNudge(profileId, nudge)
-		.catch((err) => {
-			console.warn("[initiative] push failed:", err.message);
-			return { sent: 0 };
-		});
+/**
+ * Why she is quiet — every gate between an observation and a sentence, in one
+ * answer.
+ *
+ * This is the question initiative actually gets asked, and until now the only
+ * way to answer it was to read a log from a scheduled job nobody watches. Six
+ * limits can each refuse alone and three of them are invisible from outside
+ * (a suppression she applied to herself, a provider that quietly went stale, a
+ * cooldown with hours left), so "she hasn't said anything" has always had a
+ * dozen indistinguishable causes.
+ *
+ * Reports, never writes. `evaluate` runs the real trigger evaluators — the
+ * expensive, failure-prone part — so `would_fire` means what it says rather
+ * than "nothing is obviously wrong"; it is off by default because a settings
+ * panel that opens should not call three providers.
+ */
+async function diagnose(profileId, { now = new Date(), evaluate = false } = {}) {
+	const pref = await getPref(profileId);
+	const [blocked, activity, linked, muted, scores, modelAccess] = await Promise.all([
+		budgetCheck(profileId, pref),
+		recentActivity(profileId, pref, now),
+		linkedProviders(profileId),
+		listMutes(profileId),
+		appraise.scoresFor(profileId).catch(() => ({})),
+		// The same check the evaluator makes before it is allowed to word
+		// anything. A background identity that has lost access is a total,
+		// silent outage, and it looks exactly like "nothing to say".
+		access
+			.assertModelAccess()
+			.then(() => ({ ok: true, reason: null }))
+			.catch((err) => ({ ok: false, reason: err.message })),
+	]);
+	const mutedSet = new Set(muted);
 
-	return { nudge, pushed: delivery.sent > 0 };
+	const triggerReports = [];
+	for (const trigger of triggers.TRIGGERS) {
+		const missing = trigger.sources.filter((s) => !linked.has(s));
+		const since = await lastFired(profileId, trigger.id);
+
+		// Two things can still refuse, and only two. `suppressed` is reported
+		// because it is worth knowing what she has noticed, but it no longer
+		// appears here — it stopped being able to silence anything.
+		let blocking = null;
+		if (mutedSet.has(trigger.id)) blocking = "you muted it";
+		else if (missing.length) blocking = `not connected: ${missing.join(", ")}`;
+
+		const report = {
+			id: trigger.id,
+			label: trigger.label,
+			describe: trigger.describe,
+			urgency: trigger.urgency,
+			sources: trigger.sources,
+			missing_sources: missing,
+			muted: mutedSet.has(trigger.id),
+			suppressed: scores[trigger.id]?.suppressed === true,
+			score: scores[trigger.id]?.score ?? null,
+			last_fired_at: since,
+			cooldown_minutes_left: 0,
+			blocked_by: blocking,
+		};
+
+		if (evaluate && !blocking) {
+			try {
+				const hit = await trigger.evaluate(profileId, { now });
+				report.would_fire = Boolean(hit && hit.dedupeKey);
+				// The brief, not the wording: this is the observation itself,
+				// before any model saw it, which is the thing worth checking.
+				if (report.would_fire) report.brief = trigger.brief(hit.facts);
+			} catch (err) {
+				report.would_fire = false;
+				report.evaluation_error = err.message;
+			}
+		}
+		triggerReports.push(report);
+	}
+
+	return {
+		pref,
+		model_access: modelAccess,
+		budget: {
+			blocked_by: blocked,
+			// True means a push would be HELD until the window ends, not that
+			// the observation is lost. The distinction is the whole point.
+			in_quiet_hours: inQuietHours(pref, now),
+			today: activity.today,
+			// No ceiling any more. Reported so the panel can still say how
+			// talkative she has actually been, which is the useful half of
+			// what the cap used to provide.
+			daily_cap: null,
+			last_nudge_at: activity.lastAt,
+			minutes_until_next_allowed: 0,
+		},
+		held: await heldCount(profileId),
+		linked_providers: [...linked],
+		triggers: triggerReports,
+		evaluated: evaluate,
+	};
 }
 
 /** Profiles that have opted in. The only people the evaluator looks at. */
@@ -465,16 +645,30 @@ async function enabledProfiles() {
 /** One full pass. Safe to run concurrently with itself — see the unique key. */
 async function runOnce({ now = new Date() } = {}) {
 	const profiles = await enabledProfiles();
-	const results = { profiles: profiles.length, sent: 0, skipped: {} };
+	const results = { profiles: profiles.length, sent: 0, released: 0, held: 0, skipped: {} };
 	for (const profileId of profiles) {
+		// First: anything written overnight that nobody has been told about
+		// yet. Before the evaluation, so a morning pass delivers what is
+		// already waiting even if nothing new has happened.
+		try {
+			const pref = await getPref(profileId);
+			results.released += (await releaseHeld(profileId, pref, now)).released;
+		} catch (err) {
+			console.warn("[initiative] releasing held nudges failed:", err.message);
+		}
+
 		let outcome;
 		try {
 			outcome = await evaluateProfile(profileId, { now });
 		} catch (err) {
-			outcome = { skipped: `error: ${err.message}` };
+			outcome = { skipped: `error: ${err.message}`, nudges: [] };
 		}
-		if (outcome.nudge) results.sent += 1;
-		else results.skipped[outcome.skipped] = (results.skipped[outcome.skipped] || 0) + 1;
+		if (outcome.nudges?.length) {
+			results.sent += outcome.nudges.length;
+			results.held += outcome.held || 0;
+		} else {
+			results.skipped[outcome.skipped] = (results.skipped[outcome.skipped] || 0) + 1;
+		}
 	}
 	return results;
 }
@@ -599,7 +793,6 @@ async function promptBlock(profileId) {
 }
 
 module.exports = {
-	MIN_GAP_MS,
 	// Learning: how well each trigger has been received, and the judgement
 	// that moves it. Re-exported so callers have one initiative entry point.
 	scoresFor: appraise.scoresFor,
@@ -615,7 +808,9 @@ module.exports = {
 	unmute,
 	inQuietHours,
 	budgetCheck,
+	diagnose,
 	evaluateProfile,
+	releaseHeld,
 	enabledProfiles,
 	runOnce,
 	pendingFor,

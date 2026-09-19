@@ -165,6 +165,11 @@ async function registerPushToken(req, res) {
 	try {
 		const result = await push.registerToken(req.user.deviceId, req.body?.token, {
 			provider: req.body?.provider || "fcm",
+			// From the authenticated device row, never the request: a client
+			// claiming the wrong provider would store a registration the
+			// transport cannot parse, and nothing would notice until the first
+			// nudge went nowhere.
+			platform: req.user.platform,
 		});
 		return res.json({ success: true, ...result });
 	} catch (err) {

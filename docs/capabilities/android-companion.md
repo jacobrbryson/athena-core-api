@@ -14,9 +14,11 @@ triggers: [android, phone app, apk, google sign-in, unity scene, phone pairing]
 I use the same Home, calendar, health, family, work, projects, news, chat,
 memories, photos, connected apps, and approval screens as Companion. I keep the
 mobile layout, landscape artwork, icons, and navigation shared with the web app.
+I keep the dashboard above Android's navigation controls and on-screen keyboard.
 Google sign-in selects your account on the phone. After the server verifies your
 identity and access, I register this phone without asking you to copy a pairing
-code. Sign-out removes that registration before clearing the phone's identity.
+code. Sign-out attempts to remove that registration and clears the phone's
+stored identity and session even if the server is unreachable.
 
 ## Where to find it
 
@@ -44,6 +46,8 @@ online backend. This scene does not run the legacy native offline model,
 Android Auto messaging, or background push-registration services. A phone
 registration alone does not enable notifications or initiative. Local-server
 handoff opens the system browser; this Android shell is pinned to cloud Companion.
+If I cannot reach the server during sign-out, an inactive phone entry may remain
+in Phone & car until you remove it there.
 
 ## Under the hood
 

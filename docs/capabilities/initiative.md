@@ -28,8 +28,13 @@ you can always tell it apart from an answer to you. Reply and we're just
 talking. Tap **not now** and I'll drop it.
 
 If you've paired a phone, I can send it there too, so you don't have to have
-me open to hear it. One notification at a time — a newer one replaces an
-older one rather than piling up.
+me open to hear it — and this browser can be one of the places I reach, so a
+closed tab isn't the same as me having nothing to say. One notification at a
+time — a newer one replaces an older one rather than piling up.
+
+**You can check any of that without waiting for me to have something to say.**
+There's a button that sends you a test notification, and it tells you which of
+your devices it actually arrived on and what the others said when they refused.
 
 **And I pay attention to how it lands.** If you answer, I read what you said
 — not to grade you, but to work out whether raising that kind of thing was
@@ -42,6 +47,13 @@ I decide *whether* to say something by a fixed rule, not a hunch — so if I
 raise something, there's a specific fact behind it, and if a rule is wrong it
 can be changed rather than argued with.
 
+**There's no daily limit.** I used to cap myself at a few things a day with a
+long gap between them, and the problem with that was invisible: the fourth
+thing worth telling you simply never got said, and nothing anywhere recorded
+that I'd thrown it away. Now if I notice three things, you hear three things.
+If that's too much, mute the kind of thing you don't want — that way we both
+know what happened.
+
 ## Where to find it
 
 The **⋯ menu in the top right corner** → **Initiative**.
@@ -51,10 +63,23 @@ that lets me change things, so if you haven't turned that on yet
 (**⋯ menu** → **Actions**), do that first.
 
 Underneath you set how often at most — **times a day**, and the hours I stay
-quiet. If a phone is paired and set up for notifications, there's a separate
-switch: **"Send these to my phone"**. It's deliberately its own choice —
-agreeing I can start a conversation in an app you have open isn't the same as
-agreeing I can light up your phone.
+quiet — and nothing is lost to them: anything I notice overnight is written
+down and arrives when the window ends, rather than being dropped. Set both
+hours the same to turn quiet hours off entirely.
+
+There's a separate switch, **"Reach me outside the app"** — deliberately
+its own choice, because agreeing I can start a conversation in an app you have
+open isn't the same as agreeing I can light up your phone. Under it, each
+browser has its own **Turn on**, since that permission is granted per browser
+and can be refused in one while your phone works perfectly.
+
+**"Send me a test notification"** proves the whole path, device by device.
+**"Why she's been quiet" → Check right now** answers the question this panel
+otherwise can't: it names the limit that's currently stopping me, counts down
+to when I'm next allowed to speak, says which of the things I watch for are
+muted, cooling down, or waiting on an app you haven't connected — and runs
+them for real, so "nothing to say" and "your calendar is down" stop looking
+the same.
 
 Each of the three things I watch for can be **muted** on its own. Anything
 I've stopped raising by myself is marked there too, with the reason, and a
@@ -77,16 +102,27 @@ each one landed.
 
 ## Limits
 
+- **Quiet hours delay me, they don't silence me.** Anything I notice inside
+  that window is waiting for you when it ends. The exception is something
+  that stops being true first — "your 2pm is in fifteen minutes" isn't worth
+  handing you at four o'clock.
 - **Without a paired phone set up for notifications, I can't reach you when
   you're not here.** In that case I can only say something where you can
   already see me: it waits until you open the app, and expires if it goes
   stale first.
-- **Notifications need a paired phone and a server set up for them.** Not the
-  browser — there's no web notification, and the Companion app in a tab
-  can't buzz you.
-- **I only learn in one direction.** What I notice about how things land can
-  make me quieter, never chattier. It can't raise your daily limit, shorten
-  the gaps, get through quiet hours, or un-mute something you muted.
+- **Notifications need a server set up for them.** On a phone that's the
+  Athena app; in a browser it's a permission you grant per browser, and it
+  only works while that browser is running — closing it entirely closes the
+  door. On an iPhone, a browser can only do this if you've added Athena to
+  your home screen.
+- **A test notification is not an interruption.** It skips my limits on
+  purpose — you asked for it — so it doesn't count against your daily total
+  and isn't something I learn from.
+- **What I learn no longer silences me.** I still pay attention to how things
+  land, and you can see it — but it only changes what I lead with, and feeds
+  the nightly review. It can't decide to stop raising something on its own any
+  more, because that was another way for you to miss something without either
+  of us noticing. Muting is yours.
 - **I won't start again on my own.** If I've stopped raising something, it
   stays stopped until you tell me otherwise — I don't get to decide you've
   changed your mind.

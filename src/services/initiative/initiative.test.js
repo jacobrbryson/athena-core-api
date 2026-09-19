@@ -17,6 +17,9 @@ jest.mock("../connectors/googleCalendar", () => ({
 	displayTimeZone: jest.fn(() => "America/New_York"),
 }));
 jest.mock("../connectors/whoop", () => ({ listRecovery: jest.fn() }));
+// Mocked so the tests can assert on WHEN a push happens. The quiet-hours
+// behaviour is the whole point of the change: written but not pushed.
+jest.mock("../push", () => ({ deliverNudge: jest.fn() }));
 
 const pool = require("../../helpers/db");
 const access = require("../../security/access");
@@ -25,6 +28,7 @@ const credentials = require("../credentials");
 const llm = require("../llm");
 const googleCalendar = require("../connectors/googleCalendar");
 const whoop = require("../connectors/whoop");
+const push = require("../push");
 const initiative = require("./index");
 const triggers = require("./triggers");
 
@@ -82,6 +86,7 @@ beforeEach(() => {
 	llm.generateJson.mockResolvedValue({ data: { text: "Standup in fifteen." } });
 	googleCalendar.collectEvents.mockResolvedValue({ events: [], calendars: [] });
 	whoop.listRecovery.mockResolvedValue([]);
+	push.deliverNudge.mockResolvedValue({ sent: 1 });
 	jest.spyOn(console, "warn").mockImplementation(() => {});
 });
 
@@ -132,44 +137,40 @@ describe("quiet hours", () => {
 // The budget
 // ---------------------------------------------------------------------------
 
-describe("the interruption budget", () => {
+describe("consent is the only thing that refuses outright", () => {
 	test("no preference row means silence", async () => {
+		// The one limit that survived the budget's removal, because it was
+		// never about rationing: somebody who has not opted in has not agreed
+		// to be spoken to at all.
 		db({ pref: null });
 		expect(await initiative.budgetCheck(PROFILE, await initiative.getPref(PROFILE))).toBe(
 			"not enabled"
 		);
 	});
 
-	test("the daily cap is counted over the LOCAL day, not the last 24h", async () => {
-		db({ today: 3 });
-		const pref = await initiative.getPref(PROFILE);
-		expect(await initiative.budgetCheck(PROFILE, pref)).toMatch(/daily cap reached/);
-
-		// And the boundary is computed here, not handed to MySQL's CONVERT_TZ:
-		// when the tz tables aren't loaded CONVERT_TZ returns NULL, the count
-		// comes back zero, and the cap silently stops existing.
-		const call = pool.query.mock.calls.find((c) => c[0].includes("COUNT(*) AS today"));
-		expect(call[0]).not.toContain("CONVERT_TZ");
-		expect(call[1][1]).toBeInstanceOf(Date);
-	});
-
-	test("a cap of zero is honoured rather than read as 'unset'", async () => {
-		db({ pref: { ...PREF_ON, daily_cap: 0 } });
-		expect(await initiative.budgetCheck(PROFILE, await initiative.getPref(PROFILE))).toMatch(
-			/zero/
-		);
-	});
-
-	test("two nudges cannot land close together even from different triggers", async () => {
-		db({ today: 1, lastAt: new Date(Date.now() - 5 * MINUTE) });
-		expect(await initiative.budgetCheck(PROFILE, await initiative.getPref(PROFILE))).toMatch(
-			/too soon/
-		);
-	});
-
-	test("a gap longer than the minimum is allowed", async () => {
-		db({ today: 1, lastAt: new Date(Date.now() - initiative.MIN_GAP_MS - MINUTE) });
+	test("having already said three things today refuses nothing", async () => {
+		// The daily cap is gone. It worked by discarding a true observation,
+		// and nothing recorded that it had been thrown away.
+		db({ today: 12 });
 		expect(await initiative.budgetCheck(PROFILE, await initiative.getPref(PROFILE))).toBeNull();
+	});
+
+	test("having just spoken refuses nothing", async () => {
+		// So is the ninety-minute spacing rule. Two things starting in the same
+		// twenty minutes is exactly when you least want to hear about one.
+		db({ today: 1, lastAt: new Date(Date.now() - MINUTE) });
+		expect(await initiative.budgetCheck(PROFILE, await initiative.getPref(PROFILE))).toBeNull();
+	});
+
+	test("quiet hours do not refuse the pass — they hold the push", async () => {
+		// The distinction the whole change rests on. Refusing here would drop
+		// anything true at 3am; holding means it is waiting in the morning.
+		const at3am = new Date(Date.UTC(2026, 8, 18, 3, 0, 0));
+		db({ pref: { ...PREF_ON, quiet_from: 22, quiet_to: 7 } });
+		const pref = await initiative.getPref(PROFILE);
+
+		expect(initiative.inQuietHours(pref, at3am)).toBe(true);
+		expect(await initiative.budgetCheck(PROFILE, pref)).toBeNull();
 	});
 });
 
@@ -178,10 +179,10 @@ describe("the interruption budget", () => {
 // ---------------------------------------------------------------------------
 
 describe("evaluateProfile", () => {
-	test("says nothing, and calls no model, when the budget refuses", async () => {
+	test("says nothing, and calls no model, without the opt-in", async () => {
 		db({ pref: null });
 		const out = await initiative.evaluateProfile(PROFILE);
-		expect(out).toEqual({ skipped: "not enabled" });
+		expect(out).toMatchObject({ skipped: "not enabled", nudges: [] });
 		expect(llm.generateJson).not.toHaveBeenCalled();
 		expect(googleCalendar.collectEvents).not.toHaveBeenCalled();
 	});
@@ -196,27 +197,30 @@ describe("evaluateProfile", () => {
 	test("a trigger whose provider is not linked is skipped entirely", async () => {
 		db();
 		credentials.list.mockResolvedValue([]);
-		expect(await initiative.evaluateProfile(PROFILE)).toEqual({ skipped: "nothing to say" });
+		expect(await initiative.evaluateProfile(PROFILE)).toMatchObject({ skipped: "nothing to say" });
 		expect(googleCalendar.collectEvents).not.toHaveBeenCalled();
 	});
 
 	test("a muted trigger never runs", async () => {
+		// A mute is a person's own instruction and is the one per-trigger
+		// refusal that survived the budget's removal.
 		db({ mutes: ["calendar_next_up", "calendar_conflict", "recovery_vs_day"] });
-		expect(await initiative.evaluateProfile(PROFILE)).toEqual({ skipped: "nothing to say" });
+		expect(await initiative.evaluateProfile(PROFILE)).toMatchObject({ skipped: "nothing to say" });
 		expect(googleCalendar.collectEvents).not.toHaveBeenCalled();
 	});
 
 	test("a provider that throws costs that trigger only, and says nothing", async () => {
 		db();
 		googleCalendar.collectEvents.mockRejectedValue(new Error("Google is down"));
-		expect(await initiative.evaluateProfile(PROFILE)).toEqual({ skipped: "nothing to say" });
+		expect(await initiative.evaluateProfile(PROFILE)).toMatchObject({ skipped: "nothing to say" });
 	});
 
-	test("an event 15 minutes out produces exactly one nudge", async () => {
+	test("an event 15 minutes out produces a nudge keyed to that event", async () => {
 		db();
 		googleCalendar.collectEvents.mockResolvedValue({ events: [event(15)], calendars: [] });
 		const out = await initiative.evaluateProfile(PROFILE);
-		expect(out.nudge).toMatchObject({ trigger_id: "calendar_next_up" });
+		expect(out.nudges).toHaveLength(1);
+		expect(out.nudges[0]).toMatchObject({ trigger_id: "calendar_next_up" });
 
 		const insert = pool.query.mock.calls.find((c) => c[0].includes("INSERT IGNORE INTO athena_nudge"));
 		// Keyed on the event id, so the same meeting cannot be announced again
@@ -242,14 +246,18 @@ describe("evaluateProfile", () => {
 			if (sql.includes("INSERT IGNORE INTO athena_nudge")) return [{ affectedRows: 0 }];
 			return [[], {}];
 		});
-		expect(await initiative.evaluateProfile(PROFILE)).toEqual({
+		expect(await initiative.evaluateProfile(PROFILE)).toMatchObject({
 			skipped: "already said (deduped)",
+			nudges: [],
 		});
 	});
 
-	test("she says the most urgent thing, not everything that fired", async () => {
+	test("she says EVERYTHING that fired, most urgent first", async () => {
 		db();
-		// A clash later today AND something starting in 15 minutes.
+		// A clash later today AND something starting in 15 minutes. The old
+		// evaluator wrote only the first and let the second be re-derived on a
+		// later pass — which, behind a ninety-minute gap and a daily cap,
+		// usually meant never.
 		googleCalendar.collectEvents.mockResolvedValue({
 			events: [
 				event(15),
@@ -259,12 +267,69 @@ describe("evaluateProfile", () => {
 			calendars: [],
 		});
 		const out = await initiative.evaluateProfile(PROFILE);
-		// calendar_next_up is `high`, the clash is `normal`.
-		expect(out.nudge.trigger_id).toBe("calendar_next_up");
+
+		expect(out.nudges).toHaveLength(2);
+		// calendar_next_up is `high`, the clash is `normal`. Order still
+		// matters — it decides what gets read first — even though nothing is
+		// dropped any more.
+		expect(out.nudges[0].trigger_id).toBe("calendar_next_up");
+		expect(out.nudges[1].trigger_id).toBe("calendar_conflict");
 		const inserts = pool.query.mock.calls.filter((c) =>
 			c[0].includes("INSERT IGNORE INTO athena_nudge")
 		);
-		expect(inserts).toHaveLength(1);
+		expect(inserts).toHaveLength(2);
+	});
+
+	test("a trigger she has learned to suppress is still raised", async () => {
+		// The last mechanism that could silently drop a true observation.
+		// Scores still order and still inform the nightly review; they no
+		// longer gag a trigger on their own. Only a person's mute does that.
+		db();
+		pool.query.mockImplementation(async (sql) => {
+			if (sql.includes("FROM athena_initiative_pref")) return [[PREF_ON]];
+			if (sql.includes("COUNT(*) AS today")) return [[{ today: 0, last_at: null }]];
+			if (sql.includes("MAX(created_at) AS last_at")) return [[{ last_at: null }]];
+			if (sql.includes("FROM athena_trigger_score")) {
+				return [[{ trigger_id: "calendar_next_up", score: 0.05, samples: 9, suppressed: 1, last_reason: "ignored" }]];
+			}
+			if (sql.includes("INSERT IGNORE INTO athena_nudge")) return [{ affectedRows: 1 }];
+			return [[], {}];
+		});
+		googleCalendar.collectEvents.mockResolvedValue({ events: [event(15)], calendars: [] });
+
+		const out = await initiative.evaluateProfile(PROFILE);
+		expect(out.nudges.map((n) => n.trigger_id)).toContain("calendar_next_up");
+	});
+
+	test("during quiet hours a nudge is written but not pushed", async () => {
+		// Held, not dropped: it is waiting in the morning rather than lost.
+		const at3am = new Date(Date.UTC(2026, 8, 18, 3, 0, 0));
+		db({ pref: { ...PREF_ON, quiet_from: 22, quiet_to: 7 } });
+		googleCalendar.collectEvents.mockResolvedValue({ events: [event(15)], calendars: [] });
+
+		const out = await initiative.evaluateProfile(PROFILE, { now: at3am });
+
+		expect(out.nudges).toHaveLength(1);
+		expect(out.held).toBe(1);
+		expect(push.deliverNudge).not.toHaveBeenCalled();
+	});
+
+	test("outside quiet hours every nudge is pushed on its own", async () => {
+		db();
+		googleCalendar.collectEvents.mockResolvedValue({
+			events: [
+				event(15),
+				event(120, { id: "a", end: new Date(Date.now() + 200 * MINUTE).toISOString() }),
+				event(150, { id: "b", title: "Overlapping" }),
+			],
+			calendars: [],
+		});
+		const out = await initiative.evaluateProfile(PROFILE);
+
+		// One push per nudge. Collapsing them into one notification would put
+		// back the silent loss that removing the budget was meant to end.
+		expect(out.held).toBe(0);
+		expect(push.deliverNudge).toHaveBeenCalledTimes(2);
 	});
 
 	test("a model failure falls back to the trigger's own words rather than silence", async () => {
@@ -273,7 +338,7 @@ describe("evaluateProfile", () => {
 		llm.generateJson.mockRejectedValue(new Error("no model available"));
 		const out = await initiative.evaluateProfile(PROFILE);
 		// The observation was true either way; a stiff sentence beats nothing.
-		expect(out.nudge.text).toMatch(/Standup/);
+		expect(out.nudges[0].text).toMatch(/Standup/);
 	});
 
 	test("wording runs on the local-first task, not the frontier one", async () => {
@@ -507,5 +572,103 @@ describe("promptBlock", () => {
 	test("a profileless session gets nothing, and costs no query", async () => {
 		expect(await initiative.promptBlock(null)).toBeNull();
 		expect(pool.query).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Diagnostics
+// ---------------------------------------------------------------------------
+
+describe("why she is quiet", () => {
+	test("reports how much she has said without treating it as a ceiling", async () => {
+		db({ today: 12 });
+		const report = await initiative.diagnose(PROFILE);
+
+		// The count is still worth showing — it is the useful half of what the
+		// cap provided. What it must not do is refuse.
+		expect(report.budget.today).toBe(12);
+		expect(report.budget.daily_cap).toBeNull();
+		expect(report.budget.blocked_by).toBeNull();
+	});
+
+	test("having just spoken is not a reason to wait", async () => {
+		db({ lastAt: new Date(Date.now() - MINUTE) });
+		const report = await initiative.diagnose(PROFILE);
+
+		expect(report.budget.minutes_until_next_allowed).toBe(0);
+		expect(report.budget.blocked_by).toBeNull();
+	});
+
+	test("quiet hours read as a hold, not a refusal", async () => {
+		const at3am = new Date(Date.UTC(2026, 8, 18, 3, 0, 0));
+		db({ pref: { ...PREF_ON, quiet_from: 22, quiet_to: 7 } });
+		const report = await initiative.diagnose(PROFILE, { now: at3am });
+
+		// Nothing is being lost at 3am — it is waiting. A panel that said
+		// "blocked" here would be describing the old behaviour.
+		expect(report.budget.in_quiet_hours).toBe(true);
+		expect(report.budget.blocked_by).toBeNull();
+	});
+
+	test("reports a lost background identity instead of looking like silence", async () => {
+		// A model-access outage stops every nudge and is indistinguishable
+		// from "nothing to say" everywhere else. It must not be here.
+		access.assertModelAccess.mockRejectedValue(new Error("no grant"));
+		db();
+		const report = await initiative.diagnose(PROFILE);
+
+		expect(report.model_access).toEqual({ ok: false, reason: "no grant" });
+	});
+
+	test("separates a trigger you muted from one she stopped raising herself", async () => {
+		db({ mutes: ["calendar_next_up"] });
+		const report = await initiative.diagnose(PROFILE);
+
+		const muted = report.triggers.find((t) => t.id === "calendar_next_up");
+		expect(muted).toMatchObject({ muted: true, blocked_by: "you muted it" });
+	});
+
+	test("says which provider a trigger is waiting on", async () => {
+		credentials.list.mockResolvedValue([{ provider: "google_calendar", status: "active" }]);
+		db();
+		const report = await initiative.diagnose(PROFILE);
+
+		const both = report.triggers.find((t) => t.id === "recovery_vs_day");
+		expect(both.missing_sources).toEqual(["whoop"]);
+		expect(both.blocked_by).toBe("not connected: whoop");
+	});
+
+	test("does not touch the providers unless asked to evaluate", async () => {
+		db();
+		await initiative.diagnose(PROFILE);
+		// Opening a settings panel must not cost three provider round trips.
+		expect(googleCalendar.collectEvents).not.toHaveBeenCalled();
+
+		await initiative.diagnose(PROFILE, { evaluate: true });
+		expect(googleCalendar.collectEvents).toHaveBeenCalled();
+	});
+
+	test("evaluating reports what a trigger saw, and never writes", async () => {
+		googleCalendar.collectEvents.mockResolvedValue({ events: [event(15)], calendars: [] });
+		db();
+		const report = await initiative.diagnose(PROFILE, { evaluate: true });
+
+		const next = report.triggers.find((t) => t.id === "calendar_next_up");
+		expect(next.would_fire).toBe(true);
+		// The trigger's own brief, before any model saw it — the observation
+		// is the thing worth checking, not the wording.
+		expect(next.brief).toContain("Standup");
+		expect(llm.generateJson).not.toHaveBeenCalled();
+		const wrote = pool.query.mock.calls.some(([sql]) => /INSERT|UPDATE/i.test(sql));
+		expect(wrote).toBe(false);
+	});
+
+	test("a provider that is down is reported, not thrown", async () => {
+		googleCalendar.collectEvents.mockRejectedValue(new Error("calendar 503"));
+		db();
+		const report = await initiative.diagnose(PROFILE, { evaluate: true });
+
+		const next = report.triggers.find((t) => t.id === "calendar_next_up");
+		expect(next).toMatchObject({ would_fire: false, evaluation_error: "calendar 503" });
 	});
 });

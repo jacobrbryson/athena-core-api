@@ -10,9 +10,15 @@
  *
  * Schedule it every ~10 minutes (Cloud Run Job + Cloud Scheduler in
  * production, Task Scheduler / cron locally). The cadence is a floor on how
- * fresh "starts in 15 minutes" can be, not a rate limit — the interruption
- * budget in services/initiative decides how often anyone actually hears
- * anything, and running this more often does not make her chattier.
+ * fresh "starts in 15 minutes" can be.
+ *
+ * Since the interruption budget was removed, this cadence IS most of what
+ * decides how often she speaks — there is no longer a spacing rule behind it
+ * absorbing a fast schedule. Dedupe still guarantees one nudge per
+ * occurrence however often this runs, so running it more often makes her
+ * more timely rather than more repetitive, but it does mean a trigger with a
+ * loose condition now shows up every pass instead of once every ninety
+ * minutes. That is a threshold to fix in the trigger, not here.
  *
  * Safe to run concurrently with itself and with an in-process evaluator: one
  * nudge per occurrence is a unique key in the database, not a convention.
@@ -39,20 +45,32 @@ const log = (...m) =>
 	console.log(`[initiative ${new Date().toISOString().slice(11, 19)}]`, ...m);
 
 /**
- * A dry run still evaluates every trigger — the expensive, failure-prone part
- * — and still reports which budget rule would have stopped her. It just does
- * not write or word anything. That is what makes it useful for answering
- * "why is she silent?", which is the question this job actually gets asked.
+ * A dry run reports every gate between an observation and a sentence, without
+ * writing or wording anything. `diagnose` is the same call the in-app panel
+ * makes, so the job and the UI cannot drift into disagreeing about why she is
+ * silent — which is the question this job actually gets asked.
  */
 async function dryRun(profileIds) {
 	for (const profileId of profileIds) {
-		const pref = await initiative.getPref(profileId);
-		const blocked = await initiative.budgetCheck(profileId, pref);
-		if (blocked) {
-			log(`profile ${profileId}: would stay quiet — ${blocked}`);
+		const report = await initiative.diagnose(profileId, { evaluate: true });
+		if (report.budget.blocked_by) {
+			log(`profile ${profileId}: would stay quiet — ${report.budget.blocked_by}`);
 			continue;
 		}
-		log(`profile ${profileId}: budget allows an interruption right now`);
+		const firing = report.triggers.filter((t) => t.would_fire);
+		const held = report.budget.in_quiet_hours ? " (quiet hours — would be held, not dropped)" : "";
+		if (!firing.length) {
+			const blocked = report.triggers.filter((t) => t.blocked_by);
+			log(
+				`profile ${profileId}: nothing to say` +
+					(blocked.length
+						? ` — ${blocked.map((t) => `${t.id}: ${t.blocked_by}`).join("; ")}`
+						: "")
+			);
+			continue;
+		}
+		log(`profile ${profileId}: would say ${firing.length} thing(s)${held}`);
+		for (const t of firing) log(`    ${t.id}: ${t.brief}`);
 	}
 }
 
@@ -73,7 +91,9 @@ async function main() {
 			? { profiles: 1, ...(await one(args.profile)) }
 			: await initiative.runOnce();
 		log(
-			`${results.profiles} profile(s), ${results.sent || 0} spoken to` +
+			`${results.profiles} profile(s), ${results.sent || 0} nudge(s) written` +
+				(results.released ? `, ${results.released} held one(s) released` : "") +
+				(results.held ? `, ${results.held} held for quiet hours` : "") +
 				(results.skipped && Object.keys(results.skipped).length
 					? ` — quiet: ${Object.entries(results.skipped)
 							.map(([reason, n]) => `${n} ${reason}`)
@@ -95,12 +115,19 @@ async function main() {
 }
 
 async function one(profileId) {
+	// Anything written overnight goes out first, same as a full pass.
+	const pref = await initiative.getPref(profileId);
+	const { released } = await initiative
+		.releaseHeld(profileId, pref)
+		.catch(() => ({ released: 0 }));
+
 	const outcome = await initiative.evaluateProfile(profileId);
-	if (outcome.nudge) {
-		log(`profile ${profileId}: "${outcome.nudge.text}"`);
-		return { sent: 1, skipped: {} };
+	if (outcome.nudges?.length) {
+		for (const nudge of outcome.nudges) log(`profile ${profileId}: "${nudge.text}"`);
+		if (outcome.held) log(`profile ${profileId}: held for quiet hours, will go out at the window's end`);
+		return { sent: outcome.nudges.length, released, skipped: {} };
 	}
-	return { sent: 0, skipped: { [outcome.skipped]: 1 } };
+	return { sent: 0, released, skipped: { [outcome.skipped]: 1 } };
 }
 
 main()
