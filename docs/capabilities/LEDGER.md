@@ -1,5 +1,15 @@
 # Capability ledger
 
+- 2026-09-19 — Initiative now lets you verify a phone number for SMS from the
+  Initiative panel, turn texting off, and include SMS in the device-by-device
+  test notification report — `initiative.md` (status: partial)
+
+- 2026-09-19 — SMS setup errors now include the provider error code when one is
+  available, so Twilio-side restrictions can be diagnosed from the panel —
+  `initiative.md` (status: partial)
+
+- 2026-09-19 — Added encrypted short-lived provider and card-order caches, bounded API memory, and shared Companion browser reads with mutation/session invalidation — `companion-dashboard.md` (status: partial).
+
 - 2026-09-19 — Android dashboard viewport now stays above system navigation and the keyboard, keeping the bottom menu reachable — `android-companion.md` (status: planned)
 
 - 2026-09-19 — Added an Android Companion scene sharing the mobile dashboard, native Google sign-in and automatic phone registration; device acceptance and release remain pending — `android-companion.md` (status: planned)

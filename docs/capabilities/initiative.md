@@ -29,8 +29,8 @@ talking. Tap **not now** and I'll drop it.
 
 If you've paired a phone, I can send it there too, so you don't have to have
 me open to hear it — and this browser can be one of the places I reach, so a
-closed tab isn't the same as me having nothing to say. One notification at a
-time — a newer one replaces an older one rather than piling up.
+closed tab isn't the same as me having nothing to say. You can also verify a
+phone number for text messages in the same panel.
 
 **You can check any of that without waiting for me to have something to say.**
 There's a button that sends you a test notification, and it tells you which of
@@ -62,8 +62,8 @@ There's a switch: **"Let Athena speak first"**. It needs the same permission
 that lets me change things, so if you haven't turned that on yet
 (**⋯ menu** → **Actions**), do that first.
 
-Underneath you set how often at most — **times a day**, and the hours I stay
-quiet — and nothing is lost to them: anything I notice overnight is written
+Underneath you set the hours I stay quiet — and nothing is lost to them:
+anything I notice overnight is written
 down and arrives when the window ends, rather than being dropped. Set both
 hours the same to turn quiet hours off entirely.
 
@@ -74,6 +74,7 @@ browser has its own **Turn on**, since that permission is granted per browser
 and can be refused in one while your phone works perfectly.
 
 **"Send me a test notification"** proves the whole path, device by device.
+It includes verified SMS numbers as well as paired phones and browsers.
 **"Why she's been quiet" → Check right now** answers the question this panel
 otherwise can't: it names the limit that's currently stopping me, counts down
 to when I'm next allowed to speak, says which of the things I watch for are
@@ -126,11 +127,9 @@ each one landed.
 - **I won't start again on my own.** If I've stopped raising something, it
   stays stopped until you tell me otherwise — I don't get to decide you've
   changed your mind.
-- **A hard ceiling, not a suggestion.** At most three a day by default, at
-  least ninety minutes apart, nothing during your quiet hours, and never the
-  same thing twice.
-- **One thing at a time.** If several things are worth saying, I say the most
-  urgent and leave the rest. I won't deliver a briefing.
+- **I don't use a daily interruption ceiling or spacing rule.** If several
+  things are worth saying, I record each one. Your opt-in, mutes, quiet hours,
+  each trigger's own shelf life, and one-per-occurrence dedupe still apply.
 - **Only three things to watch for**, and two of them need Google Calendar
   connected. The third also needs Whoop.
 - **I'm not watching for anything else.** Not your email, not your messages,
@@ -138,6 +137,10 @@ each one landed.
 - **I never act on my own.** Speaking first is as far as it goes — anything
   that *changes* something is still a proposal you approve.
 - **Children and Guardians never get this.** It's the account owner's setting.
+
+- **Text messages need verification.** In Initiative, enter your number and
+  confirm the six-digit code I text you before I can send test messages or
+  initiative reminders there. You can turn texting off from the same panel.
 
 ## Under the hood
 
@@ -166,9 +169,9 @@ each one landed.
   `../../../companion/src/pages/CompanionConsole.tsx`.
 - Tests: `src/services/initiative/initiative.test.js`.
 - Push: `src/services/push/` — `index.js` (who is reachable, failure
-  handling) and `fcm.js` (FCM HTTP v1, service account in the
-  `FCM_SERVICE_ACCOUNT` secret). Registration is device-authenticated:
-  `POST /api/v1/devices/push-token`.
+  handling), `fcm.js`, `webpush.js`, and `sms.js`. SMS registration is a
+  verified two-step flow through `POST|PUT /api/v1/initiative/sms`; the test
+  notification fans out to every verified destination.
 - Learning: `src/services/initiative/appraise.js` — reply judged on the
   local-first task, EWMA score per (profile, trigger), suppression. The fast
   path runs in `src/controllers/gemini.js` after a turn; the sweep runs in the

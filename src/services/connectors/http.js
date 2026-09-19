@@ -1,5 +1,6 @@
 const oauth = require("./oauth");
 const { getProvider } = require("./registry");
+const readCache = require('../readCache');
 
 /**
  * Authenticated HTTP to a linked provider's API.
@@ -14,6 +15,16 @@ const { getProvider } = require("./registry");
  */
 
 const REQUEST_TIMEOUT_MS = 12000;
+// Cache only the existing, bounded connector reads. New endpoints opt in here
+// after their freshness and response sensitivity have been considered.
+const CACHEABLE_READS = {
+	google_calendar: /^\/(?:users\/me\/calendarList|calendars\/[^/]+\/events)$/,
+	whoop: /^\/v2\/(?:user\/profile\/basic|recovery|activity\/(?:sleep|workout)|cycle)$/,
+	strava: /^\/athlete\/activities$/,
+	gmail: /^\/users\/me\/(?:profile|messages(?:\/[^/]+)?)$/,
+	jira: /^\/(?:oauth\/token\/accessible-resources|ex\/jira\/[^/]+\/rest\/api\/3\/search\/jql)$/,
+	slack: /^\/(?:auth\.test|search\.messages)$/,
+};
 
 function httpError(message, status, code) {
 	return Object.assign(new Error(message), { status, code });
@@ -151,83 +162,114 @@ async function providerRequest(
 		);
 	}
 
-	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-	let response;
-	try {
-		response = await fetch(buildUrl(provider.apiBase, path, query), {
-			method,
-			headers: {
-				Authorization: `Bearer ${token}`,
-				Accept: "application/json",
-				...(body ? { "Content-Type": "application/json" } : {}),
-			},
-			body: body ? JSON.stringify(body) : undefined,
-			signal: controller.signal,
-		});
-	} catch (err) {
-		throw Object.assign(
-			httpError(
-				`${provider.label} request failed: ${err.message}`,
-				504,
-				"provider_error"
-			),
-			{ providerDetail: err.message }
-		);
-	} finally {
-		clearTimeout(timer);
-	}
+	const url = buildUrl(provider.apiBase, path, query);
+	const namespace = `provider:${providerId}`;
+	const load = async () => {
+		const controller = new AbortController();
+		const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+		let response;
+		try {
+			response = await fetch(url, {
+				method,
+				headers: {
+					Authorization: `Bearer ${token}`,
+					Accept: "application/json",
+					...(body ? { "Content-Type": "application/json" } : {}),
+				},
+				body: body ? JSON.stringify(body) : undefined,
+				signal: controller.signal,
+			});
+		} catch (err) {
+			throw Object.assign(
+				httpError(
+					`${provider.label} request failed: ${err.message}`,
+					504,
+					"provider_error"
+				),
+				{ providerDetail: err.message }
+			);
+		} finally {
+			clearTimeout(timer);
+		}
 
-	const text = await response.text();
-	let data;
-	try {
-		data = text ? JSON.parse(text) : null;
-	} catch {
-		data = null;
-	}
+		const text = await response.text();
+		let data;
+		try {
+			data = text ? JSON.parse(text) : null;
+		} catch {
+			data = null;
+		}
 
-	// The body is parsed first because a 403 only means something once you
-	// have read why the provider said it.
-	if (grantIsGone(response.status, data)) {
-		// The token was live as far as we knew, so the grant was revoked at the
-		// provider. Flag it rather than retrying into the same wall.
-		if (invalidateOnAuthFailure) {
-			await oauth.invalidate(
-				profileId,
-				providerId,
-				`provider returned ${response.status}`
+		// The body is parsed first because a 403 only means something once you
+		// have read why the provider said it.
+		if (grantIsGone(response.status, data)) {
+			// The token was live as far as we knew, so the grant was revoked at the
+			// provider. Flag it rather than retrying into the same wall.
+			if (invalidateOnAuthFailure) {
+				await oauth.invalidate(
+					profileId,
+					providerId,
+					`provider returned ${response.status}`
+				);
+			}
+			throw Object.assign(
+				httpError(
+					`${provider.label} access was revoked; reconnect required`,
+					409,
+					"not_connected"
+				),
+				{
+					reason: "revoked",
+					providerStatus: response.status,
+					providerDetail: providerDetail(data, response.status),
+				}
 			);
 		}
-		throw Object.assign(
-			httpError(
-				`${provider.label} access was revoked; reconnect required`,
-				409,
-				"not_connected"
-			),
-			{
-				reason: "revoked",
-				providerStatus: response.status,
-				providerDetail: providerDetail(data, response.status),
-			}
-		);
-	}
 
-	if (!response.ok) {
-		const detail = providerDetail(data, response.status);
-		throw Object.assign(
-			httpError(
-				`${provider.label}: ${String(detail).slice(0, 200)}`,
-				502,
-				"provider_error"
-			),
-			// The provider's OWN status and wording, kept as fields rather than
-			// only baked into our message, so the grounding layer can quote
-			// them without unpicking a string we composed. Nothing reads these
-			// without sanitizing first — see connectors/context.js.
-			{ providerStatus: response.status, providerDetail: detail }
-		);
+		if (!response.ok) {
+			const detail = providerDetail(data, response.status);
+			throw Object.assign(
+				httpError(
+					`${provider.label}: ${String(detail).slice(0, 200)}`,
+					502,
+					"provider_error"
+				),
+				// The provider's OWN status and wording, kept as fields rather than
+				// only baked into our message, so the grounding layer can quote
+				// them without unpicking a string we composed. Nothing reads these
+				// without sanitizing first — see connectors/context.js.
+				{ providerStatus: response.status, providerDetail: detail }
+			);
+		}
+		return data;
+	};
+	// Resolve/audit the live credential above even on a cache hit. A token
+	// change produces a new fingerprint; secrets never become database keys.
+	// Only successful JSON GETs are reusable. Slack's ok:false is an error
+	// despite HTTP 200, and must not be retained.
+	if (method === 'GET' && !body && CACHEABLE_READS[providerId]?.test(path)) {
+		const canonical = new URL(url);
+		canonical.searchParams.sort();
+		return readCache.read({ profileId, namespace,
+			key: [canonical.toString(), readCache.hash(token), actor, invalidateOnAuthFailure], ttlMs: 30000 },
+		async () => {
+			const data = await load();
+			if (data === null || data?.ok === false) {
+				// Preserve the provider's normal response without caching it.
+				throw Object.assign(new Error('Uncacheable provider response'), { uncachedData: data });
+			}
+			return data;
+		}).catch(err => {
+			if (Object.prototype.hasOwnProperty.call(err, 'uncachedData')) return err.uncachedData;
+			throw err;
+		});
 	}
-	return data;
+	if (method === 'GET' || method === 'HEAD') return load();
+	// No write is coalesced or cached. Fence reads on both sides, including
+	// ambiguous network failures where a provider may have accepted the write.
+	await readCache.invalidate(profileId, namespace);
+	try { return await load(); }
+	finally { await readCache.invalidate(profileId, namespace); }
 }
 
 const providerGet = (profileId, providerId, path, opts = {}) =>

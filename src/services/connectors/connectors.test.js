@@ -3,6 +3,10 @@
  * the aggregation that decides what reaches the prompt.
  */
 const mockAccessToken = jest.fn();
+// Connector semantics are tested independently of the disposable cache store.
+jest.mock('../readCache', () => ({
+  read: (_options, load) => load(), invalidate: async () => {}, hash: value => value,
+}));
 const mockInvalidate = jest.fn();
 jest.mock("./oauth", () => ({
 	accessToken: mockAccessToken,
@@ -43,7 +47,6 @@ function calendarList(...names) {
 
 beforeEach(() => {
 	jest.clearAllMocks();
-	googleCalendar.clearCalendarCache();
 	mockAccessToken.mockResolvedValue("live-token");
 	mockList.mockResolvedValue([
 		{ provider: "google_calendar", status: "active" },
@@ -273,7 +276,6 @@ describe("google calendar", () => {
 
 		// But a total failure must NOT be reported as an empty schedule.
 		jest.clearAllMocks();
-		googleCalendar.clearCalendarCache();
 		global.fetch
 			.mockResolvedValueOnce(calendarList("Mine", "Family"))
 			.mockResolvedValue(apiResponse({}, { ok: false, status: 500 }));
@@ -417,11 +419,12 @@ describe("google calendar", () => {
 
 describe("strava", () => {
 	it("filters by an epoch-seconds lower bound", async () => {
+		jest.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-19T12:00:29Z'));
 		global.fetch.mockResolvedValue(apiResponse([]));
 		await strava.listActivities(PROFILE, { days: 7 });
 		const after = Number(lastUrl().searchParams.get("after"));
 		const expected = Math.floor((Date.now() - 7 * 86400_000) / 1000);
-		expect(Math.abs(after - expected)).toBeLessThan(5);
+		expect(expected - after).toBe(29); // bounded widening for the 30s cache window
 	});
 
 	it("converts metres to miles and keeps the raw value", async () => {

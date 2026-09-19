@@ -106,6 +106,8 @@ async function getDashboard(profileId, user) {
     provider('gmail', () => work.gmail(profileId)),
   ]);
   const result = { calendar: calendarData, recovery, sleep, strain, activity, familyChores, jira, slack, gmail };
+  for (const [id, entry] of snapshots) if (Date.now() - entry.at >= CACHE_TTL_MS) snapshots.delete(id);
+  if (snapshots.size >= 128) snapshots.delete(snapshots.keys().next().value);
   snapshots.set(profileId, { at: Date.now(), data: result });
   return result;
 }

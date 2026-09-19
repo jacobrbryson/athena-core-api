@@ -35,7 +35,8 @@ function matches(message) {
 
 function since(days) {
 	const lookback = Math.max(1, Math.min(Number(days) || 7, 90));
-	return new Date(Date.now() - lookback * 86400_000).toISOString();
+	// Stable lower bound for a short read-cache window (at most 30s wider).
+	return new Date(Math.floor(Date.now() / 30000) * 30000 - lookback * 86400_000).toISOString();
 }
 
 function limitOf(value, fallback = 10) {

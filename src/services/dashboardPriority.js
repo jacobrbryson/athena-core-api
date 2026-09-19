@@ -19,6 +19,7 @@
 const llm = require("./llm");
 const dashboard = require("./dashboard");
 const actions = require("./actions");
+const readCache = require('./readCache');
 
 // The card set, in the order the dashboard falls back to. Changing these ids
 // means changing components/Dashboard.tsx in the companion app with them.
@@ -35,7 +36,6 @@ const CARD_IDS = new Set(CARDS.map((c) => c.id));
 const DEFAULT_ORDER = CARDS.map((c) => ({ id: c.id, why: null }));
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
-const cache = new Map(); // profileId => { at, value }
 
 const MINUTE = 60_000;
 const latest = (rows) =>
@@ -218,9 +218,6 @@ function normalize(raw) {
  * an ordering nobody chose.
  */
 async function getPriority(profileId, user) {
-	const hit = cache.get(profileId);
-	if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value;
-
 	let summary = dashboard.cachedDashboard(profileId);
 	if (!summary) {
 		try {
@@ -232,6 +229,8 @@ async function getPriority(profileId, user) {
 	const pending = await actions.listPending(profileId).catch(() => []);
 	const cards = describe(summary, pending.length);
 	const empty = new Map(cards.map((c) => [c.id, c.empty]));
+	// Reuse only an identical signal sheet and prompt, not merely a profile.
+	const inputKey = readCache.hash(['dashboard-order-v2', PROMPT(cards)]);
 
 	// Nothing on the page has anything in it. Usually this is a snapshot taken
 	// before the providers answered, and there is no "more important" to find —
@@ -242,23 +241,24 @@ async function getPriority(profileId, user) {
 	}
 
 	try {
-		const { data, model } = await llm.generateJson({
-			task: "json",
-			contents: [{ role: "user", parts: [{ text: PROMPT(cards) }] }],
-			check: (parsed) => {
-				const ids = (Array.isArray(parsed?.order) ? parsed.order : [])
-					.map((e) => (typeof e === "string" ? e : e?.id))
-					.filter((id) => CARD_IDS.has(id));
-				return new Set(ids).size === CARDS.length ? true : "order must list every card id exactly once";
-			},
+		const value = await readCache.read({ profileId, namespace: 'dashboard-order', key: inputKey, ttlMs: CACHE_TTL_MS }, async () => {
+			const { data, model } = await llm.generateJson({
+				task: "json",
+				contents: [{ role: "user", parts: [{ text: PROMPT(cards) }] }],
+				check: (parsed) => {
+					const ids = (Array.isArray(parsed?.order) ? parsed.order : [])
+						.map((e) => (typeof e === "string" ? e : e?.id))
+						.filter((id) => CARD_IDS.has(id));
+					return new Set(ids).size === CARDS.length ? true : "order must list every card id exactly once";
+				},
+			});
+			return {
+				order: applyEmptyFloor(normalize(data?.order), empty),
+				source: "athena",
+				model: model || null,
+				generatedAt: new Date().toISOString(),
+			};
 		});
-		const value = {
-			order: applyEmptyFloor(normalize(data?.order), empty),
-			source: "athena",
-			model: model || null,
-			generatedAt: new Date().toISOString(),
-		};
-		cache.set(profileId, { at: Date.now(), value });
 		return value;
 	} catch (err) {
 		console.warn("[dashboard] prioritisation unavailable:", err.message);
@@ -269,7 +269,7 @@ async function getPriority(profileId, user) {
 
 /** Drop the memoised order so the next read re-ranks (used when the data moves). */
 function invalidate(profileId) {
-	cache.delete(profileId);
+	return readCache.invalidate(profileId, 'dashboard-order');
 }
 
 module.exports = { getPriority, invalidate, CARDS };

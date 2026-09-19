@@ -8,6 +8,8 @@
  * someone's day that silently stops existing.
  */
 jest.mock("./llm", () => ({ generateJson: jest.fn() }));
+jest.mock('../helpers/db', () => ({ query: jest.fn(async () => [[]]) }));
+jest.mock('../helpers/crypto', () => ({ encrypt: async value => value, decrypt: async value => value }));
 jest.mock("./dashboard", () => ({ cachedDashboard: jest.fn(), getDashboard: jest.fn() }));
 jest.mock("./actions", () => ({ listPending: jest.fn() }));
 
@@ -116,6 +118,20 @@ describe("getPriority", () => {
 		await priority.getPriority(profile, {});
 		await priority.getPriority(profile, {});
 
+		expect(llm.generateJson).toHaveBeenCalledTimes(1);
+	});
+
+	it("reranks when the pending decisions change even within the TTL", async () => {
+		llm.generateJson.mockResolvedValue({ data: { order: ALL }, model: 'test' });
+		await priority.getPriority(profile, {});
+		actions.listPending.mockResolvedValue([]);
+		await priority.getPriority(profile, {});
+		expect(llm.generateJson).toHaveBeenCalledTimes(2);
+	});
+
+	it("coalesces model generation for simultaneous identical signal sheets", async () => {
+		llm.generateJson.mockResolvedValue({ data: { order: ALL }, model: 'test' });
+		await Promise.all(Array.from({ length: 10 }, () => priority.getPriority(profile, {})));
 		expect(llm.generateJson).toHaveBeenCalledTimes(1);
 	});
 

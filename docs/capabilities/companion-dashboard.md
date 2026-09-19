@@ -46,6 +46,10 @@ nothing about it.
 There is no refresh button, because there is nothing to refresh by hand: the
 dashboard updates itself when the server tells it something moved.
 
+I reuse recently read information so reopening Home or the daily briefing can
+load faster. Routine background checks keep the cards steady while they load.
+Changes announced by the server clear the previous view and request new data.
+
 ## Where to find it
 
 After signing in to Companion, I open Home. On desktop, the left sidebar
@@ -82,7 +86,20 @@ can lag a change you just made. Live updates only reach a dashboard whose
 connection is healthy; when the socket is down it falls back to re-reading
 quietly in the background, which is slower but never wrong.
 
+Connected-provider reads may reuse results for up to 30 seconds, and my browser
+can reuse dashboard reads for another 15 seconds. External changes appear on
+the next refresh; background polling runs every five minutes. I reuse a card
+ordering only when its input signals match, for at most ten minutes. These
+caches do not reuse our chat replies or approve anything. Browser copies stay
+in memory and are cleared on sign-in, sign-out, access errors, and updates.
+
 ## Under the hood
+
+- Encrypted database cache and bounded API memory: `../../src/services/readCache.js`;
+  migration `../../db/migrations/0034_read_cache.up.sql`.
+- Browser read reuse: `../../../companion/src/api/readCache.ts` and
+  `../../../companion/src/components/useDashboardData.ts`.
+- Freshness, invalidation, rollout and diagnostic counters: `../architecture/caching.md`.
 
 - Data endpoint: `../../src/controllers/dashboard.js` and `../../src/services/dashboard.js`.
 - News: `../../src/services/news/`, described in `news.md`. The card and page

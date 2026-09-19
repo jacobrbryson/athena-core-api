@@ -25,10 +25,6 @@ const MAX_EVENTS = 25;
 // A guard against pathological accounts (dozens of subscribed calendars), not
 // a product limit. freeBusy also caps out at 50 calendars per request.
 const MAX_CALENDARS = 20;
-// The calendar list changes rarely and is read twice per turn (events, then
-// free/busy). Cached per process, briefly.
-const CALENDAR_LIST_TTL_MS = 10 * 60 * 1000;
-const CALENDAR_CACHE_MAX = 200;
 
 const KEYWORDS =
 	/\b(calendar|schedule|scheduled|appointment|appointments|meeting|meetings|event|events|busy|free|availability|available|agenda|booked|what('?s| is) on)\b/i;
@@ -61,9 +57,6 @@ function window(days = 7, from = new Date(), timeZone = null) {
 // Calendars
 // ---------------------------------------------------------------------------
 
-/** profileId -> { at: epochMs, calendars: [...] } */
-const calendarCache = new Map();
-
 /** The single calendar we can always assume exists, when the list is unusable. */
 const PRIMARY_ONLY = [
 	{ id: "primary", name: "Calendar", primary: true, timeZone: null },
@@ -78,9 +71,8 @@ const PRIMARY_ONLY = [
  * events would come back titleless anyway.
  */
 async function listCalendars(profileId) {
-	const cached = calendarCache.get(profileId);
-	if (cached && Date.now() - cached.at < CALENDAR_LIST_TTL_MS) return cached.calendars;
-
+	// The shared HTTP read cache resolves the live credential on every call,
+	// including after reconnecting a different account.
 	const data = await providerGet(profileId, PROVIDER, "/users/me/calendarList", {
 		query: { minAccessRole: "reader", showHidden: "false", maxResults: 250 },
 	});
@@ -98,13 +90,7 @@ async function listCalendars(profileId) {
 		.sort((a, b) => Number(b.primary) - Number(a.primary))
 		.slice(0, MAX_CALENDARS);
 
-	const resolved = calendars.length ? calendars : PRIMARY_ONLY;
-	// Bounded: an instance serving many profiles must not grow this without end.
-	if (calendarCache.size >= CALENDAR_CACHE_MAX) {
-		calendarCache.delete(calendarCache.keys().next().value);
-	}
-	calendarCache.set(profileId, { at: Date.now(), calendars: resolved });
-	return resolved;
+	return calendars.length ? calendars : PRIMARY_ONLY;
 }
 
 /**
@@ -543,5 +529,4 @@ module.exports = {
 	displayTimeZone,
 	formatEvent,
 	window,
-	clearCalendarCache: () => calendarCache.clear(),
 };
