@@ -1,7 +1,7 @@
 ---
 id: actions
 title: Doing things, not just saying them
-summary: I can offer to actually change something — add a calendar event, save a fact — and you approve or decline it before anything happens.
+summary: I can offer to do something real — add an event, save a fact, look through your camera — and you approve it before anything happens.
 where: the ⋯ menu (top right) → Actions
 status: partial
 surfaces: [companion]
@@ -23,6 +23,10 @@ part, it's how I'm built.
 Two things I can propose today:
 
 - **Add a calendar event** to your own Google Calendar.
+- **Take a look through your camera**, when seeing would answer what we're
+  talking about. See [camera.md](camera.md) — this is the one action I can do
+  repeatedly on my own once you allow it, and the only one that opens something
+  on your device.
 - **Save a fact** to my long-term memory, when you ask me to remember
   something specific.
 
@@ -79,7 +83,11 @@ Approval cards work on your paired phone or car too, not just in this browser.
 - **One proposal per reply.** I won't queue up a batch of changes.
 - **Children and Guardians can't approve anything**, and I won't offer them
   actions at all. This is the account owner's decision.
-- **I can't undo an action for you.** Both of today's actions are things you
+- **A look can't be undone.** Adding an event or saving a fact are things you
+  can reverse yourself; a look has already happened by the time you read about
+  it, which is why its card says so and why allowing me to take them on my own
+  is a separate decision.
+- **I can't undo an action for you.** The other two are things you
   can undo yourself — delete the event, delete the memory — and the card says
   so before you approve.
 

@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS news_poll;
+DROP TABLE IF EXISTS news_item;
+DROP TABLE IF EXISTS news_source;

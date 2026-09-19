@@ -125,7 +125,7 @@ function describe(summary, pendingCount) {
 			// this sheet genuinely cannot say whether there is anything in them.
 			// Never treated as empty, and so never demoted for looking it.
 			empty: null,
-			signals: { note: "Background reading from the person's own RSS feeds." },
+			signals: { note: "Background reading from the news pages this person chose." },
 		},
 		{
 			id: "projects",

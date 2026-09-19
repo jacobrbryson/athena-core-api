@@ -27,6 +27,7 @@ const memoryStore = require("../services/memoryStore");
 const { startOfLocalDay, DEFAULT_TZ } = require("../services/memoryStore/timeRange");
 const actions = require("../services/actions");
 const initiative = require("../services/initiative");
+const lookRequests = require("../services/lookRequests");
 const { collectMetrics } = require("../services/selfReview/metrics");
 const { runEvals } = require("../services/selfReview/evals");
 const { ruleFindings, writePlan, fallbackPlan, renderMarkdown } = require("../services/selfReview/plan");
@@ -87,7 +88,14 @@ async function maintenance({ dryRun }) {
 	// News BEFORE the backfill: ingest writes memories whose embeddings happen in
 	// the background, so backfilling afterwards catches anything that failed the
 	// same night instead of leaving it unsearchable until tomorrow.
+	//
+	// This is no longer where news is FETCHED — src/jobs/news.js does that all
+	// day on each source's own interval. What happens here is the catch-up: any
+	// world-scope headline stored today whose memory write failed, plus the
+	// seeding of the env-declared house sources. Then the old headlines nobody
+	// will look at again are dropped, so news_item stays a working set.
 	await step("news", () => memoryStore.ingestNews(), results);
+	await step("newsPrune", () => require("../services/news").prune(30), results);
 	await step("embeddingBackfill", () => memoryStore.backfillEmbeddings({ limit: 1000 }), results);
 	// Retire proposals nobody answered. Cheap, idempotent, and the reason the
 	// action table never accumulates rows that read as pending forever — an
@@ -97,6 +105,9 @@ async function maintenance({ dryRun }) {
 	// there tomorrow was never an interruption, and leaving it pending would
 	// let it surface hours after it stopped being true.
 	await step("nudgeExpiry", async () => ({ expired: await initiative.expireStale() }), results);
+	// Look requests nobody answered. `pendingFor` already filters on expiry, so a
+	// missed run delays tidying, never correctness.
+	await step("lookExpiry", async () => ({ expired: await lookRequests.expireStale() }), results);
 	// Fold in every outcome the fast path did not see — nudges that were
 	// dismissed, and nudges that reached someone and were never answered — so a
 	// trigger nobody wants gets quieter on its own instead of waiting for

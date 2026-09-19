@@ -29,6 +29,7 @@
 
 const googleCalendar = require("../connectors/googleCalendar");
 const memory = require("../memory");
+const lookRequests = require("../lookRequests");
 
 /** A rejection that is the model's fault, not the person's or the server's. */
 function invalid(message) {
@@ -207,6 +208,70 @@ const ACTIONS = [
 		async execute(profileId, params) {
 			const { ref, html_link } = await googleCalendar.createEvent(profileId, params);
 			return { ref, detail: { html_link } };
+		},
+	},
+
+	{
+		id: "look_through_camera",
+		label: "Take a look through your camera",
+		// Internal: the "provider" is a browser on the person's desk, which the
+		// server cannot reach. Executing writes an athena_look_request and a
+		// client fulfils it (services/lookRequests.js).
+		provider: null,
+		// Opening a camera is squarely "Athena does something you did not ask
+		// for in this moment", which is what this consent covers.
+		consentType: "action_authority",
+		// A look cannot be taken back, and a notable one becomes a memory. The
+		// card says so rather than implying it can be undone.
+		reversible: false,
+		// The point of the whole action. Granted once, she may look when it
+		// helps instead of asking every time; revoking it stops her dead.
+		standing: true,
+		describe:
+			"Take a look through the camera on the person's device when seeing would " +
+			"genuinely answer what is being discussed — they are showing you something, " +
+			"asking what you think of something in front of them, or asking what you can " +
+			"see. Always say why. Do NOT propose this to check on someone, to see what " +
+			"they are doing, out of curiosity, or when they have not brought anything " +
+			"visual into the conversation. If you can already see something current, use " +
+			"that instead of asking for another look.",
+		params: {
+			reason: "Why looking would help, in one short sentence, addressed to them. Required.",
+			prefer: "Optional. \"front\" to look at what they are pointing at, \"room\" to look at where they are.",
+		},
+
+		normalize(raw = {}) {
+			// A camera that opens without a stated reason is not something to
+			// ship, so the reason is the one required parameter.
+			const reason = str(raw.reason, 300);
+			if (!reason) throw invalid("A look needs a reason the person can read");
+			const prefer = str(raw.prefer, 20)?.toLowerCase() ?? null;
+			if (prefer && prefer !== "front" && prefer !== "room") {
+				throw invalid('Prefer must be "front" or "room"');
+			}
+			return prefer ? { reason, prefer } : { reason };
+		},
+
+		summarize(p) {
+			return `Take a look through your camera: ${p.reason}`;
+		},
+
+		async execute(profileId, params, ctx = {}) {
+			const request = await lookRequests.create(profileId, {
+				reason: params.reason,
+				prefer: params.prefer || null,
+				actionUuid: ctx.actionUuid || null,
+			});
+			// Null means she already has looks outstanding that nobody answered.
+			// Failing is right: several cameras opening at once the moment a
+			// device appears is exactly what the cap exists to prevent.
+			if (!request) {
+				throw invalid("She already has a look waiting to be answered");
+			}
+			return {
+				ref: request.uuid,
+				detail: "Asked your device to take a look",
+			};
 		},
 	},
 

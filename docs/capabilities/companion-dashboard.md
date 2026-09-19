@@ -11,6 +11,20 @@ triggers: [dashboard, briefing, today, home screen, navigation, priority, order]
 
 ## What I can do
 
+I populate the cards from connected sources: Google Calendar events for the next
+seven days; dated WHOOP recovery, sleep and strain; recent Strava activities;
+the linked Family Chores player's chores for today; saved family and work
+memories; assigned Jira issues; unread Gmail headers; Slack mentions; and
+pending action approvals. A missing connection, missing health consent, empty
+result and failed read are distinct states. I do not invent missing metrics.
+
+The News card and page show headlines I have already read for you in the
+background, from pages you paste in News → Manage pages — no feed URL needed,
+and no waiting on a website when you open the dashboard. How often I read each
+page is mine to work out, not yours to set; news watching has its own
+description. A page I could not read last time says so on the card. The
+dashboard reads data; it never connects accounts or approves actions by itself.
+
 I give you a responsive home screen with Calendar, Health & Performance,
 Family, Work, News & Updates, Projects, and Notifications. Calendar and health
 cards check whether your apps are connected. Topic shortcuts open our chat
@@ -41,6 +55,8 @@ name at the bottom of the sidebar — or More on mobile — opens one menu holdi
 every setting and panel: memories, photos, brain, phone and car, local server,
 actions, initiative, connected apps, voice, and sign out. In Chat, Daily
 briefing opens a compact drawer with an Open full dashboard button.
+When Google provides a profile picture at sign-in, I show it beside your name
+in the sidebar; if it cannot be loaded, I show your initial instead.
 
 ## When it doesn't work
 
@@ -52,6 +68,12 @@ requirements still apply.
 
 ## Limits
 
+News requires the news-watch database migration and its scheduled job; without
+that job nothing is read and the card stays empty. Work OAuth apps
+must be configured by the server owner and then authorized by the user. Provider
+results are bounded previews, not complete exports. Dated health metrics may be
+from earlier days; a missing score is displayed as unknown, never zero.
+
 The landscape is decorative, not local weather. I never present sample personal
 data as yours. Opening a card does not send a message or approve an action, and
 ordering the cards never changes what is in them. My ranking is a reading order,
@@ -62,9 +84,18 @@ quietly in the background, which is slower but never wrong.
 
 ## Under the hood
 
+- Data endpoint: `../../src/controllers/dashboard.js` and `../../src/services/dashboard.js`.
+- News: `../../src/services/news/`, described in `news.md`. The card and page
+  only render what that service has already stored.
+- News source UI: `../../../companion/src/components/NewsSourcesPanel.tsx`.
+- Migrations: `../../db/migrations/0031_dashboard_preferences.up.sql` (the
+  legacy news source list, now read once to adopt it) and
+  `../../db/migrations/0032_news_watch.up.sql`.
+- Work connectors: `../../src/services/connectors/work.js`.
 - Frontend: `../../../companion/src/components/Dashboard.tsx`
 - Shell and preserved chat: `../../../companion/src/pages/CompanionConsole.tsx`
 - Styling: `../../../companion/src/dashboard.css`
+- Sidebar profile avatar: `../../../companion/src/components/ProfileAvatar.tsx`.
 - Card ordering: `../../src/services/dashboardPriority.js` via `GET /api/v1/dashboard/priority`.
 - Live updates: `rpc: "dashboardUpdated"` from `../../src/websocket/wsServer.js`.
 - Connection status: existing `GET /api/v1/integrations` through the shared client.

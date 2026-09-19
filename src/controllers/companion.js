@@ -8,6 +8,7 @@ const devices = require("../services/devices");
 const push = require("../services/push");
 const llm = require("../services/llm");
 const { resolveActor, requireAdultActor } = require("../helpers/actor");
+const lookRequests = require("../services/lookRequests");
 
 function fail(res, err, fallback) {
 	const status = err.status || (/not found/i.test(err.message) ? 404 : /required|invalid|too large|must be/i.test(err.message) ? 400 : 500);
@@ -257,9 +258,50 @@ async function observe(req, res) {
 			audience: who.audience,
 			familyId: who.familyId,
 		});
-		return res.json({ success: true, scene });
+		// This frame answers something Athena asked for. Closing the request
+		// here rather than in its own call means a look is only ever marked
+		// answered by a frame that actually arrived.
+		const requestUuid = req.body?.look_request_id;
+		let answered = false;
+		if (typeof requestUuid === "string" && requestUuid) {
+			answered = await lookRequests.fulfil(who.profileId, requestUuid).catch(() => false);
+		}
+		return res.json({ success: true, scene, answered });
 	} catch (err) {
 		return fail(res, err, "Failed to process observation");
+	}
+}
+
+/** GET /vision/look-requests — what Athena has asked to see, if anything. */
+async function listLookRequests(req, res) {
+	const who = await requireAdultActor(req, res);
+	if (!who) return;
+	try {
+		return res.json({ success: true, requests: await lookRequests.pendingFor(who.profileId) });
+	} catch (err) {
+		return fail(res, err, "Failed to read look requests");
+	}
+}
+
+/**
+ * POST /vision/look-requests/:uuid/decline — the device will not look.
+ *
+ * Recorded rather than ignored: "she asked and the device refused" and "she
+ * never asked" must not look the same afterwards, least of all to the person
+ * reading back what her camera access was used for.
+ */
+async function declineLookRequest(req, res) {
+	const who = await requireAdultActor(req, res);
+	if (!who) return;
+	try {
+		const declined = await lookRequests.decline(
+			who.profileId,
+			req.params.uuid,
+			typeof req.body?.reason === "string" ? req.body.reason.slice(0, 200) : null
+		);
+		return res.json({ success: true, declined });
+	} catch (err) {
+		return fail(res, err, "Failed to decline look request");
 	}
 }
 
@@ -286,6 +328,8 @@ async function describeScene(req, res) {
 }
 
 module.exports = {
+	listLookRequests,
+	declineLookRequest,
 	recall,
 	listEvents,
 	createEvent,

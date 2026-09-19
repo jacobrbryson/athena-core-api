@@ -363,6 +363,10 @@ async function runPending(profileId, uuid, { approval, authorityId = null, ctx =
 		const { ref, detail } = await action.execute(profileId, params, {
 			...ctx,
 			familyId: ctx.familyId ?? (await familyIdFor(profileId)),
+			// So an action whose effect lives in another table can point back at
+			// the proposal and the approval that authorized it. Additive context
+			// only — it widens nothing and no gate reads it.
+			actionUuid: uuid,
 		});
 		await settle(uuid, "done", { resultRef: ref, detail });
 		await audit(profileId, "action_executed", action.id);

@@ -13,6 +13,7 @@ jest.mock("../consent", () => ({ hasConsentForProfile: jest.fn() }));
 jest.mock("../credentials", () => ({ list: jest.fn() }));
 jest.mock("../family", () => ({ getFamilyForProfile: jest.fn() }));
 jest.mock("../connectors/googleCalendar", () => ({ createEvent: jest.fn(), deleteEvent: jest.fn() }));
+jest.mock("../lookRequests", () => ({ create: jest.fn() }));
 jest.mock("../memory", () => ({
 	CATEGORIES: new Set(["interest", "routine", "other"]),
 	upsertMemoryForProfile: jest.fn(),
@@ -25,6 +26,7 @@ const credentials = require("../credentials");
 const family = require("../family");
 const googleCalendar = require("../connectors/googleCalendar");
 const memory = require("../memory");
+const lookRequests = require("../lookRequests");
 const actions = require("./index");
 const registry = require("./registry");
 
@@ -201,6 +203,70 @@ describe("remember_fact params", () => {
 // ---------------------------------------------------------------------------
 // Gate 1 + 2: propose
 // ---------------------------------------------------------------------------
+
+describe("look_through_camera params", () => {
+	const look = registry.get("look_through_camera");
+
+	test("a look with no stated reason is refused", () => {
+		// A camera that opens without a reason the person can read is not
+		// something to ship, so the reason is the one required parameter.
+		expect(() => look.normalize({})).toThrow(/reason/i);
+		expect(() => look.normalize({ reason: "   " })).toThrow(/reason/i);
+		expect(() => look.normalize({ reason: 42 })).toThrow(/reason/i);
+		expect(() => look.normalize({ prefer: "front" })).toThrow(/reason/i);
+	});
+
+	test("an unrecognised camera hint is refused, not ignored", () => {
+		// Dropping it silently would open a camera the person did not expect.
+		expect(() => look.normalize({ reason: "ok", prefer: "rear" })).toThrow(/front/i);
+		expect(() => look.normalize({ reason: "ok", prefer: "both" })).toThrow(/front/i);
+	});
+
+	test("accepts a reason alone, and both hints", () => {
+		expect(look.normalize({ reason: "You asked what I think of it." })).toEqual({
+			reason: "You asked what I think of it.",
+		});
+		expect(look.normalize({ reason: "ok", prefer: "FRONT" })).toEqual({
+			reason: "ok",
+			prefer: "front",
+		});
+		expect(look.normalize({ reason: "ok", prefer: "room" })).toEqual({
+			reason: "ok",
+			prefer: "room",
+		});
+	});
+
+	test("the reason the person reads is the reason she gave", () => {
+		expect(look.summarize({ reason: "You are showing me something." })).toBe(
+			"Take a look through your camera: You are showing me something."
+		);
+	});
+
+	test("it is not reversible, and the card must not imply otherwise", () => {
+		// A look cannot be taken back, and a notable one becomes a memory.
+		expect(look.reversible).toBe(false);
+		expect(look.standing).toBe(true);
+		expect(look.consentType).toBe("action_authority");
+	});
+
+	test("executing records a request rather than reaching a camera", async () => {
+		lookRequests.create.mockResolvedValue({ uuid: "look-1" });
+		const result = await look.execute(7, { reason: "ok", prefer: "front" }, { actionUuid: "act-1" });
+		expect(lookRequests.create).toHaveBeenCalledWith(7, {
+			reason: "ok",
+			prefer: "front",
+			actionUuid: "act-1",
+		});
+		expect(result.ref).toBe("look-1");
+	});
+
+	test("fails rather than queueing when she already has looks outstanding", async () => {
+		// Several cameras opening at once the moment a device appears is what
+		// the cap exists to prevent, so this must not silently succeed.
+		lookRequests.create.mockResolvedValue(null);
+		await expect(look.execute(7, { reason: "ok" }, {})).rejects.toThrow(/already has a look/i);
+	});
+});
 
 describe("propose", () => {
 	test("an unknown action id is dropped, never stored", async () => {

@@ -1,5 +1,7 @@
 # Capability ledger
 
+- 2026-09-19 — Added an Android Companion scene sharing the mobile dashboard, native Google sign-in and automatic phone registration; device acceptance and release remain pending — `android-companion.md` (status: planned)
+
 Append-only record of what changed in Athena's user-visible capabilities.
 **Newest first.** One line per change, in this shape:
 
@@ -26,6 +28,45 @@ See [`README.md`](README.md) for the full contract.
 ---
 
 ## 2026
+
+- 2026-09-19 — News is no longer about RSS. You paste the address of any news
+  page — a front page, a section, a local paper — and Athena reads it in the
+  background, deciding for herself how often to go back: daily for a quiet page,
+  every few hours for a busy one, every fifteen minutes for a few hours when the
+  headlines show something actually unfolding, with a one-line reason you can
+  read. Nobody maintains a schedule. Per page you choose whether what she reads
+  there also becomes part of what she knows about the world, and the News card
+  now shows what she has already read instead of waiting on the websites. Feed
+  URLs saved under the old version were carried over and still work —
+  `news.md`, `companion-dashboard.md` (status: live)
+
+- 2026-09-19 — Athena can now take a look through your camera on her own, if
+  you allow it: she says why, the screen shows an eye and her reason while it
+  happens, and the camera closes again straight after. You grant it once in the
+  camera panel and can take it back there or in Actions, after which she goes
+  back to asking each time. Every look she takes is recorded like any other
+  action — `camera.md`, `actions.md` (status: partial)
+
+- 2026-09-19 — Today now uses the same framed navigation icon treatment as the
+  other sidebar links, and Companion shows the signed-in Google profile picture
+  beside the person's name with an initial fallback — `companion-dashboard.md`
+  (status: partial)
+
+- 2026-09-19 — Athena's sight now stays on when you close the camera panel,
+  with an eye in the top bar whenever she can see, and she takes a fresh look
+  every time you send her a message — so "what do you think about this?" is
+  answered from the view at that moment. The camera button by the message box
+  now offers both showing her a photo and letting her see, and on a phone you
+  can flip between front and back cameras. She still cannot turn her own sight
+  on or point it — `camera.md` (status: partial)
+
+- 2026-09-18 — Dashboard cards read connected calendar, health, chores, memories and approvals; Work adds read-only Jira, Slack and Gmail connectors, News adds per-account RSS/Atom source settings, and card footers use a subtle text hover — `companion-dashboard.md`, `jira.md`, `slack.md`, `gmail.md` (status: partial)
+
+- 2026-09-18 — Athena can look through a camera on your computer and say what
+  is in front of it: open "Let her see", pick how often she looks, and ask her
+  what she can see. She only looks while the panel is open, she keeps her
+  description and never the picture, and she cannot tell who anyone is — only
+  that someone is there — `camera.md` (status: partial)
 
 - 2026-09-18 — Fixed clipped navigation sprites and added consistent hover, press, and keyboard-focus feedback across Companion controls, with reduced-motion support — `companion-dashboard.md` (status: partial)
 
