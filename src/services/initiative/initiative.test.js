@@ -36,11 +36,21 @@ const PROFILE = 42;
 const MINUTE = 60_000;
 
 /** An enabled preference row, with the quiet window well away from "now". */
+/**
+ * An enabled preference row with NO quiet window.
+ *
+ * It used to say 2–3 UTC, described as "well away from now" — which is true
+ * for twenty-three hours a day and false for the other one. Every test using
+ * this fixture quietly changed behaviour between 02:00 and 03:00 UTC. Equal
+ * hours mean no window at all (see inQuietHours), so this is now the same at
+ * every hour, and the tests that are actually about quiet hours state their
+ * own window.
+ */
 const PREF_ON = {
 	enabled: 1,
 	timezone: "UTC",
-	quiet_from: 2,
-	quiet_to: 3,
+	quiet_from: 0,
+	quiet_to: 0,
 	daily_cap: 3,
 };
 

@@ -90,6 +90,15 @@ See [`README.md`](README.md) for the full contract.
   if a child is present she stays on the child-safe settings for everyone —
   `shared-conversations.md` (status: partial)
 
+- 2026-09-19 — Athena can text, and be texted back. A confirmed phone number
+  becomes somewhere she can reach you, and a reply lands in the same
+  conversation as everything else rather than a separate, thinner one — so
+  "what time again?" is answered from the same memory. The number proves
+  itself with a six-digit code before anything is ever sent to it, STOP is
+  honoured permanently on our side as well as the carrier's, and an unknown
+  number gets silence rather than a denial that would confirm the system is
+  live — `text-messages.md` (status: partial)
+
 - 2026-09-19 — Athena no longer rations herself. The daily cap, the
   ninety-minute gap, the per-trigger cooldown, the one-thing-per-pass rule and
   the learned suppression are gone, at the owner's instruction: every one of
@@ -147,3 +156,4 @@ See [`README.md`](README.md) for the full contract.
   `google-calendar.md`, `strava.md`, `whoop.md`, `family-chores.md`,
   `memories.md`, `photos.md`, `devices.md`, `local-athena.md`, `brain.md`
   (status: live)
+- 2026-09-19 — Added explicit, short-retention location context from the paired Android companion; it is separate from Initiative and foreground-only for now — `location-context.md` (status: partial)

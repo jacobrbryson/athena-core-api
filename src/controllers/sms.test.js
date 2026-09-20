@@ -79,6 +79,7 @@ beforeEach(() => {
 		return null;
 	});
 	push.profileForNumber.mockResolvedValue({ deviceId: 3, profileId: 42 });
+	push.forgetPhone.mockResolvedValue({ registered: false });
 	sms.send.mockResolvedValue({ ok: true });
 	sessionService.getOrCreateForProfile.mockResolvedValue({ id: 9, uuid: "s-1", profile_id: 42 });
 	messageService.addMessage.mockResolvedValue("m-1");
@@ -193,9 +194,7 @@ describe("who is allowed to be answered", () => {
 
 describe("answering", () => {
 	test("the text joins the person's existing conversation", async () => {
-		const params = { From: "+15555550123", Body: "what time again?" };
-		await controller.inbound(request(params, sign(URL, params)), response());
-		await flush();
+		await controller._answer(42, "+15555550123", "what time again?");
 
 		// Not a session per message: a separate thread would give her a second,
 		// thinner memory of the same person.
@@ -204,33 +203,35 @@ describe("answering", () => {
 	});
 
 	test("her answer goes back by text, on the channel they used", async () => {
-		const params = { From: "+15555550123", Body: "what time again?" };
-		await controller.inbound(request(params, sign(URL, params)), response());
-		await flush();
+		await controller._answer(42, "+15555550123", "what time again?");
 
 		expect(sms.send).toHaveBeenCalledWith("+15555550123", { body: "Two o'clock." });
 	});
 
-	test("the webhook is answered before the model runs", async () => {
+	test("the webhook is answered without waiting for the model", async () => {
 		// Twilio times out at 15 seconds and retries, which would mean the same
-		// message answered twice.
+		// message answered twice. So inbound must return having responded, with
+		// the thinking still in flight.
 		let resolveModel;
-		processAiResponse.mockReturnValue(new Promise((r) => {
-			resolveModel = r;
-		}));
+		processAiResponse.mockReturnValue(
+			new Promise((r) => {
+				resolveModel = r;
+			})
+		);
 		const params = { From: "+15555550123", Body: "slow one" };
 		const res = response();
+
 		await controller.inbound(request(params, sign(URL, params)), res);
 
 		expect(res.statusCode).toBe(200);
+		expect(sms.send).not.toHaveBeenCalled();
 		resolveModel();
+		await flush();
 	});
 
 	test("a model that says nothing sends no empty text", async () => {
 		messageService.getMessages.mockResolvedValue([{ is_human: true, text: "hi" }]);
-		const params = { From: "+15555550123", Body: "hi" };
-		await controller.inbound(request(params, sign(URL, params)), response());
-		await flush();
+		await controller._answer(42, "+15555550123", "hi");
 
 		expect(sms.send).not.toHaveBeenCalled();
 	});

@@ -130,14 +130,20 @@ async function inbound(req, res) {
 	// nothing to say. See the header.
 	if (!owner) return noReply(res);
 
-	// Answer the webhook now; think afterwards.
+	// Answer the webhook now; think afterwards. Deliberately NOT awaited: the
+	// response has already gone, and keeping the handler's promise pending
+	// buys nothing except a request that looks stuck.
+	//
+	// DEPLOYMENT NOTE: this continues working after the response, so the
+	// service needs CPU outside the request — Cloud Run must run with CPU
+	// always allocated (or startup boost) for this path. With the default
+	// throttling the instance can be frozen mid-thought and the reply simply
+	// never arrives, with nothing in the logs to say why.
 	noReply(res);
 
-	try {
-		await answer(owner.profileId, from, text);
-	} catch (err) {
-		console.error("[sms] could not answer an inbound message:", err.message);
-	}
+	answer(owner.profileId, from, text).catch((err) =>
+		console.error("[sms] could not answer an inbound message:", err.message)
+	);
 }
 
 /**
