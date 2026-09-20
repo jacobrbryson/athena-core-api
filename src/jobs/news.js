@@ -8,6 +8,7 @@
  *   node src/jobs/news.js --status        what she watches and when she'll be back
  *   node src/jobs/news.js --loop 300      every 300s until stopped
  *   node src/jobs/news.js --limit 40      cap how many pages one pass visits
+ *   node src/jobs/news.js --no-places     skip the opening-hours pass
  *
  * Schedule it every 5 minutes (Cloud Run Job + Cloud Scheduler in production,
  * Task Scheduler / cron locally). That cadence is a FLOOR on how fresh the
@@ -26,12 +27,14 @@ require("dotenv").config();
 const pool = require("../helpers/db");
 const llm = require("../services/llm");
 const news = require("../services/news");
+const places = require("../services/places");
 
 function parseArgs(argv) {
-	const args = { dryRun: false, source: null, loop: 0, limit: 30, status: false };
+	const args = { dryRun: false, source: null, loop: 0, limit: 30, status: false, noPlaces: false };
 	for (let i = 2; i < argv.length; i++) {
 		const a = argv[i];
 		if (a === "--dry-run") args.dryRun = true;
+		else if (a === "--no-places") args.noPlaces = true;
 		else if (a === "--status") args.status = true;
 		else if (a === "--source") args.source = String(argv[++i] || "").trim();
 		else if (a === "--loop") args.loop = Math.max(60, Number(argv[++i]) || 300);
@@ -71,6 +74,28 @@ async function status() {
 	}
 }
 
+/**
+ * Opening hours ride along with the news round.
+ *
+ * A place page is the same kind of work as a news page — read it politely on
+ * a rhythm, keep what changed — and it runs here rather than in a job of its
+ * own because a second scheduled process is a second thing that can quietly
+ * stop running, which for "is the park open" is worse than sharing a pass.
+ * Places are checked twice a day, so most rounds do nothing at all.
+ */
+async function placesPass(args) {
+	if (args.noPlaces) return { checked: 0 };
+	const results = await places.refreshDue({ limit: 10, dryRun: args.dryRun }).catch((err) => {
+		log("places pass failed:", err.message);
+		return [];
+	});
+	for (const result of results) {
+		log(`${result.host}: ${result.status}${result.state ? ` — ${result.state}` : ""}${result.note ? ` — ${result.note}` : ""}`);
+	}
+	if (results.length) log(`places done: ${results.length} checked`);
+	return { checked: results.length };
+}
+
 async function onePass(args) {
 	if (args.source) {
 		const result = await news.pollByUuid(args.source, { dryRun: args.dryRun });
@@ -93,6 +118,7 @@ async function onePass(args) {
 		);
 	}
 	log(`pass done: ${pass.checked} visited, ${pass.changed} with something new, ${pass.failed} failed`);
+	await placesPass(args);
 	return pass;
 }
 

@@ -27,7 +27,7 @@ const MAX_LIMIT = 25; // Whoop's own ceiling
 const COLLECTION_READ = { invalidateOnAuthFailure: false };
 
 const KEYWORDS =
-	/\b(whoop|recovery|recovered|strain|sleep|slept|sleeping|hrv|heart rate variability|resting heart rate|rhr|respiratory rate|readiness|rested|tired|fatigue)\b/i;
+	/\b(whoop|workouts?|activity reviews?|recovery|recovered|strain|sleep|slept|sleeping|hrv|heart rate variability|resting heart rate|rhr|respiratory rate|readiness|rested|tired|fatigue)\b/i;
 
 function matches(message) {
 	return typeof message === "string" && KEYWORDS.test(message);
@@ -99,14 +99,37 @@ async function listWorkouts(profileId, { days = 7, limit } = {}) {
 		...COLLECTION_READ,
 		query: { start: since(days), limit: limitOf(limit) },
 	});
-	return (data?.records || []).map((r) => ({
+	return (data?.records || []).map(normalizeWorkout);
+}
+
+function normalizeWorkout(r) {
+	return {
+		id: r.id || null, user_id: r.user_id ?? null,
+		start: r.start || null, end: r.end || null,
+		created_at: r.created_at || null, updated_at: r.updated_at || null,
+		timezone_offset: r.timezone_offset || null, score_state: r.score_state || null,
 		date: String(r.start || "").slice(0, 10),
 		sport: r.sport_name || r.sport_id || "Workout",
 		strain: r.score?.strain ?? null,
 		average_heart_rate: r.score?.average_heart_rate ?? null,
 		max_heart_rate: r.score?.max_heart_rate ?? null,
 		kilojoules: r.score?.kilojoule ?? null,
-	}));
+	};
+}
+
+// Single-resource reads are deliberately not in the shared HTTP cache allowlist:
+// a webhook means the provider may have changed since the last dashboard read.
+async function getWorkout(profileId, id) {
+	if (!/^[a-f0-9-]{36}$/i.test(id)) throw new Error('Invalid WHOOP workout ID');
+	return normalizeWorkout(await providerGet(profileId, PROVIDER, `/v2/activity/workout/${encodeURIComponent(id)}`, COLLECTION_READ));
+}
+
+async function workoutPage(profileId, { start, end, nextToken } = {}) {
+	const data = await providerGet(profileId, PROVIDER, '/v2/activity/workout', {
+		...COLLECTION_READ, query: { start, end, nextToken, limit: MAX_LIMIT },
+	});
+	if (!Array.isArray(data?.records)) throw new Error('Invalid WHOOP workout page');
+	return { records: data.records.map(normalizeWorkout), nextToken: data.next_token || null };
 }
 
 /** Daily physiological cycles, which carry day strain. */
@@ -171,6 +194,8 @@ async function buildContext(profileId, { days = 7 } = {}) {
 	if (sleep?.length) {
 		lines.push("Sleep, newest first:", ...sleep.map(formatSleep));
 	}
+	const interpretations = await require('../attention').promptBlock(profileId).catch(() => null);
+	if (interpretations) lines.push(interpretations);
 	if (lines.length === 1) return `Whoop: no data recorded in the last ${days} days.`;
 	return lines.join("\n");
 }
@@ -249,6 +274,9 @@ async function executeTool(name, args = {}, { profileId }) {
 }
 
 module.exports = {
+	normalizeWorkout,
+	getWorkout,
+	workoutPage,
 	PROVIDER,
 	matches,
 	getProfile,

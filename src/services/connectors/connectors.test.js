@@ -3,6 +3,7 @@
  * the aggregation that decides what reaches the prompt.
  */
 const mockAccessToken = jest.fn();
+jest.mock('../attention', () => ({ promptBlock: jest.fn().mockResolvedValue(null) }));
 // Connector semantics are tested independently of the disposable cache store.
 jest.mock('../readCache', () => ({
   read: (_options, load) => load(), invalidate: async () => {}, hash: value => value,

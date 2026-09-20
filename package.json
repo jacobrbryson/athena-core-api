@@ -22,6 +22,7 @@
 		"initiative": "node src/jobs/initiative.js",
 		"initiative:dry": "node src/jobs/initiative.js --dry-run",
 		"news": "node src/jobs/news.js",
+		"attention": "node src/jobs/attention.js",
 		"news:dry": "node src/jobs/news.js --dry-run",
 		"news:status": "node src/jobs/news.js --status",
 		"nightly": "node src/jobs/nightly.js",

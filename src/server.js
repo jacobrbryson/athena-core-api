@@ -9,6 +9,10 @@ const memoryStore = require("./services/memoryStore");
 
 const app = express();
 app.set("trust proxy", 1);
+// Provider-authenticated ingress: the controller validates WHOOP's signature
+// over exact bytes, then only persists work for opted-in, connected owners.
+// All model work runs later under that owner's live access context.
+app.post('/webhooks/whoop', express.raw({ type: 'application/json', limit: '32kb', inflate: false }), require('./controllers/whoopWebhook').receive);
 // Image-bearing routes (photo memories, camera keyframes) get a larger body
 // limit; everything else keeps the 100kb default. body-parser skips a body
 // that is already parsed, so the global parser below is a no-op for these.

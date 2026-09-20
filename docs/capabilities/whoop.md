@@ -11,6 +11,12 @@ triggers: [whoop, recovery, recovered, strain, sleep, slept, hrv, heart rate var
 
 ## What I can do
 
+For activity labels that do not match real life, **Activity reviews** in the
+Whoop row can compare workouts with calendar entries and memories. You can
+inspect and correct my interpretation; WHOOP itself stays unchanged. This
+separate opt-in requires the activity worker to be deployed. See
+[activity-reviews.md](activity-reviews.md).
+
 With Whoop connected I can see roughly the last week of your recovery scores,
 daily strain, sleep, and the numbers underneath them — HRV, resting heart rate,
 how long you actually slept versus how long you needed.

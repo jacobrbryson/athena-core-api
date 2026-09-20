@@ -197,6 +197,43 @@ async function listEvents(profileId, options = {}) {
 	return events;
 }
 
+/** Historical interval evidence for attention. Pagination and failures are
+ * explicit; a partial calendar is never presented as an empty schedule. */
+async function eventsInInterval(profileId, { start, end }) {
+	const from = new Date(start), to = new Date(end);
+	if (!Number.isFinite(+from) || !Number.isFinite(+to) || to <= from || to - from > 14 * 86400000) {
+		throw new Error('Invalid calendar evidence interval');
+	}
+	const calendars = [];
+	let pageToken;
+	for (let page = 0; page < 10; page++) {
+		const data = await providerGet(profileId, PROVIDER, '/users/me/calendarList', {
+			query: { minAccessRole: 'reader', showHidden: 'false', maxResults: 250, pageToken },
+		});
+		if (!data || typeof data !== 'object' || (data.items !== undefined && !Array.isArray(data.items))) throw new Error('Invalid calendar list');
+		calendars.push(...(data.items || []).filter(c => c.id && !c.deleted).map(c => ({ id: c.id, name: c.summaryOverride || c.summary || c.id, primary: !!c.primary, timeZone: c.timeZone || null })));
+		pageToken = data.nextPageToken;
+		if (!pageToken) break;
+	}
+	if (pageToken || calendars.length > 50) throw new Error('Calendar evidence exceeds this reader; nothing inferred');
+	const events = [];
+	for (const calendar of calendars) {
+		pageToken = undefined;
+		for (let page = 0; page < 10; page++) {
+			const data = await providerGet(profileId, PROVIDER, `/calendars/${encodeURIComponent(calendar.id)}/events`, {
+				query: { timeMin: from.toISOString(), timeMax: to.toISOString(), singleEvents: 'true', orderBy: 'startTime', maxResults: 250, pageToken },
+				invalidateOnAuthFailure: false,
+			});
+			if (!data || typeof data !== 'object' || (data.items !== undefined && !Array.isArray(data.items))) throw new Error('Invalid calendar evidence');
+			events.push(...(data.items || []).filter(isAttending).map(item => ({ ...normalizeEvent(item, calendar), calendar_id: calendar.id, updated_at: item.updated || null, description: String(item.description || '').slice(0, 2000) })));
+			pageToken = data.nextPageToken;
+			if (!pageToken) break;
+		}
+		if (pageToken || events.length > 500) throw new Error('Calendar evidence exceeds this reader; nothing inferred');
+	}
+	return { events, calendars, complete: true };
+}
+
 /**
  * Busy intervals across every readable calendar — cheaper than listing events,
  * and the honest answer to "am I free" when a household shares a calendar.
@@ -509,6 +546,7 @@ async function executeTool(name, args = {}, { profileId }) {
 }
 
 module.exports = {
+	eventsInInterval,
 	PROVIDER,
 	matches,
 	listCalendars,

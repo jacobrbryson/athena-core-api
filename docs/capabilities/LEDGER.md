@@ -1,5 +1,11 @@
 # Capability ledger
 
+- 2026-09-20 — The dashboard now leads with one thing worth doing with the time before your next appointment: a place you go if its page says it's open and the weather holds, or a project around the house if it doesn't — with the closing time, the distance, your Strava habit and the forecast shown under it — `right-now.md` (status: planned)
+
+- 2026-09-20 — Added the around-the-house project list, with a one-time import for a list that already lives in a spreadsheet — `house-projects.md` (status: planned)
+
+- 2026-09-20 — Added opt-in WHOOP activity reviews with durable webhook processing, calendar/memory evidence, separate interpretations and owner corrections; deployment and live acceptance are pending — `activity-reviews.md`, `whoop.md` (status: partial)
+
 - 2026-09-20 — Companion navigation now calls the main page Dashboard and no longer shows Today in the left sidebar — `companion-dashboard.md` (status: partial)
 
 - 2026-09-20 — Added a System page in Companion with live, read-only Twilio balance and today/month usage data — `system.md` (status: live)

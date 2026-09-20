@@ -125,6 +125,7 @@ module.exports = (clients) => {
 	// signing the request; the controller verifies that before anything else.
 	router.use("/sms", smsRouter);
 	router.use("/memory", memoryRouter);
+	router.use("/attention", require('./attention'));
 	router.use("/integrations", integrationRouter);
 	router.use("/", companionRouter);
 

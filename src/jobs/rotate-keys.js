@@ -48,6 +48,7 @@ const {
  * adding it here, or rotation will silently leave it behind on a retired key.
  */
 const ENCRYPTED_COLUMNS = [
+	{ table: "attention_record", idColumn: "id", columns: ["payload_enc", "feedback_enc"] },
 	{ table: "integration_link", idColumn: "id", columns: ["access_token"] },
 	{
 		table: "user_credential",
