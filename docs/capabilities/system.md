@@ -11,8 +11,8 @@ triggers: [system, Twilio, billing, usage, balance, Athena System]
 
 ## What I can do
 
-I show the live Twilio account balance and usage records for today and this
-month. This is a read-only operational view for the person using Companion;
+I show the live Twilio account balance, outbound SMS messages sent this month,
+and the total cost of those messages. This is a read-only operational view for the person using Companion;
 it does not send messages, change billing, or approve anything.
 
 ## Where to find it
@@ -30,11 +30,9 @@ session must be signed in or unlocked first.
 
 ## Limits
 
-I can only show the Twilio account and usage records the system credentials
-are allowed to read. I do not show other providers, change the account, or
-predict future charges. Twilio's own records and currency are authoritative;
-an empty usage window means no records were returned, not necessarily that the
-account has never been used.
+I can only show the Twilio account and usage the system credentials are allowed
+to read. I do not show other providers, change the account, or predict future
+charges. Twilio's own balance, currency, and usage record are authoritative.
 
 ## Under the hood
 

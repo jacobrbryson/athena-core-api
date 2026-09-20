@@ -52,6 +52,43 @@ steps:
       # OAuth connector callback broke once already.
       - "--set-env-vars=^@^GCP_PROJECT_ID=$PROJECT_ID@DB_HOST=$_DB_HOST@DB_USER=$_DB_USER@DB_NAME=$_DB_NAME@RECAPTCHA_PROJECT_ID=$_RECAPTCHA_PROJECT_ID@RECAPTCHA_SITE_KEY=$_RECAPTCHA_SITE_KEY@PUBLIC_SESSION_MESSAGE_DAILY_LIMIT=$_PUBLIC_SESSION_MESSAGE_DAILY_LIMIT@PUBLIC_IP_MESSAGE_DAILY_LIMIT=$_PUBLIC_IP_MESSAGE_DAILY_LIMIT@FAMILY_CHORES_ADMIN_ROLES=$_FAMILY_CHORES_ADMIN_ROLES@PUBLIC_API_BASE_URL=$_PUBLIC_API_BASE_URL@INTEGRATION_REDIRECT_ALLOWLIST=$_INTEGRATION_REDIRECT_ALLOWLIST"
 
+  # 4. Move the Cloud Run JOBS onto the image this build just deployed.
+  #
+  # The jobs run out of this same repo (src/jobs/*.js), but nothing used to
+  # update them: each was created once with a pinned :$COMMIT_SHA and stayed
+  # there. athena-nightly sat on a 2026-09-12 image for eight days, writing
+  # nightly reports out of code that no longer matched the repo — five
+  # maintenance steps it never knew about. A job is only as current as its
+  # last deploy, so its deploy belongs here and not in anyone's memory.
+  #
+  # Do NOT do this by tagging :latest. cloudbuild pushes :$COMMIT_SHA and
+  # never moves :latest, so a job pinned to :latest would be pinned to
+  # nothing (the docs used to suggest exactly that).
+  #
+  # `jobs update` is a partial update: passing only --image leaves each job's
+  # own args, env vars and secrets alone. That matters — the jobs do NOT
+  # share the service's env, and re-specifying it here would be the same trap
+  # as --set-env-vars above.
+  #
+  # A job that doesn't exist in this project is skipped, not fatal, so this
+  # stays correct before athena-news is stood up and after any job is retired.
+  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    id: UpdateJobs
+    entrypoint: bash
+    args:
+      - "-c"
+      - |
+        set -euo pipefail
+        IMAGE="$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-core-api:$COMMIT_SHA"
+        for job in $_JOBS; do
+          if gcloud run jobs describe "$$job" --region "$_REGION" >/dev/null 2>&1; then
+            echo "==> $$job -> $COMMIT_SHA"
+            gcloud run jobs update "$$job" --region "$_REGION" --image "$$IMAGE"
+          else
+            echo "==> $$job is not deployed in this project; skipping"
+          fi
+        done
+
 # The final image tag is saved in the Artifact Registry
 images:
   - "$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-core-api:$COMMIT_SHA"
@@ -61,6 +98,11 @@ images:
 substitutions:
   _AR_HOSTNAME: us-central1-docker.pkg.dev
   _REGION: us-central1
+  # Cloud Run Jobs that run this same image (core_api/src/jobs/*.js) and so
+  # must move with it — see the UpdateJobs step. Space-separated, and each has
+  # to live in $_REGION; a name that isn't deployed is skipped, which is why
+  # athena-news can be listed before setup-news-watch.sh has ever been run.
+  _JOBS: "athena-nightly athena-rotate-keys athena-news"
   # Non-secret config — override per environment if needed.
   _DB_HOST: "134.209.79.220"
   _DB_USER: "rbryson"

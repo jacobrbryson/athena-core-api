@@ -2,7 +2,7 @@
 id: companion-dashboard
 title: Companion dashboard
 summary: I offer a daily dashboard for your calendar, health, family, work, projects, memories and approvals, ordered by what I think matters most today.
-where: Companion → Home; Chat → Daily briefing for the compact view
+where: Companion → Dashboard; Chat → Daily briefing for the compact view
 status: partial
 surfaces: [companion]
 audiences: [adult]
@@ -46,15 +46,15 @@ nothing about it.
 There is no refresh button, because there is nothing to refresh by hand: the
 dashboard updates itself when the server tells it something moved.
 
-I reuse recently read information so reopening Home or the daily briefing can
+I reuse recently read information so reopening Dashboard or the daily briefing can
 load faster. Routine background checks keep the cards steady while they load.
 Changes announced by the server clear the previous view and request new data.
 
 ## Where to find it
 
-After signing in to Companion, I open Home. On desktop, the left sidebar
-contains Home, topic navigation and Talk to Athena. On mobile, the bottom bar
-has Home, Chat, the central Athena button, Alerts (approvals), and More. Your
+After signing in to Companion, I open Dashboard. On desktop, the left sidebar
+contains Dashboard, topic navigation and Talk to Athena. On mobile, the bottom bar
+has Dashboard, Chat, the central Athena button, Alerts (approvals), and More. Your
 name at the bottom of the sidebar — or More on mobile — opens one menu holding
 every setting and panel: memories, photos, brain, phone and car, local server,
 actions, initiative, connected apps, voice, and sign out. In Chat, Daily

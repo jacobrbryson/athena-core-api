@@ -19,6 +19,8 @@ const THRESHOLDS = {
 	embeddingCoverage: 0.95,
 	promoteLocalPassRate: 0.9,
 	demoteLocalPassRate: 0.75,
+	// Don't call a quiet night "everything ran on the frontier".
+	localMinCalls: 10,
 	// Below this share of welcome interruptions, a trigger is costing more
 	// attention than it returns.
 	initiativeAcceptance: 0.5,
@@ -121,7 +123,37 @@ function ruleFindings({ metrics, evals, config }) {
 			add("high", "localization", `${id} passed only ${(r.passRate * 100).toFixed(0)}% of capability evals`, worst || "see eval failures");
 		}
 	}
-	if (!config.orcwoodCount) {
+	// Is anything actually running locally? Answer from the call log, not from
+	// this process's own config. The review runs as a Cloud Run job with no
+	// LLM_ORCWOOD_ENDPOINTS — and a box on the house LAN would be unreachable
+	// from there anyway — so `config.orcwoodCount` is 0 on a night when Orcwood
+	// in fact served a third of the traffic. Reading that as "no endpoints" put
+	// the same phantom item at the top of four consecutive plans, next to a
+	// table showing 39.6% local share.
+	let servedTotal = 0;
+	let localTotal = 0;
+	if (m24?.available) {
+		for (const t of Object.values(m24.byTask)) {
+			for (const [tier, n] of Object.entries(t.tiers)) {
+				servedTotal += n;
+				if (tier === "orcwood" || tier === "device") localTotal += n;
+			}
+		}
+	}
+	if (m24?.available) {
+		if (servedTotal >= THRESHOLDS.localMinCalls && localTotal === 0) {
+			const why = config.orcwoodCount
+				? `${config.orcwoodCount} endpoint(s) configured but none of them answered`
+				: "no endpoints are configured here either — set LLM_ORCWOOD_ENDPOINTS";
+			add("opportunity", "localization", "Everything ran on the frontier in the last 24h", `${servedTotal} calls served, none by Orcwood or the device; ${why}`);
+		} else if (localTotal > 0 && !config.orcwoodCount) {
+			// Orcwood is serving real traffic, just not from where the review
+			// runs — which is also why the eval suite above only ever tested the
+			// frontier. Worth saying plainly, so the missing rows in the
+			// abilities table don't read as a local model that failed.
+			add("low", "localization", `Orcwood served ${((localTotal / servedTotal) * 100).toFixed(0)}% of calls, but this job cannot reach those endpoints`, "LLM_ORCWOOD_ENDPOINTS is unset where the review runs, so capability evals skipped every local model");
+		}
+	} else if (!config.orcwoodCount) {
 		add("opportunity", "localization", "No Orcwood endpoints configured — everything runs on the frontier", "set LLM_ORCWOOD_ENDPOINTS to start localizing");
 	}
 

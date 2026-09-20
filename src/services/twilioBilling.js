@@ -33,31 +33,37 @@ async function twilioGet(cfg, path) {
   }
 }
 
-function records(body) {
-  return (Array.isArray(body?.usage_records) ? body.usage_records : []).map((record) => ({
-    category: record.category || record.friendly_name || 'Other',
-    description: record.description || record.friendly_name || record.category || 'Usage',
-    count: record.count ?? null,
-    countUnit: record.count_unit || null,
-    price: record.price ?? null,
-    priceUnit: record.price_unit || null,
-  }));
+function smsUsage(body) {
+  return (Array.isArray(body?.usage_records) ? body.usage_records : [])
+    .filter((record) => {
+      const category = String(record.category || '').toLowerCase();
+      const name = String(record.friendly_name || record.description || '').toLowerCase();
+      return category === 'sms' || category === 'sms-outbound' || /outbound.*sms|sms.*outbound/.test(name);
+    })
+    .reduce((total, record) => {
+      const count = Number(record.count);
+      const price = Number(record.price);
+      return {
+        messagesSent: total.messagesSent + (Number.isFinite(count) ? count : 0),
+        cost: total.cost + (Number.isFinite(price) ? Math.abs(price) : 0),
+      };
+    }, { messagesSent: 0, cost: 0 });
 }
 
 async function getBilling() {
   const cfg = await config();
   if (!cfg) return { configured: false, checkedAt: new Date().toISOString() };
-  const [balance, today, month] = await Promise.all([
+  const [balance, month] = await Promise.all([
     twilioGet(cfg, 'Balance.json'),
-    twilioGet(cfg, 'Usage/Records/Today.json'),
     twilioGet(cfg, 'Usage/Records/ThisMonth.json'),
   ]);
+  const usage = smsUsage(month);
   return {
     configured: true,
     checkedAt: new Date().toISOString(),
     balance: { amount: balance?.balance ?? null, currency: balance?.currency || null },
-    today: records(today),
-    month: records(month),
+    smsMessagesSent: usage.messagesSent,
+    smsCostThisMonth: usage.cost,
   };
 }
 

@@ -1,5 +1,7 @@
 # Capability ledger
 
+- 2026-09-20 — Companion navigation now calls the main page Dashboard and no longer shows Today in the left sidebar — `companion-dashboard.md` (status: partial)
+
 - 2026-09-20 — Added a System page in Companion with live, read-only Twilio balance and today/month usage data — `system.md` (status: live)
 
 - 2026-09-20 — Companion SMS setup now requires separate explicit consent,

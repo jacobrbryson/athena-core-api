@@ -14,19 +14,22 @@ beforeEach(() => {
   }[name] || null));
   global.fetch = jest.fn(async (url) => {
     if (url.endsWith('/Balance.json')) return { ok: true, json: async () => ({ balance: '12.34', currency: 'USD' }) };
-    if (url.endsWith('/Today.json')) return { ok: true, json: async () => ({ usage_records: [{ category: 'sms', count: '4', count_unit: 'messages', price: '0.03', price_unit: 'USD' }] }) };
-    return { ok: true, json: async () => ({ usage_records: [] }) };
+    return { ok: true, json: async () => ({ usage_records: [
+      { category: 'sms-outbound', count: '4', price: '-0.03' },
+      { category: 'sms-inbound', count: '99' },
+    ] }) };
   });
 });
 
 afterEach(() => { delete global.fetch; });
 
-test('reads live balance and today/month usage from Twilio', async () => {
+test('reads live balance and outbound SMS count from Twilio', async () => {
   const result = await getBilling();
   expect(result.configured).toBe(true);
   expect(result.balance).toEqual({ amount: '12.34', currency: 'USD' });
-  expect(result.today[0]).toMatchObject({ category: 'sms', count: '4', price: '0.03' });
-  expect(global.fetch).toHaveBeenCalledTimes(3);
+  expect(result.smsMessagesSent).toBe(4);
+  expect(result.smsCostThisMonth).toBe(0.03);
+  expect(global.fetch).toHaveBeenCalledTimes(2);
 });
 
 test('reports an unconfigured account without calling Twilio', async () => {

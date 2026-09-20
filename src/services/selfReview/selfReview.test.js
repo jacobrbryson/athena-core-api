@@ -103,6 +103,55 @@ describe("ruleFindings", () => {
 		expect(weak.evidence).toMatch(/personal details/);
 	});
 
+	// The review runs in Cloud Run with no LLM_ORCWOOD_ENDPOINTS, so its own
+	// config says "no local models" on a night when Orcwood served a third of
+	// production. Four consecutive plans opened with that phantom item.
+	const served = (tiers) => ({ available: true, byTask: { chat: { tiers } }, byEndpoint: {} });
+
+	test("local traffic in the call log outranks this process's own config", () => {
+		const f = ruleFindings({
+			metrics: { models: { last24h: served({ frontier: 30, orcwood: 20 }) } },
+			evals: {},
+			config: { orcwoodCount: 0 },
+		});
+		expect(f.find((x) => /No Orcwood endpoints configured/.test(x.title))).toBeUndefined();
+		expect(f.find((x) => /Everything ran on the frontier/.test(x.title))).toBeUndefined();
+		// Said plainly, so the frontier-only abilities table isn't read as a
+		// local model that failed its evals.
+		const blind = f.find((x) => x.area === "localization");
+		expect(blind.severity).toBe("low");
+		expect(blind.title).toMatch(/Orcwood served 40% of calls/);
+	});
+
+	test("a night the frontier really did serve everything is flagged from the log", () => {
+		const f = ruleFindings({
+			metrics: { models: { last24h: served({ frontier: 40 }) } },
+			evals: {},
+			config: { orcwoodCount: 1 },
+		});
+		const local = f.find((x) => x.area === "localization");
+		expect(local).toMatchObject({ severity: "opportunity", title: "Everything ran on the frontier in the last 24h" });
+		expect(local.evidence).toMatch(/40 calls served.*1 endpoint\(s\) configured but none of them answered/);
+	});
+
+	test("a quiet night is not a localization regression", () => {
+		const f = ruleFindings({
+			metrics: { models: { last24h: served({ frontier: 3 }) } },
+			evals: {},
+			config: { orcwoodCount: 1 },
+		});
+		expect(f.find((x) => x.area === "localization")).toBeUndefined();
+	});
+
+	test("with no telemetry at all, the config is the only signal left", () => {
+		const f = ruleFindings({
+			metrics: { models: { last24h: { available: false, reason: "table missing" } } },
+			evals: {},
+			config: { orcwoodCount: 0 },
+		});
+		expect(f.find((x) => x.area === "localization").title).toMatch(/No Orcwood endpoints configured/);
+	});
+
 	test("conversations without new memories means extraction is broken", () => {
 		const f = ruleFindings({
 			metrics: {
