@@ -36,6 +36,7 @@
 const secrets = require("../secrets");
 
 const SEND_TIMEOUT_MS = 10_000;
+const SENDER_NAME = "Athena";
 
 /**
  * Twilio's own vocabulary for "stop using this number".
@@ -127,8 +128,9 @@ async function send(token, { title, body } = {}) {
 	// No title line. On a push the title is a separate visual field; in a text
 	// thread it would just be the word "Athena" above every message she has
 	// ever sent, in a conversation that is already unmistakably from her.
-	const text = String(body || title || "").slice(0, 1500);
-	if (!text) return { ok: false, dead: false, reason: "empty" };
+	const rawText = String(body || title || "");
+	if (!rawText) return { ok: false, dead: false, reason: "empty" };
+	const text = `${rawText.startsWith(`${SENDER_NAME}:`) ? "" : `${SENDER_NAME}: `}${rawText}`.slice(0, 1500);
 
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);

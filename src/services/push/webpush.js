@@ -59,7 +59,7 @@ async function keys() {
 		cached = {
 			publicKey: json.publicKey,
 			privateKey: json.privateKey,
-			subject: json.subject || "https://athena.orcwood.com",
+			subject: json.subject || "https://athena-companion-12367074465.us-central1.run.app",
 		};
 	}
 	return cached;

@@ -12,6 +12,7 @@ const router = express.Router();
 // adult caller. No caller-supplied profile or provider URL is accepted.
 router.get('/dashboard', requireAuth, require('../controllers/dashboard').summary);
 router.get('/dashboard/priority', requireAuth, require('../controllers/dashboard').priority);
+router.get('/system/twilio-billing', requireAuth, require('../controllers/system').twilioBillingStatus);
 // News: the watch list is the person's, the interval is Athena's. There is no
 // route for setting an interval by hand, by design — see services/news.
 router.get('/dashboard/news', requireAuth, require('../controllers/dashboard').newsFeed);

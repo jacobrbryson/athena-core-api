@@ -66,7 +66,7 @@ describe("sending", () => {
 		const sent = new URLSearchParams(init.body);
 		expect(sent.get("To")).toBe("+15555550123");
 		expect(sent.get("From")).toBe(CONFIG.TWILIO_FROM_NUMBER);
-		expect(sent.get("Body")).toBe("Your 2pm is soon.");
+		expect(sent.get("Body")).toBe("Athena: Your 2pm is soon.");
 	});
 
 	test("authenticates with the API key, not the account's auth token", async () => {
@@ -93,10 +93,10 @@ describe("sending", () => {
 		expect(decoded.startsWith(`${CONFIG.TWILIO_ACCOUNT_SID}:`)).toBe(true);
 	});
 
-	test("sends no title line — a text thread already knows who it is from", async () => {
+	test("identifies the sender even when a title is provided", async () => {
 		await sms.send("+15555550123", { title: "Athena", body: "Your 2pm is soon." });
 		const sent = new URLSearchParams(global.fetch.mock.calls[0][1].body);
-		expect(sent.get("Body")).toBe("Your 2pm is soon.");
+		expect(sent.get("Body")).toBe("Athena: Your 2pm is soon.");
 	});
 
 	test("a malformed number never reaches Twilio", async () => {

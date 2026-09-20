@@ -29,6 +29,12 @@ Until then the number is stored but unreachable.
 The **⋯ menu** → **Initiative** → **where she can reach you** → add a phone
 number. You'll get a code by text; type it in and it's live.
 
+Before I send the verification code, I ask you to separately consent to
+recurring SMS from **Athena**. That consent is optional and is not
+required to use Athena; the prompt links to the Privacy Policy and Terms of
+Service and explains that message frequency varies, message and data rates may
+apply, and STOP/HELP are available.
+
 The same **"Send me a test notification"** button proves it works, and says
 which of your devices actually received it.
 

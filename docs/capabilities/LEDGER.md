@@ -1,5 +1,11 @@
 # Capability ledger
 
+- 2026-09-20 — Added a System page in Companion with live, read-only Twilio balance and today/month usage data — `system.md` (status: live)
+
+- 2026-09-20 — Companion SMS setup now requires separate explicit consent,
+  links to Athena's public Privacy Policy and Terms of Service, and identifies
+  the program as Athena — `text-messages.md` (status: partial)
+
 - 2026-09-19 — Initiative now lets you verify a phone number for SMS from the
   Initiative panel, turn texting off, and include SMS in the device-by-device
   test notification report — `initiative.md` (status: partial)
