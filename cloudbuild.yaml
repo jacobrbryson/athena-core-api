@@ -102,7 +102,7 @@ substitutions:
   # must move with it — see the UpdateJobs step. Space-separated, and each has
   # to live in $_REGION; a name that isn't deployed is skipped, which is why
   # athena-news can be listed before setup-news-watch.sh has ever been run.
-  _JOBS: "athena-nightly athena-rotate-keys athena-news"
+  _JOBS: "athena-nightly athena-rotate-keys athena-news athena-incidents"
   # Non-secret config — override per environment if needed.
   _DB_HOST: "134.209.79.220"
   _DB_USER: "rbryson"

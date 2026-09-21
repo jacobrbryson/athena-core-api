@@ -22,6 +22,13 @@ router.patch('/dashboard/news/sources/:uuid', requireAuth, express.json({ limit:
 router.delete('/dashboard/news/sources/:uuid', requireAuth, require('../controllers/dashboard').deleteNewsSource);
 router.post('/dashboard/news/check', requireAuth, require('../controllers/dashboard').checkNews);
 
+// Nearby emergencies: the places watched for 911 calls (home, family homes),
+// and what is active near them. Delivery is the athena-incidents job.
+router.get('/dashboard/incidents', requireAuth, require('../controllers/nearbyIncidents').nearby);
+router.get('/dashboard/incidents/places', requireAuth, require('../controllers/nearbyIncidents').listPlaces);
+router.put('/dashboard/incidents/places', requireAuth, express.json({ limit: '4kb' }), require('../controllers/nearbyIncidents').savePlace);
+router.delete('/dashboard/incidents/places/:uuid', requireAuth, require('../controllers/nearbyIncidents').removePlace);
+
 // "Right now": one suggestion for the gap in front of them, and the two lists
 // it is drawn from. The suggestion route reads; it never acts. Places are read
 // on Athena's rhythm like news pages, so there is no route for setting one.

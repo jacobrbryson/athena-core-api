@@ -56,12 +56,23 @@ async function appliedSet(conn) {
 	return new Set(rows.map((r) => r.id));
 }
 
-async function up() {
+/**
+ * Apply pending migrations — all of them, or just `only` (by id). Applying
+ * one by id exists because this repo is edited by more than one session at a
+ * time: "migrate" must not quietly ship somebody else's half-finished schema
+ * alongside yours.
+ */
+async function up(only = null) {
 	const conn = await connect();
 	try {
 		await ensureTable(conn);
 		const applied = await appliedSet(conn);
-		const pending = listUpMigrations().filter((m) => !applied.has(m.id));
+		const pending = listUpMigrations().filter(
+			(m) => !applied.has(m.id) && (!only || m.id === only)
+		);
+		if (only && !pending.length && !applied.has(only)) {
+			throw new Error(`No migration named ${only}`);
+		}
 
 		if (!pending.length) {
 			console.log("✓ No pending migrations. Database is up to date.");
@@ -120,7 +131,7 @@ async function down(id) {
 
 const [cmd, arg] = process.argv.slice(2);
 const run =
-	cmd === "status" ? status() : cmd === "down" ? down(arg) : up();
+	cmd === "status" ? status() : cmd === "down" ? down(arg) : up(cmd === "up" ? arg || null : null);
 
 run.catch((err) => {
 	console.error("Migration failed:", err.message);

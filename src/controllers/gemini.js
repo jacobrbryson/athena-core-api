@@ -10,6 +10,7 @@ const missionService = require("../services/mission");
 const selfKnowledge = require("../services/selfKnowledge");
 const actions = require("../services/actions");
 const initiative = require("../services/initiative");
+const nearbyIncidents = require("../services/pulsepoint/watch");
 const { audienceForSession } = require("../services/audience");
 const sessionParticipants = require("../services/sessionParticipant");
 
@@ -185,6 +186,21 @@ async function processAiResponse(session, message, clients, ctx = {}) {
         initiativeBlock = await initiative.promptBlock(session.profile_id);
       } catch (e) {
         console.warn("[gemini] initiative block failed:", e.message);
+      }
+    }
+
+    // Emergency calls near their saved places / current position, live from
+    // the county dispatch board, so "what are all the sirens?" has an answer
+    // and she can raise one herself. Bounded to 2.5s inside, never fatal.
+    if (mayPropose) {
+      try {
+        const nearbyBlock = await nearbyIncidents.promptBlock(session.profile_id);
+        if (nearbyBlock)
+          initiativeBlock = initiativeBlock
+            ? [initiativeBlock, nearbyBlock].join("\n\n")
+            : nearbyBlock;
+      } catch (e) {
+        console.warn("[gemini] nearby incidents block failed:", e.message);
       }
     }
 

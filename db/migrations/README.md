@@ -8,6 +8,7 @@ Forward-only SQL migrations applied by [`../migrate.js`](../migrate.js).
 # from core_api/
 node db/migrate.js           # apply all pending *.up.sql
 node db/migrate.js status     # show applied vs pending
+node db/migrate.js up 0038_watch_place   # apply just one pending migration
 node db/migrate.js down 0001_family_system   # manual rollback of one migration
 ```
 

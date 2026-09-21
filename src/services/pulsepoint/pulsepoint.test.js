@@ -177,3 +177,43 @@ describe("normalise", () => {
 		expect(geo.placesNear(medical, [home])).toEqual([]);
 	});
 });
+
+describe("watch", () => {
+	jest.mock("../../helpers/db", () => ({ query: jest.fn() }));
+	const watch = require("./watch");
+	const home = { name: "Home", latitude: 35.6741, longitude: -80.9073, radiusMiles: 3 };
+	const at = (id, code, lat, lon, extra = {}) => ({
+		id, code, status: "active", what: calltypes.describe(code),
+		category: calltypes.lookup(code)?.category || null, alertable: calltypes.isAlertable(code),
+		latitude: lat, longitude: lon, locatable: lat !== null, address: "SHADY COVE RD & PERTH RD, TROUTMAN, NC",
+		units: 3, receivedAt: new Date(), ...extra,
+	});
+
+	test("tree down near home is told, even though PulsePoint says not alertable", async () => {
+		const hits = await watch.nearbyFor(1, { list: [at("t1", "TD", 35.69, -80.9073)], places: [home] });
+		expect(hits).toHaveLength(1);
+		expect(hits[0].incident.alertable).toBe(false);
+	});
+
+	test("medical calls and far calls are not", async () => {
+		const list = [at("m1", "ME", 35.6745, -80.9073), at("f1", "SF", 35.9, -80.9073)];
+		expect(await watch.nearbyFor(1, { list, places: [home] })).toHaveLength(0);
+	});
+
+	test("recent (closed) calls are not", async () => {
+		const list = [at("c1", "TD", 35.675, -80.9073, { status: "recent" })];
+		expect(await watch.nearbyFor(1, { list, places: [home] })).toHaveLength(0);
+	});
+
+	test("wording names what, where and how far", async () => {
+		const hits = await watch.nearbyFor(1, { list: [at("t1", "TD", 35.69, -80.9073)], places: [home] });
+		expect(watch.wording(hits)).toBe("Tree Down 1.1 miles from home: Shady Cove Rd & Perth Rd (3 units).");
+	});
+
+	test("several calls become one message, nearest first", async () => {
+		const list = [at("a", "TD", 35.69, -80.9073), at("b", "HC", 35.68, -80.9073)];
+		const text = watch.wording(await watch.nearbyFor(1, { list, places: [home] }));
+		expect(text.split("\n")[0]).toBe("2 new emergency calls near home:");
+		expect(text.split("\n")[1]).toMatch(/^• Hazardous Condition/);
+	});
+});

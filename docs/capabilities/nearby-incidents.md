@@ -2,8 +2,8 @@
 id: nearby-incidents
 title: Nearby emergencies
 summary: I watch the county dispatch board and tell you when something serious is happening close to home.
-where: not yet on a surface — service layer only
-status: partial
+where: Athena's notifications (in-app, phone, browser, text) and in conversation
+status: live
 surfaces: [companion]
 audiences: [adult]
 triggers: [emergency, fire, sirens, what happened, police, ambulance, dispatch, scanner, pulsepoint, nearby, down the street, what was that]
@@ -77,10 +77,9 @@ be placed exactly; the calls that cannot be placed are the ones nobody should
 be able to place. A redacted incident is kept and named, carries
 `locatable: false`, and can never match a radius.
 
-`alertable` is **PulsePoint's own judgement**, not ours — made by people who do
-this for a living. We do not second-guess it. An unknown code is never
-alertable, because "something is happening nearby and I do not know what" is
-the one message that worries without informing.
+`alertable` is **PulsePoint's own judgement**, tuned for a county-wide CPR
+app. It turned out to be the wrong gate for "near my house" — see *How it
+tells you* below — so it now only decides what may break quiet hours.
 
 ## Under the hood
 
@@ -97,17 +96,33 @@ the one message that worries without informing.
   endpoint belonging to someone else, serving public-safety data at their
   expense. If they ask us to stop, we stop.
 
+## How it tells you
+
+`src/jobs/incidents.js` runs every two minutes (`athena-incidents`). Each pass
+reads the county board once, finds active calls inside a watched radius, and
+writes ONE `athena_nudge` (trigger `nearby_incident`) for the calls it has not
+told you about in the last 24 hours. That row is the in-app card, and
+`push.deliverNudge` fans it out to Android, browser and SMS. The text is
+deterministic — no model call.
+
+**What is told:** every locatable call in range except medical calls and a
+few service codes (lift assist, public service). PulsePoint's `alertable`
+flag is NOT the gate — it marks Tree Down and Hazardous Condition as
+non-alertable, which is exactly what piled up near home on 2026-09-21 while
+nothing was said. `alertable` only decides whether a call may break quiet
+hours: a fire wakes you, a tree down waits until morning (still written
+in-app immediately).
+
+**In conversation:** `watch.promptBlock` puts the live nearby list into
+Athena's system prompt (adult sessions, 2.5s bound), so she knows about it
+without having pushed anything.
+
+**Places:** `PULSEPOINT_WATCH_PLACES` JSON, plus the phone's latest location
+sample if under 45 minutes old.
+
 ## Not built yet
 
-The service layer reads, decodes, names and locates incidents, end to end,
-against live data. Nothing yet decides *whom to tell and how*:
-
-- **Saved places.** Home and family members' houses, each with its own radius.
-  Needs a migration and a panel; `geo.placesNear` already takes the list.
-- **Live phone location.** The companion does not report position at all today.
-  Biggest remaining piece.
-- **The poll job.** `src/jobs/` schedule, plus dedupe so one fire is one alert.
-- **Delivery.** Push exists (`services/push`, android/car only — web has no
-  transport). In-app and conversational mention follow the news pattern.
-  **Text message has no provider anywhere in the project** — it needs an
-  account, a number and credentials before a line of code is worth writing.
+- **Saved places table + panel** (home, family homes, each radius) — today
+  it is an env var; needs a migration.
+- **Phone location is on but no samples arrive**, so "near me" currently
+  means near home only.
