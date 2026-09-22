@@ -27,6 +27,7 @@ const CARDS = [
 	{ id: "calendar", title: "Calendar" },
 	{ id: "health", title: "Health & Performance" },
 	{ id: "family", title: "Family" },
+	{ id: "mail", title: "Mail" },
 	{ id: "work", title: "Work" },
 	{ id: "news", title: "News & Updates" },
 	{ id: "projects", title: "Projects" },
@@ -60,8 +61,8 @@ function describe(summary, pendingCount) {
 	const sleep = latest(summary?.sleep?.data?.filter((s) => !s.nap));
 	const chores = summary?.familyChores?.data?.chores || [];
 	const issues = summary?.jira?.data?.issues || [];
-	const mail = summary?.gmail?.data?.messages?.length ?? null;
 	const mentions = summary?.slack?.data?.messages?.length ?? null;
+	const emailNew = summary?.emailTriage?.data?.newCount ?? null;
 	const strain = latest(summary?.strain?.data)?.day_strain ?? null;
 	const activities = summary?.activity?.data?.activities?.length ?? null;
 
@@ -105,15 +106,25 @@ function describe(summary, pendingCount) {
 			},
 		},
 		{
+			id: "mail",
+			title: "Mail",
+			source: status("emailTriage"),
+			empty: !(emailNew > 0),
+			signals: {
+				newTriagedEmails: emailNew,
+				receipts: summary?.emailTriage?.data?.receiptCount ?? null,
+				travelOrSchool: (summary?.emailTriage?.data?.travelCount ?? 0) + (summary?.emailTriage?.data?.schoolCount ?? 0),
+			},
+		},
+		{
 			id: "work",
 			title: "Work",
 			source: status("jira"),
-			// Three sub-sources, any one of which can carry the card. Jira being
-			// unlinked says nothing about whether there is unread mail.
-			empty: !issues.length && !(mail > 0) && !(mentions > 0),
+			// Two sub-sources, either of which can carry the card. Jira being
+			// unlinked says nothing about whether there are Slack mentions.
+			empty: !issues.length && !(mentions > 0),
 			signals: {
 				assignedOpenIssues: issues.length,
-				unreadInboxMessages: mail,
 				slackMentions: mentions,
 			},
 		},

@@ -49,9 +49,17 @@ const PROVIDERS = {
     id: 'gmail', label: 'Gmail',
     authorizeUrl: 'https://accounts.google.com/o/oauth2/v2/auth', tokenUrl: 'https://oauth2.googleapis.com/token',
     revokeUrl: 'https://oauth2.googleapis.com/revoke', revokeMethod: 'POST', revokeBody: token => ({ token }),
-    scopes: ['https://www.googleapis.com/auth/gmail.readonly'], scopeSeparator: ' ',
+    // gmail.modify supersedes readonly (it includes read access) but both are
+    // listed explicitly, same as google_calendar layering calendar.events
+    // alongside calendar.readonly below — it documents intent at the call
+    // site rather than relying on one scope's coverage of another. Accounts
+    // linked before this widened hold the old readonly-only grant and keep
+    // working for reads; a label write 403s and connectors/gmail.js re-types
+    // that into needs_reauth (see asWriteAuthError there), same pattern as
+    // googleCalendar.js.
+    scopes: ['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.modify'], scopeSeparator: ' ',
     clientIdSecret: 'GOOGLE_OAUTH_CLIENT_ID', clientSecretSecret: 'GOOGLE_OAUTH_CLIENT_SECRET',
-    pkce: true, authorizeParams: { access_type: 'offline', prompt: 'consent select_account' },
+    pkce: true, authorizeParams: { access_type: 'offline', prompt: 'consent', include_granted_scopes: 'true' },
     tokenAuth: 'body', consentType: null, rotatesRefreshToken: false,
     apiBase: 'https://gmail.googleapis.com/gmail/v1', identify: null,
     identifyAsync: async (_tokens, { accessToken, apiBase }) => {

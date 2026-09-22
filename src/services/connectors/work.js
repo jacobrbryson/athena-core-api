@@ -1,15 +1,9 @@
 const { providerGet } = require('./http');
 
-async function gmail(profileId) {
-  const account = await providerGet(profileId, 'gmail', '/users/me/profile');
-  const list = await providerGet(profileId, 'gmail', '/users/me/messages', { query: { q: 'in:inbox is:unread', maxResults: 5 } });
-  const messages = await Promise.all((list.messages || []).map(async ({ id }) => {
-    const message = await providerGet(profileId, 'gmail', `/users/me/messages/${encodeURIComponent(id)}`, { query: { format: 'metadata' } });
-    const header = name => (message.payload?.headers || []).find(h => h.name.toLowerCase() === name)?.value || '';
-    return { id, title: header('subject') || '(no subject)', from: header('from'), date: header('date'), url: `https://mail.google.com/mail/u/${encodeURIComponent(account.emailAddress)}/#inbox/${id}` };
-  }));
-  return { account: account.emailAddress, messages };
-}
+// Gmail used to live here (a "Work" card loader) but has its own dashboard
+// section and its own connector module now — see ./gmail.js. Reading and
+// filing mail is a bigger surface than the generic read-only wrapper below
+// gives a provider, so it isn't folded into `loaders`.
 
 async function jira(profileId) {
   const resources = await providerGet(profileId, 'jira', '/oauth/token/accessible-resources');
@@ -40,7 +34,7 @@ async function slack(profileId) {
   if (!result.ok) throw new Error('Slack search unavailable');
   return { workspace: auth.team, messages: (result.messages?.matches || []).map(m => ({ text: String(m.text || '').slice(0, 500), channel: m.channel?.name, url: m.permalink, timestamp: m.ts })) };
 }
-const loaders = { gmail, jira, slack };
+const loaders = { jira, slack };
 const connectors = Object.entries(loaders).map(([id, load]) => ({
   PROVIDER: id,
   matches: message => new RegExp(`\\b(${id}|work|inbox|projects?|briefing)\\b`, 'i').test(message || ''),

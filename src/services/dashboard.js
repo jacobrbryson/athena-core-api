@@ -8,6 +8,7 @@ const strava = require('./connectors/strava');
 const integration = require('./integration');
 const chores = require('./familyChores');
 const work = require('./connectors/work');
+const emailTriage = require('./emailTriage');
 
 const { technicalDetail } = require('./connectors/context');
 
@@ -65,7 +66,7 @@ async function getDashboard(profileId, user) {
     if (health && !healthConsent) return section('consent_required');
     return read(fn);
   }
-  const [calendarData, recovery, sleep, strain, activity, familyChores, jira, slack, gmail] = await Promise.all([
+  const [calendarData, recovery, sleep, strain, activity, familyChores, jira, slack, emailTriageData] = await Promise.all([
     provider('google_calendar', async () => {
       const result = await calendar.collectEvents(profileId, { days: 7, maxResults: 25 });
       const timeZone = calendar.displayTimeZone(result.calendars);
@@ -103,9 +104,12 @@ async function getDashboard(profileId, user) {
     })(),
     provider('jira', () => work.jira(profileId)),
     provider('slack', () => work.slack(profileId)),
-    provider('gmail', () => work.gmail(profileId)),
+    // Gated on the 'gmail' credential like every other provider() call here,
+    // but the data behind it is now the triage summary (see services/emailTriage.js),
+    // not the old "5 unread subjects" work.gmail() reader.
+    provider('gmail', () => emailTriage.summary(profileId)),
   ]);
-  const result = { calendar: calendarData, recovery, sleep, strain, activity, familyChores, jira, slack, gmail };
+  const result = { calendar: calendarData, recovery, sleep, strain, activity, familyChores, jira, slack, emailTriage: emailTriageData };
   for (const [id, entry] of snapshots) if (Date.now() - entry.at >= CACHE_TTL_MS) snapshots.delete(id);
   if (snapshots.size >= 128) snapshots.delete(snapshots.keys().next().value);
   snapshots.set(profileId, { at: Date.now(), data: result });

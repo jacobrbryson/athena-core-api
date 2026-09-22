@@ -28,6 +28,8 @@
  */
 
 const googleCalendar = require("../connectors/googleCalendar");
+const gmail = require("../connectors/gmail");
+const emailTriage = require("../emailTriage");
 const memory = require("../memory");
 const lookRequests = require("../lookRequests");
 
@@ -325,6 +327,228 @@ const ACTIONS = [
 				visibility: "private",
 			});
 			return { ref: saved?.uuid || null, detail: null };
+		},
+	},
+
+	// -------------------------------------------------------------------
+	// Email triage (services/emailTriage.js). Proposed either from the
+	// email-triage panel directly (routes/email.js calling actions.propose
+	// with sessionId null) or, in principle, from chat — normalize() does
+	// not care which. Never called from a scan: scanNext() only reads and
+	// classifies, these are the only things that touch Gmail or write to
+	// email_receipt.
+	// -------------------------------------------------------------------
+
+	{
+		id: "file_receipt_email",
+		label: "File a receipt",
+		provider: "gmail",
+		consentType: "action_authority",
+		// The person can remove the label / move it back to the inbox from
+		// Gmail itself; the email_receipt row stays as a record either way,
+		// same "undoable in the underlying app, not through Athena" sense
+		// create_calendar_event uses above.
+		reversible: true,
+		standing: false,
+		describe:
+			"File one or more triaged receipt emails into a Gmail label (default " +
+			'"Receipts") and log them to the spending ledger. Only for emails the ' +
+			"email-triage feature has already classified as receipt.",
+		params: {
+			items:
+				"Array of { email_triage_uuid, label, merchant, category, amount, " +
+				"currency, purchased_at }. One entry per email — several when the " +
+				"person is filing a group of similar receipts at once. Required, " +
+				"1-25 entries.",
+		},
+
+		normalize(raw = {}) {
+			const items = Array.isArray(raw.items) ? raw.items : [];
+			if (!items.length) throw invalid("Needs at least one receipt email");
+			if (items.length > 25) throw invalid("Too many receipts in one proposal");
+			return {
+				items: items.map((item) => {
+					const email_triage_uuid = str(item.email_triage_uuid, 36);
+					if (!email_triage_uuid) throw invalid("Each receipt needs its email_triage_uuid");
+					const amount =
+						typeof item.amount === "number" && Number.isFinite(item.amount)
+							? Math.round(item.amount * 100) / 100
+							: null;
+					const purchasedAtRaw = str(item.purchased_at, 10);
+					return {
+						email_triage_uuid,
+						label: str(item.label, 100) || "Receipts",
+						merchant: str(item.merchant, 200),
+						category: str(item.category, 60),
+						amount,
+						currency: str(item.currency, 8)?.toUpperCase() || "USD",
+						purchased_at: purchasedAtRaw && DATE_ONLY.test(purchasedAtRaw) ? purchasedAtRaw : null,
+					};
+				}),
+			};
+		},
+
+		summarize(p) {
+			const [first] = p.items;
+			if (p.items.length === 1) {
+				const amount = first.amount != null ? ` (${first.currency} ${first.amount.toFixed(2)})` : "";
+				return `File this receipt${first.merchant ? ` from ${first.merchant}` : ""}${amount} into "${first.label}" and log it to your spending`;
+			}
+			return `File ${p.items.length} receipts into "${first.label}" and log them to your spending`;
+		},
+
+		async execute(profileId, params) {
+			const rows = await emailTriage.getRowsByUuids(
+				profileId,
+				params.items.map((i) => i.email_triage_uuid)
+			);
+			const byUuid = new Map(rows.map((r) => [r.uuid, r]));
+			const filed = [];
+			for (const item of params.items) {
+				const row = byUuid.get(item.email_triage_uuid);
+				// Not this person's email (or it's gone since the proposal was
+				// made) — skip it rather than failing the whole batch.
+				if (!row) continue;
+				await gmail.fileMessage(profileId, row.gmail_message_id, item.label);
+				await emailTriage.insertReceipt(profileId, row.id, item);
+				filed.push(item.email_triage_uuid);
+			}
+			if (!filed.length) throw new Error("None of these emails could be found");
+			await emailTriage.markStatus(profileId, filed, "actioned");
+			return { ref: filed.join(","), detail: { filed: filed.length } };
+		},
+	},
+
+	{
+		id: "file_travel_or_school_email",
+		label: "Add to calendar and file the email",
+		// Needs gmail linked too, but the registry only gates one provider per
+		// action and a triage row only ever exists when gmail was already
+		// linked (that's how it was found). Filing failure degrades to
+		// `detail.filed: false` in execute() below rather than blocking the
+		// calendar event, which is the part the person actually asked for.
+		provider: "google_calendar",
+		consentType: "action_authority",
+		reversible: true,
+		standing: false,
+		describe:
+			"For a triaged travel or school-announcement email with a real date " +
+			"on it (a flight, a deadline, an event), propose adding it to the " +
+			"calendar AND filing the email out of the inbox into a matching " +
+			"label, as one confirmation. Only for a triaged email whose category " +
+			"is travel or school.",
+		params: {
+			email_triage_uuid: "The triaged email's uuid. Required.",
+			label: 'Destination Gmail label, e.g. "Travel" or "School". Required.',
+			title: "Event title. Required.",
+			start:
+				"When it starts: ISO 8601 with a UTC offset, or YYYY-MM-DD if all_day. Required.",
+			end: "When it ends, same format. Required unless all_day.",
+			all_day: "true for a whole-day event.",
+			time_zone: "IANA zone (America/New_York) for start/end that carry no offset.",
+			location: "Where it is. Optional.",
+		},
+
+		normalize(raw = {}) {
+			const email_triage_uuid = str(raw.email_triage_uuid, 36);
+			if (!email_triage_uuid) throw invalid("Needs the triaged email's uuid");
+			const label = str(raw.label, 100);
+			if (!label) throw invalid("Needs a destination label");
+			const title = str(raw.title, 200);
+			if (!title) throw invalid("An event needs a title");
+
+			const allDay = raw.all_day === true;
+			let event;
+			if (allDay) {
+				const start = str(raw.start, 10);
+				const end = str(raw.end, 10) || start;
+				if (!DATE_ONLY.test(start || "") || !DATE_ONLY.test(end)) {
+					throw invalid("An all-day event needs YYYY-MM-DD dates");
+				}
+				if (end < start) throw invalid("An event cannot end before it starts");
+				event = {
+					title,
+					all_day: true,
+					start,
+					end: new Date(new Date(`${end}T00:00:00Z`).getTime() + 86400000).toISOString().slice(0, 10),
+				};
+			} else {
+				const timeZone = zone(raw.time_zone);
+				const start = instant(raw.start, { timeZone });
+				const end = instant(raw.end, { timeZone });
+				if (!start) throw invalid("An event needs a start time with a UTC offset, or a time_zone");
+				if (!end) throw invalid("An event needs an end time");
+				const startMs = new Date(/(?:Z|[+-]\d{2}:?\d{2})$/.test(start) ? start : `${start}Z`);
+				const endMs = new Date(/(?:Z|[+-]\d{2}:?\d{2})$/.test(end) ? end : `${end}Z`);
+				if (endMs <= startMs) throw invalid("An event cannot end before it starts");
+				event = { title, start, end, ...(timeZone ? { time_zone: timeZone } : {}) };
+			}
+			if (str(raw.location, 200)) event.location = str(raw.location, 200);
+
+			return { email_triage_uuid, label, event };
+		},
+
+		summarize(p) {
+			const when = p.event.all_day
+				? `all day on ${p.event.start}`
+				: humanTime(p.event.start, p.event.time_zone);
+			return `Add "${p.event.title}" to your calendar (${when}) and file this email into "${p.label}"`;
+		},
+
+		async execute(profileId, params) {
+			const rows = await emailTriage.getRowsByUuids(profileId, [params.email_triage_uuid]);
+			const row = rows[0];
+			if (!row) throw new Error("That email could not be found");
+			const { ref, html_link } = await googleCalendar.createEvent(profileId, params.event);
+			let filed = false;
+			try {
+				await gmail.fileMessage(profileId, row.gmail_message_id, params.label);
+				filed = true;
+			} catch (err) {
+				// The event is what the person actually asked for; a filing
+				// failure (e.g. gmail needs re-auth) shouldn't undo it or fail
+				// the whole action — it just leaves the email where it was.
+				console.warn(
+					"[actions] file_travel_or_school_email: event created but filing failed:",
+					err.message
+				);
+			}
+			await emailTriage.markStatus(profileId, [row.uuid], "actioned");
+			return { ref, detail: { html_link, filed } };
+		},
+	},
+
+	{
+		id: "dismiss_email",
+		label: "Dismiss from the mail list",
+		// Internal: nothing to link. Dismissing never touches Gmail — it only
+		// hides the row from the "new" list — but it still goes through the
+		// same propose/confirm/audit path as everything else in this feature
+		// for one consistent trail of what Athena did with the inbox.
+		provider: null,
+		consentType: "action_authority",
+		reversible: false,
+		standing: false,
+		describe:
+			"Hide a triaged email from the mail list without touching it in " +
+			"Gmail at all — for something with no real action to take, or the " +
+			"person doesn't want Athena to do anything with it.",
+		params: { email_triage_uuid: "The triaged email's uuid. Required." },
+
+		normalize(raw = {}) {
+			const email_triage_uuid = str(raw.email_triage_uuid, 36);
+			if (!email_triage_uuid) throw invalid("Needs the triaged email's uuid");
+			return { email_triage_uuid };
+		},
+
+		summarize() {
+			return "Dismiss this email from your mail list (nothing changes in Gmail)";
+		},
+
+		async execute(profileId, params) {
+			const changed = await emailTriage.markStatus(profileId, [params.email_triage_uuid], "dismissed");
+			if (!changed) throw new Error("That email could not be found");
+			return { ref: params.email_triage_uuid, detail: null };
 		},
 	},
 ];

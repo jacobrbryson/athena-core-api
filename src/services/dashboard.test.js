@@ -5,8 +5,9 @@ jest.mock('./connectors/whoop', () => ({ listRecovery: jest.fn(), listSleep: jes
 jest.mock('./connectors/strava', () => ({ listActivities: jest.fn() }));
 jest.mock('./integration', () => ({ getStatus: jest.fn(), getUsableCredentials: jest.fn(), PROVIDER_FAMILY_CHORES: 'family_chores' }));
 jest.mock('./familyChores', () => ({ getChoresToday: jest.fn() }));
-jest.mock('./connectors/work', () => ({ jira: jest.fn(), slack: jest.fn(), gmail: jest.fn() }));
+jest.mock('./connectors/work', () => ({ jira: jest.fn(), slack: jest.fn() }));
 jest.mock('./connectors/context', () => ({ technicalDetail: () => null }));
+jest.mock('./emailTriage', () => ({ summary: jest.fn() }));
 const credentials = require('./credentials');
 const consent = require('./consent');
 const calendar = require('./connectors/googleCalendar');
@@ -14,6 +15,7 @@ const whoop = require('./connectors/whoop');
 const work = require('./connectors/work');
 const integration = require('./integration');
 const chores = require('./familyChores');
+const emailTriage = require('./emailTriage');
 const { getDashboard } = require('./dashboard');
 beforeEach(() => {
   jest.resetAllMocks();
@@ -24,9 +26,9 @@ beforeEach(() => {
 test('unlinked sources remain explicit and make no provider calls', async () => {
   const result = await getDashboard(42, { googleId: 'caller' });
   expect(result.calendar.status).toBe('not_connected');
-  expect(result.gmail.status).toBe('not_connected');
+  expect(result.emailTriage.status).toBe('not_connected');
   expect(calendar.collectEvents).not.toHaveBeenCalled();
-  expect(work.gmail).not.toHaveBeenCalled();
+  expect(emailTriage.summary).not.toHaveBeenCalled();
 });
 test('health data is not read when consent is missing', async () => {
   credentials.list.mockResolvedValue([{ provider: 'whoop', status: 'active' }]);

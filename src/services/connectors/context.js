@@ -1,4 +1,5 @@
 const googleCalendar = require("./googleCalendar");
+const gmail = require("./gmail");
 const strava = require("./strava");
 const whoop = require("./whoop");
 const { isNotConnected } = require("./http");
@@ -26,7 +27,7 @@ const credentials = require("../credentials");
  * contents and a reason for not having them.
  */
 
-const CONNECTORS = [googleCalendar, strava, whoop, ...require('./work').connectors];
+const CONNECTORS = [googleCalendar, gmail, strava, whoop, ...require('./work').connectors];
 
 /** Connectors whose keyword gate the message trips. */
 function relevantConnectors(message) {

@@ -47,8 +47,8 @@ test('Jira token exchange uses JSON and the existing state-derived profile', asy
   expect(JSON.parse(request.body)).toMatchObject({ code: 'code', grant_type: 'authorization_code' });
   expect(credentials.put).toHaveBeenCalledWith(expect.objectContaining({ profileId: 42, provider: 'jira' }));
 });
-test('new work grants have no write scopes', () => {
-  expect(getProvider('gmail').scopes).toEqual(['https://www.googleapis.com/auth/gmail.readonly']);
+test('Jira and Slack grants have no write scopes; Gmail carries modify for the email-triage action layer', () => {
+  expect(getProvider('gmail').scopes).toEqual(['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.modify']);
   expect(getProvider('jira').scopes).toEqual(['read:jira-work', 'offline_access']);
   expect(getProvider('slack').scopes).toEqual(['search:read']);
 });

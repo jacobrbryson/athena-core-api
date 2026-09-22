@@ -2,14 +2,8 @@ jest.mock('./http', () => ({ providerGet: jest.fn() }));
 const { providerGet } = require('./http');
 const work = require('./work');
 beforeEach(() => jest.resetAllMocks());
-test('Gmail reads only scoped unread inbox metadata, without mutating mail', async () => {
-  providerGet.mockResolvedValueOnce({ emailAddress: 'person@example.com' }).mockResolvedValueOnce({ messages: [{ id: 'a/b' }] }).mockResolvedValueOnce({ payload: { headers: [{ name: 'Subject', value: 'Hello' }, { name: 'From', value: 'Sender' }] } });
-  const result = await work.gmail(42);
-  expect(result.account).toBe('person@example.com');
-  expect(result.messages[0].title).toBe('Hello');
-  expect(providerGet).toHaveBeenNthCalledWith(2, 42, 'gmail', '/users/me/messages', { query: { q: 'in:inbox is:unread', maxResults: 5 } });
-  expect(providerGet).toHaveBeenNthCalledWith(3, 42, 'gmail', '/users/me/messages/a%2Fb', { query: { format: 'metadata' } });
-});
+// Gmail moved to its own connector — see gmail.test.js. work.js only has
+// Jira and Slack now (see work.js's header comment for why).
 test('Jira searches only authorized sites and returns partial failures honestly', async () => {
   providerGet.mockResolvedValueOnce([{ id: 'one', name: 'Site', url: 'https://site.atlassian.net', scopes: ['read:jira-work'] }, { id: 'two', scopes: ['read:jira-work'] }, { id: 'hidden', scopes: [] }]);
   providerGet.mockResolvedValueOnce({ issues: [{ key: 'A-1', fields: { summary: 'A task', project: { name: 'A' }, status: { name: 'Open' } } }] }).mockRejectedValueOnce(new Error('down'));

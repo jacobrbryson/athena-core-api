@@ -3,8 +3,8 @@
  *
  * The thing worth testing here is not whether the model ranks well — it is
  * whether a bad answer can damage the dashboard. An ordering is a rendering
- * hint over a fixed set of cards, so every path has to end with all seven
- * cards, once each, whatever came back. A dropped card is a section of
+ * hint over a fixed set of cards, so every path has to end with all of them,
+ * once each, whatever came back. A dropped card is a section of
  * someone's day that silently stops existing.
  */
 jest.mock("./llm", () => ({ generateJson: jest.fn() }));
@@ -32,7 +32,7 @@ function ready() {
 		familyChores: source("ready", { name: "F", chores: [{ title: "Dishes", completed: false }] }),
 		jira: source("ready", { issues: [{ key: "A-1", project: "Athena" }], partial: false }),
 		slack: source("not_connected"),
-		gmail: source("ready", { account: "a@b.c", messages: [{ id: "1" }] }),
+		emailTriage: source("ready", { newCount: 3, receiptCount: 2, travelCount: 1, schoolCount: 0, otherCount: 0, preview: [] }),
 	});
 	actions.listPending.mockResolvedValue([{ uuid: "a1" }]);
 }
@@ -48,7 +48,7 @@ function quietExceptCalendar() {
 		familyChores: source("ready", { name: "F", chores: [] }),
 		jira: source("ready", { issues: [], partial: false }),
 		slack: source("ready", { workspace: "w", messages: [] }),
-		gmail: source("ready", { account: "a	b.c", messages: [] }),
+		emailTriage: source("ready", { newCount: 0, receiptCount: 0, travelCount: 0, schoolCount: 0, otherCount: 0, preview: [] }),
 	});
 	actions.listPending.mockResolvedValue([]); // nothing awaiting approval
 }
@@ -62,7 +62,7 @@ beforeEach(() => {
 
 describe("getPriority", () => {
 	it("uses the model's order when it answers with every card", async () => {
-		const model = ["notifications", "calendar", "health", "work", "family", "projects", "news"];
+		const model = ["notifications", "calendar", "health", "work", "family", "mail", "projects", "news"];
 		llm.generateJson.mockResolvedValue({ data: { order: model.map((id) => ({ id, why: `${id} reason` })) }, model: "test" });
 
 		const result = await priority.getPriority(profile, {});
@@ -231,7 +231,7 @@ describe("getPriority", () => {
 				recovery: source("not_connected"), sleep: source("not_connected"),
 				strain: source("not_connected"), activity: source("not_connected"),
 				familyChores: source("not_connected"), jira: source("not_connected"),
-				slack: source("not_connected"), gmail: source("not_connected"),
+				slack: source("not_connected"), emailTriage: source("not_connected"),
 			});
 
 			const result = await priority.getPriority(profile, {});

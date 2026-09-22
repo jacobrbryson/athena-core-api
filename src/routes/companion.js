@@ -50,6 +50,16 @@ router.delete('/dashboard/projects/:uuid', requireAuth, require('../controllers/
 // The one-time move out of a spreadsheet. 512kb is a few hundred rows of CSV.
 router.post('/dashboard/projects/import', requireAuth, express.json({ limit: '600kb' }), require('../controllers/rightNow').importProjects);
 
+// Mail: on-demand Gmail triage. Scanning and proposing are POSTs that call out
+// (to the model / to Gmail via the action layer) so they get their own json
+// limit rather than the bare express.json() used for small bodies elsewhere.
+router.get('/dashboard/email', requireAuth, require('../controllers/email').list);
+router.get('/dashboard/email/:uuid', requireAuth, require('../controllers/email').detail);
+router.post('/dashboard/email/scan', requireAuth, express.json({ limit: '4kb' }), require('../controllers/email').scan);
+router.post('/dashboard/email/group/propose', requireAuth, express.json({ limit: '16kb' }), require('../controllers/email').proposeGroup);
+router.post('/dashboard/email/:uuid/propose', requireAuth, express.json({ limit: '8kb' }), require('../controllers/email').propose);
+router.post('/dashboard/email/:uuid/dismiss', requireAuth, express.json({ limit: '1kb' }), require('../controllers/email').dismiss);
+
 // Public: the on-device model manifest carries no secrets, and devices poll it
 // before (and after) pairing.
 router.get("/llm/manifest", companion.llmManifest);
