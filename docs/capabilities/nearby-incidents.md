@@ -159,8 +159,47 @@ place. No map library — positioned tiles and Web Mercator maths. Nudges
 expose only the pins (`initiative.nudgeMap`); the rest of `facts` never leaves
 the server.
 
+## The weather half
+
+The National Weather Service (`nws.js`, api.weather.gov) is the second source:
+official, free, no key, and it answers "what covers this exact point", which is
+the shape a watched place already has. NWS grades its own alerts and that
+grading is used as-is — urgent needs a serious severity (Extreme/Severe) AND a
+clock that has started (Immediate/Expected), so a tornado *warning* is urgent
+while a tornado *watch* is not. Advisories (Minor), tests, cancellations and
+expired alerts never appear.
+
+## Rhythm and sources
+
+The scheduler ticks every 5 minutes; the rhythm is decided in `watch.js`:
+every **15 minutes** when quiet, every **5 for an hour** once something new
+comes up nearby (each new thing extends the hour), and every **6 hours** for a
+source that is blocking automated readers. Due-times are measured by the
+database (`TIMESTAMPDIFF`), never by comparing the container's clock to
+database timestamps.
+
+Health is per source (`athena_incident_source`): the 911 board being blocked
+says nothing about the weather service, and the banner and Athena both say
+which half is blind. **A source that could not be read is "unknown", never
+"all clear"** — the calls already known are carried forward untouched, and an
+all-clear can only be sent when everything was actually read.
+
+## PulsePoint blocked us (2026-09-22)
+
+From ~14:12 UTC the incident endpoint answers 202 with
+`x-amzn-waf-action: challenge` from every IP: PulsePoint turned on AWS WAF bot
+protection. **This is not to be worked around** — no browser user-agent, no
+solving the challenge, no rotating IPs. `fetch.js` flags it, the watcher tells
+the owner once, backs off to one retry every 6 hours and exits 0 so the job
+stops reading as failed. It recovers by itself if the block is lifted.
+
+The sanctioned replacement is the **PulsePoint Respond** app, which any member
+of the public can use (agency affiliation only gates the CPR responder tiers).
+Its notifications are per incident type across the whole agency, not a radius.
+
 ## Known gaps
 
+- **911 calls are unavailable** while PulsePoint blocks automated readers.
 - **No phone position reaches the server.** `POST /location/sample` exists
   and the location switch saves a preference, but nothing sends samples: the
   Android app has no location permission or reporter. "Near me" is therefore

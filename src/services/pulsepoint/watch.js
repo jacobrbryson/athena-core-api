@@ -59,6 +59,7 @@ const { randomUUID, createHash } = require("node:crypto");
 const pool = require("../../helpers/db");
 const { fetchIncidents } = require("./fetch");
 const normalise = require("./normalise");
+const nws = require("./nws");
 const geo = require("./geo");
 
 const TRIGGER_ID = "nearby_incident";
@@ -260,9 +261,12 @@ const MODEL_TIMEOUT_MS = 25_000;
  * to say it and may raise the level; it may never talk it down, because a
  * model that is "not sure it's a big deal" is exactly the failure being fixed.
  */
-function floorLevel(hits) {
-	if (!hits.length) return "none";
-	if (hits.length >= 2 || hits.some((h) => h.incident.alertable)) return "urgent";
+const isSerious = (item) => (item?.serious ?? item?.incident?.alertable) === true;
+
+function floorLevel(hits = [], weather = []) {
+	const items = [...(hits || []), ...(weather || [])];
+	if (!items.length) return "none";
+	if (items.length >= 2 || items.some(isSerious)) return "urgent";
 	return "watch";
 }
 
@@ -272,25 +276,46 @@ const minutesAgo = (date) =>
 		: null;
 
 /** What the model is shown: the calls, as facts, and nothing it could mistake for an instruction. */
-function sheet(hits, countyActive) {
+function sheet(hits, countyActive, weather = []) {
+	const call = (item) =>
+		item.incident
+			? {
+					what: item.incident.what,
+					category: item.incident.category,
+					where: street(item.incident.address),
+					milesAway: Math.round(item.nearest.miles * 10) / 10,
+					nearestWatchedPlace: placeName(item.nearest.place),
+					unitsResponding: item.incident.units,
+					dispatchedMinutesAgo: minutesAgo(item.incident.receivedAt),
+					seriousByDispatchStandards: item.incident.alertable,
+				}
+			: {
+					what: item.what,
+					where: item.where,
+					milesAway: item.miles,
+					nearestWatchedPlace: item.place,
+					unitsResponding: item.units,
+					dispatchedMinutesAgo: item.receivedAt ? minutesAgo(new Date(item.receivedAt)) : null,
+					seriousByDispatchStandards: item.serious,
+				};
 	return {
 		countyWideActiveCalls: countyActive,
-		nearbyActiveCalls: hits.map(({ incident, nearest }) => ({
-			what: incident.what,
-			category: incident.category,
-			where: street(incident.address),
-			milesAway: Math.round(nearest.miles * 10) / 10,
-			nearestWatchedPlace: placeName(nearest.place),
-			unitsResponding: incident.units,
-			dispatchedMinutesAgo: minutesAgo(incident.receivedAt),
-			seriousByDispatchStandards: incident.alertable,
+		nearbyActiveCalls: (hits || []).map(call),
+		weatherAlerts: (weather || []).map((w) => ({
+			alert: w.event,
+			severity: w.severity,
+			urgency: w.urgency,
+			covers: w.area,
+			forWatchedPlace: w.place,
+			officialAdvice: w.instruction,
 		})),
 	};
 }
 
 const PROMPT = (facts, floor) =>
 	"You are Athena, looking after the person you live with. Below is what the county 911 " +
-	"dispatch board says is happening near their home and the places they asked you to watch, " +
+	"dispatch board and the National Weather Service say is happening near their home and the " +
+	"places they asked you to watch, " +
 	"right now.\n\n" +
 	JSON.stringify(facts, null, 1) +
 	"\n\nDecide how loudly to tell them, then write it.\n" +
@@ -300,19 +325,30 @@ const PROMPT = (facts, floor) =>
 	"- headline: at most 8 words. Plain, specific, no exclamation marks.\n" +
 	"- body: at most 45 words, spoken to them directly. Say what is happening and how close. " +
 	"With three calls or fewer, mention every one by what and street; with more, give the count " +
-	"and the nearest. If several calls share a cause you can see in the list (e.g. many trees " +
-	"down), say so plainly. You may add one practical suggestion only if it follows directly " +
+	"and the nearest. Cover the weather alerts too, briefly, in the weather service's own terms; " +
+	"its advice line may be quoted. If several calls share a cause you can see in the list " +
+	"(e.g. many trees down during a storm warning), say so plainly. " +
+	"You may add one practical suggestion only if it follows directly " +
 	"from the list (e.g. avoid a named street with a call on it). Do not invent anything that is " +
 	"not in the list — no injuries, causes, advice about other roads, or closures it does not state.\n\n" +
 	'Reply as JSON: {"level":"...","headline":"...","body":"..."}';
 
-function fallbackAssessment(hits) {
-	const level = floorLevel(hits);
+function fallbackAssessment(hits = [], weather = []) {
+	const level = floorLevel(hits, weather);
 	if (level === "none") return { level, headline: null, body: null, assessedBy: "rules" };
-	const place = placeName(hits[0].nearest.place);
-	const headline =
-		hits.length === 1 ? `${hits[0].incident.what} near ${place}` : `${hits.length} emergencies near ${place}`;
-	return { level, headline, body: wording(hits).slice(0, 1000), assessedBy: "rules" };
+	const calls = hits || [];
+	const place = calls.length ? placeName(calls[0].nearest?.place || { name: calls[0].place }) : weather[0].place;
+	const headline = calls.length
+		? calls.length === 1
+			? `${calls[0].incident?.what || calls[0].what} near ${place}`
+			: `${calls.length} emergencies near ${place}`
+		: weather.length === 1
+			? `${weather[0].event} where you are`
+			: `${weather.length} weather alerts near ${place}`;
+	const lines = [];
+	if (calls.length) lines.push(wording(calls));
+	for (const w of weather.slice(0, 3)) lines.push(`${w.event}${w.instruction ? `. ${w.instruction}` : ""}`);
+	return { level, headline, body: lines.join(" ").slice(0, 1000), assessedBy: "rules" };
 }
 
 /** The first distinctive word of each street, for checking the model named them. */
@@ -360,14 +396,14 @@ async function generateWithModel(prompt, marks = []) {
  * time. Never throws and never returns less than the floor: an emergency alert
  * must go out whether or not a model is answering tonight.
  */
-async function assess(hits, { countyActive = null, generate = generateWithModel } = {}) {
-	const fallback = fallbackAssessment(hits);
-	if (!hits.length) return fallback;
-	const floor = floorLevel(hits);
+async function assess(hits, { countyActive = null, generate = generateWithModel, weather = [] } = {}) {
+	const fallback = fallbackAssessment(hits, weather);
+	if (!hits?.length && !weather.length) return fallback;
+	const floor = floorLevel(hits, weather);
 	let timer;
 	try {
 		const result = await Promise.race([
-			generate(PROMPT(sheet(hits, countyActive), floor), streetMarks(hits)),
+			generate(PROMPT(sheet(hits, countyActive, weather), floor), streetMarks(hits || [])),
 			new Promise((_, reject) => {
 				timer = setTimeout(() => reject(new Error("model timed out")), MODEL_TIMEOUT_MS);
 			}),
@@ -397,17 +433,18 @@ function parseJson(value) {
 /** The stored situation for one person, or a quiet default. */
 async function getSituation(profileId) {
 	const [rows] = await pool.query(
-		`SELECT level, headline, body, incidents, incident_key, assessed_by, started_at, updated_at
+		`SELECT level, headline, body, incidents, weather, incident_key, assessed_by, started_at, updated_at
 		 FROM athena_incident_situation WHERE profile_id = ?`,
 		[profileId]
 	);
 	const row = rows[0];
-	if (!row) return { level: "none", headline: null, body: null, incidents: [], key: null };
+	if (!row) return { level: "none", headline: null, body: null, incidents: [], weather: [], key: null };
 	return {
 		level: row.level,
 		headline: row.headline,
 		body: row.body,
 		incidents: parseJson(row.incidents) || [],
+		weather: parseJson(row.weather) || [],
 		key: row.incident_key,
 		assessedBy: row.assessed_by,
 		startedAt: row.started_at,
@@ -417,7 +454,7 @@ async function getSituation(profileId) {
 
 /** The nearby calls as the clients see them. Street names, never raw codes. */
 function publicIncidents(hits) {
-	return hits.map(({ incident, nearest }) => ({
+	return (hits || []).map(({ incident, nearest }) => ({
 		id: incident.id,
 		what: incident.what,
 		category: incident.category,
@@ -444,22 +481,30 @@ function publicPlaces(places) {
 	}));
 }
 
-async function saveSituation(profileId, assessment, hits, key, previous) {
+/**
+ * Store the judgement and what it was made of.
+ *
+ * `calls` is already in public shape here, because when PulsePoint cannot be
+ * read the calls being carried forward are the ones already stored — see
+ * checkProfile.
+ */
+async function saveSituation(profileId, assessment, calls, weather, key, previous) {
 	const continuing = previous.level !== "none" && previous.startedAt;
 	const startedAt = assessment.level === "none" ? null : continuing ? previous.startedAt : new Date();
 	await pool.query(
 		`INSERT INTO athena_incident_situation
-			(profile_id, level, headline, body, incidents, incident_key, assessed_by, started_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			(profile_id, level, headline, body, incidents, weather, incident_key, assessed_by, started_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON DUPLICATE KEY UPDATE level = VALUES(level), headline = VALUES(headline), body = VALUES(body),
-		   incidents = VALUES(incidents), incident_key = VALUES(incident_key),
+		   incidents = VALUES(incidents), weather = VALUES(weather), incident_key = VALUES(incident_key),
 		   assessed_by = VALUES(assessed_by), started_at = VALUES(started_at)`,
 		[
 			profileId,
 			assessment.level,
 			assessment.headline,
 			assessment.body,
-			JSON.stringify(publicIncidents(hits)),
+			JSON.stringify(calls || []),
+			JSON.stringify(weather || []),
 			key,
 			assessment.assessedBy,
 			startedAt,
@@ -532,72 +577,111 @@ async function tell(profileId, { dedupeKey, text, urgent, facts }) {
 const keyOf = (ids) => createHash("sha1").update(ids.join(",")).digest("hex");
 
 /**
- * One profile: re-judge the situation when the nearby calls change, tell them
- * about any call they have not heard about, and say when it is over.
+ * One profile, over both sources: re-judge when what is happening changes,
+ * tell them about anything they have not heard, and say when it is over.
+ *
+ * ## "Could not read" is not "nothing is happening"
+ *
+ * `list` is null when PulsePoint was not read this tick — not due, or blocked.
+ * The calls already known are then carried forward untouched: declaring an
+ * all-clear because a source went dark would be the worst lie this thing
+ * could tell. Only a source we actually read can clear its own half.
+ *
  * `dryRun` computes everything and writes/sends nothing.
  */
-async function checkProfile(profileId, { dryRun = false, list = null, countyActive = null, generate } = {}) {
+async function checkProfile(
+	profileId,
+	{ dryRun = false, list = null, countyActive = null, generate, weather = null } = {}
+) {
 	const places = await placesFor(profileId);
-	const hits = await nearbyFor(profileId, { list, places });
-	const ids = hits.map((h) => h.incident.id).sort();
-	const key = ids.length ? keyOf(ids) : null;
 	const previous = await getSituation(profileId);
 
-	// Re-assess only when the set of calls changed: the model is asked once per
-	// development, not once every two minutes.
+	// Calls: read now, or carried forward in the shape they were stored in.
+	const hits = list ? await nearbyFor(profileId, { list, places }) : null;
+	const calls = hits ? publicIncidents(hits) : previous.incidents || [];
+	// Weather: same rule.
+	const alerts = weather ?? previous.weather ?? [];
+
+	const key =
+		calls.length || alerts.length
+			? keyOf([...calls.map((c) => c.id), ...alerts.map((a) => `w:${a.id}`)].sort())
+			: null;
 	const changed = key !== previous.key;
-	const situation = changed ? { ...(await assess(hits, { countyActive, generate })), key } : previous;
+	// The model is asked once per development, not once per tick.
+	const situation = changed
+		? { ...(await assess(hits || calls, { countyActive, generate, weather: alerts })), key }
+		: previous;
 
 	const seen = await alreadyTold(profileId);
-	const fresh = hits.filter((h) => !seen.has(h.incident.id));
+	const freshCalls = hits ? calls.filter((c) => !seen.has(c.id)) : [];
+	const freshWeather = weather ? alerts.filter((a) => !seen.has(`w:${a.id}`)) : [];
 	const urgent = situation.level === "urgent";
-	const out = { profileId, nearby: hits.length, level: situation.level, told: 0, headline: situation.headline };
+	const out = {
+		profileId,
+		nearby: calls.length,
+		weather: alerts.length,
+		level: situation.level,
+		told: 0,
+		headline: situation.headline,
+	};
 
-	if (dryRun) return { ...out, told: fresh.length, text: situation.body || null, dryRun: true };
-	if (changed) await saveSituation(profileId, situation, hits, key, previous);
-	// Same calls, fresher details: units arriving, positions for the map. The
+	if (dryRun) {
+		return { ...out, told: freshCalls.length + freshWeather.length, text: situation.body || null, dryRun: true };
+	}
+	if (changed) await saveSituation(profileId, situation, calls, alerts, key, previous);
+	// Same things, fresher details: units arriving, positions for the map. The
 	// judgement is kept; only the list under it is rewritten.
-	else if (hits.length)
+	else if (hits?.length)
 		await pool.query("UPDATE athena_incident_situation SET incidents = ? WHERE profile_id = ?", [
-			JSON.stringify(publicIncidents(hits)),
+			JSON.stringify(calls),
 			profileId,
 		]);
 
-	if (fresh.length) {
-		const text = urgent ? `🚨 ${situation.headline}. ${situation.body}` : situation.body || wording(fresh);
+	if (freshCalls.length || freshWeather.length) {
+		const text = urgent
+			? `🚨 ${situation.headline}. ${situation.body}`
+			: situation.body || wording(hits || []);
 		const told = await tell(profileId, {
-			dedupeKey: `pp:${keyOf(fresh.map((h) => h.incident.id).sort())}`,
+			dedupeKey: `pp:${keyOf([...freshCalls.map((c) => c.id), ...freshWeather.map((a) => `w:${a.id}`)].sort())}`,
 			text,
 			urgent,
 			facts: {
 				agency: AGENCY,
 				level: situation.level,
-				incidentIds: fresh.map((h) => h.incident.id),
-				incidents: publicIncidents(fresh),
+				incidentIds: [...freshCalls.map((c) => c.id), ...freshWeather.map((a) => `w:${a.id}`)],
+				incidents: freshCalls,
+				weather: freshWeather,
 				places: publicPlaces(places),
 			},
 		});
-		return { ...out, told: told.written ? fresh.length : 0, text, pushed: told.pushed };
+		return { ...out, told: told.written ? freshCalls.length + freshWeather.length : 0, text, pushed: told.pushed };
 	}
 
-	// Escalation without a new call: calls they already heard about, one at a
-	// time, now add up to something urgent (a second call joined, or the model
-	// read the pattern). That is news in itself and gets said as such.
+	// Escalation with nothing new: things they already heard about, one at a
+	// time, now add up to something urgent. That is news in itself.
 	if (changed && urgent && previous.level !== "urgent") {
 		const text = `🚨 ${situation.headline}. ${situation.body}`;
 		const told = await tell(profileId, {
 			dedupeKey: `pp-escalate:${key}`,
 			text,
 			urgent: true,
-			facts: { agency: AGENCY, level: "urgent", escalation: true, incidentIds: [], incidents: publicIncidents(hits), places: publicPlaces(places) },
+			facts: {
+				agency: AGENCY,
+				level: "urgent",
+				escalation: true,
+				incidentIds: [],
+				incidents: calls,
+				weather: alerts,
+				places: publicPlaces(places),
+			},
 		});
-		return { ...out, told: told.written ? hits.length : 0, text, pushed: told.pushed, escalated: true };
+		return { ...out, told: told.written ? calls.length + alerts.length : 0, text, pushed: told.pushed, escalated: true };
 	}
 
-	// The all-clear. Someone who was told "urgent" deserves to hear when it is
-	// over, rather than being left to wonder whether silence means safe.
-	if (changed && !hits.length && previous.level === "urgent") {
-		const text = "All clear near home — the emergency calls I told you about have closed.";
+	// The all-clear — only when everything that could have been read WAS read,
+	// so a blocked source can never produce one.
+	if (changed && !calls.length && !alerts.length && previous.level === "urgent") {
+		const text = "All clear near home — the emergencies I told you about have ended.";
 		const told = await tell(profileId, {
 			dedupeKey: `pp-clear:${previous.key}`,
 			text,
@@ -647,16 +731,39 @@ const TICK_SLACK_MS = 45_000;
 /** Two misses in a row is half an hour blind at the calm rhythm — say so. */
 const OUTAGE_AFTER_FAILURES = 2;
 
-const time = (value) => (value ? new Date(value).getTime() : null);
+/** The two sources behind "what is happening near me". */
+const SOURCES = { calls: "pulsepoint", weather: "nws" };
+const SOURCE_LABEL = { pulsepoint: "the county 911 dispatch board", nws: "the weather service" };
 
-async function feedHealth() {
+/**
+ * How fast the situation is moving, which both sources share.
+ *
+ * Returned as SECONDS FROM NOW, measured by the database, not as a timestamp
+ * compared against this process's clock. The job runs in a container and the
+ * database keeps its own time; comparing the two directly was off by the
+ * timezone difference, which is the kind of bug that shows up as "why did it
+ * not check for four hours".
+ */
+async function hotUntil() {
 	const [rows] = await pool.query(
-		`SELECT last_ok_at, last_error, consecutive_failures, outage_notified_at, last_attempt_at, hot_until, blocked_at
-		 FROM athena_incident_feed WHERE id = 1`
+		"SELECT hot_until, TIMESTAMPDIFF(SECOND, NOW(), hot_until) AS hot_in_s FROM athena_incident_feed WHERE id = 1"
+	);
+	return { at: rows[0]?.hot_until || null, inSeconds: rows[0]?.hot_in_s ?? null };
+}
+
+/** One source's health, plus the shared rhythm, in the shape isDue wants. */
+async function sourceHealth(source, hotValue = undefined) {
+	const [rows] = await pool.query(
+		`SELECT last_attempt_at, last_ok_at, last_error, consecutive_failures, blocked_at, outage_notified_at,
+		        TIMESTAMPDIFF(SECOND, last_attempt_at, NOW()) AS since_attempt_s
+		 FROM athena_incident_source WHERE source = ?`,
+		[source]
 	);
 	const row = rows[0] || {};
 	const failures = Number(row.consecutive_failures) || 0;
+	const hot = hotValue === undefined ? await hotUntil() : hotValue;
 	return {
+		source,
 		lastOkAt: row.last_ok_at || null,
 		lastError: row.last_error || null,
 		consecutiveFailures: failures,
@@ -665,31 +772,55 @@ async function feedHealth() {
 		down: !!row.blocked_at || failures >= OUTAGE_AFTER_FAILURES,
 		outageNotifiedAt: row.outage_notified_at || null,
 		lastAttemptAt: row.last_attempt_at || null,
-		hotUntil: row.hot_until || null,
+		// Both measured by the database — see hotUntil().
+		sinceAttemptSeconds: row.since_attempt_s ?? null,
+		hotUntil: hot.at,
+		hotInSeconds: hot.inSeconds,
 	};
+}
+
+/** The 911 board's health — what the banner, the prompt and --status read. */
+async function feedHealth() {
+	return sourceHealth(SOURCES.calls);
+}
+
+/** Every source, for the banner: one being blocked says nothing about the other. */
+async function sourcesHealth() {
+	const hot = await hotUntil();
+	const [calls, weather] = await Promise.all([
+		sourceHealth(SOURCES.calls, hot),
+		sourceHealth(SOURCES.weather, hot),
+	]);
+	return { calls, weather };
 }
 
 /** How often to read right now, and why — the answer `--status` prints. */
 function rhythmFor(health, now = Date.now()) {
-	if (health.blocked) return { everyMs: BLOCKED_EVERY_MS, why: "PulsePoint is blocking automated readers" };
-	const hot = time(health.hotUntil);
-	if (hot && hot > now) return { everyMs: HOT_EVERY_MS, why: "something is happening nearby" };
+	if (health.blocked) {
+		return {
+			everyMs: BLOCKED_EVERY_MS,
+			why: `${SOURCE_LABEL[health.source] || "the source"} is blocking automated readers`,
+		};
+	}
+	if (health.hotInSeconds > 0) return { everyMs: HOT_EVERY_MS, why: "something is happening nearby" };
 	return { everyMs: CALM_EVERY_MS, why: "all quiet" };
 }
 
 /** Is this scheduler tick one that should actually read? */
 function isDue(health, now = Date.now()) {
-	const last = time(health.lastAttemptAt);
 	const { everyMs, why } = rhythmFor(health, now);
-	if (!last) return { due: true, everyMs, why };
-	const waited = now - last;
+	if (health.sinceAttemptSeconds === null || health.sinceAttemptSeconds === undefined) {
+		return { due: true, everyMs, why, nextInMs: 0 };
+	}
+	const waited = health.sinceAttemptSeconds * 1000;
 	return { due: waited >= everyMs - TICK_SLACK_MS, everyMs, why, nextInMs: Math.max(0, everyMs - waited) };
 }
 
-async function recordAttempt() {
+async function recordAttempt(source) {
 	await pool.query(
-		`INSERT INTO athena_incident_feed (id, last_attempt_at) VALUES (1, NOW())
-		 ON DUPLICATE KEY UPDATE last_attempt_at = NOW()`
+		`INSERT INTO athena_incident_source (source, last_attempt_at) VALUES (?, NOW())
+		 ON DUPLICATE KEY UPDATE last_attempt_at = NOW()`,
+		[source]
 	);
 }
 
@@ -700,12 +831,13 @@ async function heatUp() {
 	]);
 }
 
-async function recordFeedOk() {
+async function recordFeedOk(source) {
 	await pool.query(
-		`INSERT INTO athena_incident_feed (id, last_ok_at, consecutive_failures, last_error, outage_notified_at, blocked_at)
-		 VALUES (1, NOW(), 0, NULL, NULL, NULL)
+		`INSERT INTO athena_incident_source (source, last_ok_at, consecutive_failures, last_error, outage_notified_at, blocked_at)
+		 VALUES (?, NOW(), 0, NULL, NULL, NULL)
 		 ON DUPLICATE KEY UPDATE last_ok_at = NOW(), consecutive_failures = 0, last_error = NULL,
-		   outage_notified_at = NULL, blocked_at = NULL`
+		   outage_notified_at = NULL, blocked_at = NULL`,
+		[source]
 	);
 }
 
@@ -714,25 +846,26 @@ async function recordFeedOk() {
  * outage. A block is an outage on the first miss: it is a decision on their
  * side, not a blip that the next read might clear.
  */
-async function recordFeedFailure(error) {
+async function recordFeedFailure(source, error) {
 	await pool.query(
-		`INSERT INTO athena_incident_feed (id, consecutive_failures, last_error, blocked_at) VALUES (1, 1, ?, ?)
+		`INSERT INTO athena_incident_source (source, consecutive_failures, last_error, blocked_at) VALUES (?, 1, ?, ?)
 		 ON DUPLICATE KEY UPDATE consecutive_failures = consecutive_failures + 1, last_error = VALUES(last_error),
-		   blocked_at = IF(VALUES(blocked_at) IS NULL, NULL, COALESCE(blocked_at, VALUES(blocked_at)))`,
-		[String(error?.message || error).slice(0, 500), error?.blocked ? new Date() : null]
+		   blocked_at = IF(VALUES(blocked_at) IS NULL, blocked_at, COALESCE(blocked_at, VALUES(blocked_at)))`,
+		[source, String(error?.message || error).slice(0, 500), error?.blocked ? new Date() : null]
 	);
-	const health = await feedHealth();
+	const health = await sourceHealth(source);
 	if (!health.down || health.outageNotifiedAt) return health;
-	await pool.query("UPDATE athena_incident_feed SET outage_notified_at = NOW() WHERE id = 1");
+	await pool.query("UPDATE athena_incident_source SET outage_notified_at = NOW() WHERE source = ?", [source]);
+	const what = SOURCE_LABEL[source] || source;
 	const text = health.blocked
-		? "Heads up: PulsePoint has started blocking automated readers, so I can't see the county 911 dispatch board or warn you about emergencies nearby. I'll check again every few hours. The PulsePoint Respond app can still notify you directly."
-		: "Heads up: I can't read the county 911 dispatch board right now, so I can't warn you about emergencies nearby until it's back. I'll keep trying.";
+		? `Heads up: ${what} has started blocking automated readers, so I can't see it or warn you about what it covers. I'll check again every few hours. The PulsePoint Respond app can still notify you directly.`
+		: `Heads up: I can't read ${what} right now, so I can't warn you about what it covers until it's back. I'll keep trying.`;
 	for (const profileId of await watchedProfiles()) {
 		await tell(profileId, {
 			dedupeKey: `pp-outage:${Date.now()}`,
 			text,
 			urgent: false,
-			facts: { agency: AGENCY, outage: true, blocked: health.blocked, error: health.lastError },
+			facts: { agency: AGENCY, source, outage: true, blocked: health.blocked, error: health.lastError },
 		}).catch(() => undefined);
 	}
 	return health;
@@ -745,46 +878,95 @@ async function recordFeedFailure(error) {
  * state and not a crash.
  */
 async function runOnce({ dryRun = false, generate, force = false } = {}) {
-	const health = await feedHealth();
-	const due = isDue(health);
-	if (!force && !dryRun && !due.due) {
-		return { agency: AGENCY, skipped: true, why: due.why, everyMs: due.everyMs, nextInMs: due.nextInMs, results: [] };
+	const hot = await hotUntil();
+	const health = { calls: await sourceHealth(SOURCES.calls, hot), weather: await sourceHealth(SOURCES.weather, hot) };
+	const due = { calls: isDue(health.calls), weather: isDue(health.weather) };
+	const read = {
+		calls: force || dryRun || due.calls.due,
+		weather: force || dryRun || due.weather.due,
+	};
+	if (!read.calls && !read.weather) {
+		const soonest = due.calls.nextInMs <= due.weather.nextInMs ? due.calls : due.weather;
+		return { agency: AGENCY, skipped: true, why: soonest.why, everyMs: soonest.everyMs, nextInMs: soonest.nextInMs, results: [] };
 	}
-	if (!dryRun) await recordAttempt();
 
-	let list;
-	try {
-		list = await board();
-	} catch (error) {
-		if (!dryRun) await recordFeedFailure(error).catch(() => undefined);
-		if (error?.blocked) return { agency: AGENCY, blocked: true, error: error.message, results: [] };
-		throw error;
+	// The 911 board. A block is a state, not a crash: recorded, reported, and
+	// the pass carries on — the weather half still works.
+	let list = null;
+	let blocked = false;
+	if (read.calls) {
+		if (!dryRun) await recordAttempt(SOURCES.calls);
+		try {
+			list = await board();
+			if (!dryRun) await recordFeedOk(SOURCES.calls).catch(() => undefined);
+		} catch (error) {
+			if (!dryRun) await recordFeedFailure(SOURCES.calls, error).catch(() => undefined);
+			if (!error?.blocked) console.warn("[pulsepoint] could not read the board:", error.message);
+			blocked = !!error?.blocked;
+		}
 	}
-	if (!dryRun) await recordFeedOk().catch(() => undefined);
-	const countyActive = list.filter((i) => i.status === "active").length;
+	const countyActive = list ? list.filter((i) => i.status === "active").length : null;
+
+	// The weather service, per profile, because alerts are per point.
+	let weatherOk = null;
+	if (read.weather && !dryRun) await recordAttempt(SOURCES.weather);
+
 	const results = [];
 	for (const profileId of await watchedProfiles()) {
+		let weather = null;
+		if (read.weather) {
+			try {
+				weather = await nws.alertsForPlaces(await placesFor(profileId));
+				weatherOk = weatherOk !== false;
+			} catch (error) {
+				weatherOk = false;
+				console.warn("[nws] could not read alerts:", error.message);
+			}
+		}
 		try {
-			results.push(await checkProfile(profileId, { dryRun, list, countyActive, generate }));
+			results.push(await checkProfile(profileId, { dryRun, list, countyActive, generate, weather }));
 		} catch (error) {
 			results.push({ profileId, error: error.message });
 		}
 	}
-	// A new call anywhere — or a situation escalating — is "something came up".
+	if (read.weather && !dryRun && weatherOk !== null) {
+		if (weatherOk) await recordFeedOk(SOURCES.weather).catch(() => undefined);
+		else await recordFeedFailure(SOURCES.weather, new Error("The weather service could not be read.")).catch(() => undefined);
+	}
+
+	// Anything new — or a situation escalating — is "something came up".
 	if (!dryRun && results.some((r) => r.told > 0 || r.escalated)) await heatUp().catch(() => undefined);
-	const after = rhythmFor(dryRun ? health : await feedHealth().catch(() => health));
-	return { agency: AGENCY, active: countyActive, results, everyMs: after.everyMs, why: after.why };
+	// Each source has its own next read: a blocked 911 board says nothing about
+	// when the weather is next looked at.
+	const fresh = dryRun ? health : { calls: await sourceHealth(SOURCES.calls), weather: await sourceHealth(SOURCES.weather) };
+	const next = { calls: rhythmFor(fresh.calls), weather: rhythmFor(fresh.weather) };
+	return {
+		agency: AGENCY,
+		active: countyActive,
+		blocked,
+		read,
+		results,
+		next,
+		everyMs: Math.min(next.calls.everyMs, next.weather.everyMs),
+		why: next.calls.everyMs <= next.weather.everyMs ? next.calls.why : next.weather.why,
+	};
 }
 
 /** For the in-app banner: the situation plus whether the feed can be trusted. */
 async function alertFor(profileId) {
 	const [situation, health, places] = await Promise.all([
 		getSituation(profileId),
-		feedHealth().catch(() => null),
+		sourcesHealth().catch(() => null),
 		placesFor(profileId).catch(() => []),
 	]);
+	const status = (h) =>
+		h
+			? { ok: !h.down, blocked: h.blocked, lastOkAt: h.lastOkAt, error: h.down ? h.lastError : null }
+			: { ok: false, blocked: false, lastOkAt: null, error: "unknown" };
 	return {
 		places: publicPlaces(places),
+		weather: situation.weather || [],
+		sources: { calls: status(health?.calls), weather: status(health?.weather) },
 		level: situation.level,
 		headline: situation.headline,
 		body: situation.body,
@@ -793,9 +975,8 @@ async function alertFor(profileId) {
 		startedAt: situation.startedAt || null,
 		updatedAt: situation.updatedAt || null,
 		assessedBy: situation.assessedBy || null,
-		feed: health
-			? { ok: !health.down, blocked: health.blocked, lastOkAt: health.lastOkAt, error: health.down ? health.lastError : null }
-			: { ok: false, lastOkAt: null, error: "unknown" },
+		// Kept for any client that predates `sources`: the 911 board's status.
+		feed: status(health?.calls),
 	};
 }
 
@@ -807,8 +988,17 @@ async function alertFor(profileId) {
  */
 async function promptBlock(profileId) {
 	if (!profileId) return null;
-	const [situation, health] = await Promise.all([getSituation(profileId), feedHealth().catch(() => null)]);
+	const [situation, sources] = await Promise.all([getSituation(profileId), sourcesHealth().catch(() => null)]);
+	const health = sources?.calls;
 	const lines = [];
+	if (sources?.weather?.down) {
+		lines.push(
+			"# You cannot see weather alerts right now",
+			"",
+			"The National Weather Service feed has been failing, so you cannot warn them about storms.",
+			""
+		);
+	}
 	if (health?.down) {
 		lines.push(
 			"# You cannot see the county 911 dispatch board right now",
@@ -822,7 +1012,15 @@ async function promptBlock(profileId) {
 			""
 		);
 	}
-	if (situation.level === "none" || !situation.incidents.length) return lines.length ? lines.join("\n") : null;
+	const alerts = situation.weather || [];
+	if (situation.level === "none" || (!situation.incidents.length && !alerts.length)) {
+		return lines.length ? lines.join("\n") : null;
+	}
+	const weatherLines = alerts.map(
+		(a) =>
+			`- ${a.event} (${a.severity}${a.urgency ? `, ${a.urgency.toLowerCase()}` : ""}) over ${a.area}` +
+			`${a.instruction ? ` — official advice: ${a.instruction}` : ""}`
+	);
 
 	const list = situation.incidents.slice(0, 10).map((i) => {
 		const mins = i.receivedAt ? minutesAgo(new Date(i.receivedAt)) : null;
@@ -845,16 +1043,19 @@ async function promptBlock(profileId) {
 			"- Only what is listed below. Do not invent injuries, causes or closures.",
 			"",
 			"Live from the county dispatch board (PulsePoint, Iredell County):",
-			...list
+			...list,
+			...(weatherLines.length ? ["", "From the National Weather Service, for their area:", ...weatherLines] : [])
 		);
 	} else {
 		lines.push(
 			"# An emergency call near them",
 			"",
-			"From the county 911 dispatch board. If they have not heard about it, mention it briefly;",
-			"if they ask about sirens or anything nearby, this is what you know. Do not speculate.",
+			"From the county 911 dispatch board and the National Weather Service. If they have not",
+			"heard about it, mention it briefly; if they ask about sirens, the weather or anything",
+			"nearby, this is what you know. Do not speculate.",
 			"",
-			...list
+			...list,
+			...(weatherLines.length ? ["", "Weather alerts for their area:", ...weatherLines] : [])
 		);
 	}
 	return lines.join("\n");
@@ -871,6 +1072,7 @@ module.exports = {
 	alertFor,
 	getSituation,
 	feedHealth,
+	sourcesHealth,
 	isDue,
 	rhythmFor,
 	isDue,

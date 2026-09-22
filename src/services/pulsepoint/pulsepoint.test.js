@@ -311,36 +311,91 @@ describe("answer check", () => {
 
 describe("cadence", () => {
 	const { isDue, rhythmFor } = require("./watch");
-	const now = Date.parse("2026-09-22T15:00:00Z");
-	const ago = (m) => new Date(now - m * 60000);
-	const health = (over = {}) => ({ blocked: false, hotUntil: null, lastAttemptAt: null, ...over });
+	// The database measures both of these, so the tests speak in seconds-ago
+	// and seconds-from-now rather than in timestamps — see hotUntil().
+	const health = (over = {}) => ({ blocked: false, hotInSeconds: null, sinceAttemptSeconds: null, ...over });
 
 	test("quiet: every 15 minutes", () => {
-		expect(rhythmFor(health(), now).everyMs).toBe(15 * 60000);
-		expect(isDue(health({ lastAttemptAt: ago(10) }), now).due).toBe(false);
-		expect(isDue(health({ lastAttemptAt: ago(15) }), now).due).toBe(true);
+		expect(rhythmFor(health()).everyMs).toBe(15 * 60000);
+		expect(isDue(health({ sinceAttemptSeconds: 10 * 60 })).due).toBe(false);
+		expect(isDue(health({ sinceAttemptSeconds: 15 * 60 })).due).toBe(true);
 	});
 
 	test("something nearby: every 5 minutes until the hour runs out", () => {
-		const hot = health({ hotUntil: new Date(now + 30 * 60000), lastAttemptAt: ago(5) });
-		expect(rhythmFor(hot, now).everyMs).toBe(5 * 60000);
-		expect(isDue(hot, now).due).toBe(true);
-		const cooled = health({ hotUntil: ago(1), lastAttemptAt: ago(5) });
-		expect(isDue(cooled, now).due).toBe(false);
+		const hot = health({ hotInSeconds: 30 * 60, sinceAttemptSeconds: 5 * 60 });
+		expect(rhythmFor(hot).everyMs).toBe(5 * 60000);
+		expect(isDue(hot).due).toBe(true);
+		const cooled = health({ hotInSeconds: -60, sinceAttemptSeconds: 5 * 60 });
+		expect(isDue(cooled).due).toBe(false);
 	});
 
 	test("a scheduler tick a few seconds early still counts", () => {
-		const last = new Date(now - (15 * 60000 - 20000));
-		expect(isDue(health({ lastAttemptAt: last }), now).due).toBe(true);
+		expect(isDue(health({ sinceAttemptSeconds: 15 * 60 - 20 })).due).toBe(true);
 	});
 
 	test("blocked: back right off, whatever else is going on", () => {
-		const blocked = health({ blocked: true, hotUntil: new Date(now + 30 * 60000), lastAttemptAt: ago(20) });
-		expect(rhythmFor(blocked, now).everyMs).toBe(6 * 60 * 60000);
-		expect(isDue(blocked, now).due).toBe(false);
+		const blocked = health({ blocked: true, hotInSeconds: 30 * 60, sinceAttemptSeconds: 20 * 60 });
+		expect(rhythmFor(blocked).everyMs).toBe(6 * 60 * 60000);
+		expect(isDue(blocked).due).toBe(false);
 	});
 
 	test("never read: due immediately", () => {
-		expect(isDue(health(), now).due).toBe(true);
+		expect(isDue(health()).due).toBe(true);
+	});
+});
+
+describe("weather alerts", () => {
+	const nws = require("./nws");
+	const watch = require("./watch");
+	const soon = () => new Date(Date.now() + 3600_000).toISOString();
+	const feature = (over = {}) => ({
+		properties: {
+			id: "urn:oid:1.2.3",
+			event: "Tornado Warning",
+			severity: "Extreme",
+			urgency: "Immediate",
+			status: "Actual",
+			messageType: "Alert",
+			areaDesc: "Iredell, NC",
+			headline: "Tornado Warning issued...",
+			instruction: "Take shelter now.",
+			expires: soon(),
+			...over,
+		},
+	});
+	const place = { name: "Home" };
+
+	test("keeps a live warning, with the service's own advice", () => {
+		const a = nws.alert(feature(), place);
+		expect(a).toMatchObject({ event: "Tornado Warning", serious: true, place: "Home", instruction: "Take shelter now." });
+	});
+
+	test("a watch is kept but is not 'serious' — it has not started", () => {
+		expect(nws.alert(feature({ event: "Tornado Watch", severity: "Severe", urgency: "Future" }), place).serious).toBe(false);
+	});
+
+	test("drops advisories, tests, cancellations and expired alerts", () => {
+		expect(nws.alert(feature({ severity: "Minor" }), place)).toBeNull();
+		expect(nws.alert(feature({ status: "Test" }), place)).toBeNull();
+		expect(nws.alert(feature({ messageType: "Cancel" }), place)).toBeNull();
+		expect(nws.alert(feature({ expires: new Date(Date.now() - 1000).toISOString() }), place)).toBeNull();
+		expect(nws.alert(feature({ urgency: "Past" }), place)).toBeNull();
+	});
+
+	test("one serious weather alert alone is urgent; a watch alone is watch", () => {
+		const warning = [{ serious: true }];
+		const watchOnly = [{ serious: false }];
+		expect(watch.floorLevel([], warning)).toBe("urgent");
+		expect(watch.floorLevel([], watchOnly)).toBe("watch");
+		// a call plus any weather alert is two things at once
+		expect(watch.floorLevel([{ serious: false }], watchOnly)).toBe("urgent");
+	});
+
+	test("the assessment covers weather even with no calls at all", async () => {
+		const alerts = [{ id: "w1", event: "Tornado Warning", severity: "Extreme", urgency: "Immediate", area: "Iredell", instruction: "Take shelter now.", place: "Home", serious: true }];
+		const s = await watch.assess([], { weather: alerts, generate: async () => { throw new Error("no model"); } });
+		expect(s.level).toBe("urgent");
+		expect(s.headline).toMatch(/Tornado Warning/);
+		expect(s.body).toMatch(/Take shelter now/);
 	});
 });

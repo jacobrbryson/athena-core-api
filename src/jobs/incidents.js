@@ -40,15 +40,17 @@ const log = (...m) => console.log(`[incidents ${new Date().toISOString().slice(1
 const minutes = (ms) => `${Math.round((ms || 0) / 60000)} min`;
 
 async function status() {
-	const health = await watch.feedHealth();
-	const due = watch.isDue(health);
-	log(
-		`rhythm: every ${minutes(due.everyMs)} (${due.why}); ` +
-			(due.due ? "due now" : `next read in ${minutes(due.nextInMs)}`) +
-			`; last ok ${health.lastOkAt ? new Date(health.lastOkAt).toISOString() : "never"}` +
-			(health.blocked ? `; BLOCKED since ${new Date(health.blockedAt).toISOString()}` : "") +
-			(health.lastError ? `; last error: ${health.lastError}` : "")
-	);
+	const health = await watch.sourcesHealth();
+	for (const [label, h] of [["911 board", health.calls], ["weather", health.weather]]) {
+		const due = watch.isDue(h);
+		log(
+			`${label}: every ${minutes(due.everyMs)} (${due.why}); ` +
+				(due.due ? "due now" : `next in ${minutes(due.nextInMs)}`) +
+				`; last ok ${h.lastOkAt ? new Date(h.lastOkAt).toISOString() : "never"}` +
+				(h.blocked ? `; BLOCKED since ${new Date(h.blockedAt).toISOString()}` : "") +
+				(h.lastError ? `; last error: ${h.lastError}` : "")
+		);
+	}
 }
 
 async function pass() {
@@ -56,11 +58,19 @@ async function pass() {
 	const out = await watch.runOnce({ dryRun: args.dryRun, force: args.force });
 	const { agency, active, results } = out;
 	if (out.skipped) return log(`not due (every ${minutes(out.everyMs)}, ${out.why}); next in ${minutes(out.nextInMs)}`);
-	if (out.blocked) return log(`${agency}: blocked — ${out.error} Backing off; will ask again in a few hours.`);
-	log(`${agency}: ${active} active county-wide; next read in ${minutes(out.everyMs)} (${out.why})`);
+	const sources = [];
+	if (out.blocked) sources.push(`${agency} BLOCKED (backing off; the weather service is unaffected)`);
+	else if (out.read?.calls) sources.push(`${agency}: ${active} active county-wide`);
+	else sources.push(`${agency}: not read this tick`);
+	sources.push(out.read?.weather ? "weather: read" : "weather: not read this tick");
+	const next = out.next
+		? `next: 911 board in ${minutes(out.next.calls.everyMs)}, weather in ${minutes(out.next.weather.everyMs)}`
+		: `next read in ${minutes(out.everyMs)}`;
+	log(`${sources.join("; ")}; ${next} (${out.why})`);
 	for (const r of results) {
 		if (r.error) log(`profile ${r.profileId}: FAILED ${r.error}`);
-		else if (!r.told && !r.cleared) log(`profile ${r.profileId}: ${r.nearby} nearby [${r.level}], nothing new`);
+		else if (!r.told && !r.cleared)
+			log(`profile ${r.profileId}: ${r.nearby} nearby, ${r.weather} weather [${r.level}], nothing new`);
 		else
 			log(
 				`profile ${r.profileId}: [${r.level}] told ${r.told}${r.cleared ? " (all clear)" : ""}` +
