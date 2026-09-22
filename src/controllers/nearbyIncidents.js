@@ -126,4 +126,33 @@ async function lookupAddress(req, res) {
   }
 }
 
-module.exports = { listPlaces, savePlace, removePlace, nearby, alert, lookupAddress };
+/**
+ * A notification the PulsePoint app put on the owner's phone, forwarded by the
+ * Athena app. Device-authenticated only: a phone speaks for itself here, the
+ * same rule as location samples.
+ *
+ * Always 200 with what happened, including why something was ignored — the
+ * phone forwards everything it is allowed to see, most of which is not for us,
+ * and a 4xx storm in its logs would help nobody.
+ */
+async function phoneAlert(req, res) {
+  res.set('Cache-Control', 'no-store');
+  if (req.user?.kind !== 'device') {
+    return res.status(403).json({ success: false, message: 'Device token required' });
+  }
+  const body = req.body || {};
+  if (body.package && body.package !== watch.PULSEPOINT_PACKAGE) {
+    return res.json({ ignored: 'not a PulsePoint notification' });
+  }
+  try {
+    return res.json(await watch.recordPhoneAlert(req.user.profileId, {
+      title: body.title,
+      text: body.text,
+      postedAt: body.postedAt,
+    }));
+  } catch (err) {
+    return fail(res, err);
+  }
+}
+
+module.exports = { listPlaces, savePlace, removePlace, nearby, alert, lookupAddress, phoneAlert };

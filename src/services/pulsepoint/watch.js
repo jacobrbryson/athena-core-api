@@ -60,6 +60,7 @@ const pool = require("../../helpers/db");
 const { fetchIncidents } = require("./fetch");
 const normalise = require("./normalise");
 const nws = require("./nws");
+const phoneAlerts = require("./phoneAlerts");
 const geo = require("./geo");
 
 const TRIGGER_ID = "nearby_incident";
@@ -597,8 +598,12 @@ async function checkProfile(
 	const previous = await getSituation(profileId);
 
 	// Calls: read now, or carried forward in the shape they were stored in.
+	// Anything the PHONE told us about is kept across a feed read and expires
+	// on its own clock — the feed will never mention it, and nothing will ever
+	// say it is over. See phoneAlerts.js.
+	const kept = (previous.incidents || []).filter((i) => i.via === "phone" && !phoneAlerts.expired(i));
 	const hits = list ? await nearbyFor(profileId, { list, places }) : null;
-	const calls = hits ? publicIncidents(hits) : previous.incidents || [];
+	const calls = hits ? [...publicIncidents(hits), ...kept] : (previous.incidents || []).filter((i) => !phoneAlerts.expired(i));
 	// Weather: same rule.
 	const alerts = weather ?? previous.weather ?? [];
 
@@ -691,6 +696,63 @@ async function checkProfile(
 		return { ...out, text, pushed: told.pushed, cleared: true };
 	}
 	return out;
+}
+
+/**
+ * A notification PulsePoint's own app put on the owner's phone, forwarded by
+ * the Athena app. Placed against the watched places and folded into the same
+ * situation as everything else; nothing unrecognised or unplaceable is guessed
+ * at.
+ *
+ * Returns why it was ignored rather than throwing: the phone forwards whatever
+ * it sees, and most of it will not be for us.
+ */
+async function recordPhoneAlert(profileId, { title, text, postedAt, generate } = {}) {
+	const places = await placesFor(profileId);
+	if (!places.length) return { ignored: "no watched places" };
+	// A town for the geocoder, taken from a saved place's own address.
+	const region = (places.find((p) => p.address)?.address || "").split(",").slice(-2).join(",").trim() || null;
+
+	const parsed = phoneAlerts.parse({ title, text, region });
+	if (!parsed.ok) return { ignored: parsed.why, text: parsed.text };
+
+	const point = await phoneAlerts.place(parsed.query);
+	if (!point) return { ignored: "could not place the address", what: parsed.what, address: parsed.address };
+
+	const matches = geo.placesNear(point, places, DEFAULT_RADIUS_MILES);
+	if (!matches.length) return { ignored: "not near a watched place", what: parsed.what, address: parsed.address };
+
+	const incident = phoneAlerts.incidentFrom(parsed, point, matches[0], postedAt);
+	const previous = await getSituation(profileId);
+	if ((previous.incidents || []).some((i) => i.id === incident.id)) {
+		return { ignored: "already known", what: parsed.what, address: parsed.address };
+	}
+
+	const calls = [...(previous.incidents || []).filter((i) => !phoneAlerts.expired(i)), incident].sort(
+		(a, b) => a.miles - b.miles
+	);
+	const alerts = previous.weather || [];
+	const key = keyOf([...calls.map((c) => c.id), ...alerts.map((a) => `w:${a.id}`)].sort());
+	const situation = { ...(await assess(calls, { weather: alerts, generate })), key };
+	await saveSituation(profileId, situation, calls, alerts, key, previous);
+
+	const urgent = situation.level === "urgent";
+	const told = await tell(profileId, {
+		dedupeKey: `ph:${incident.id}`,
+		text: urgent
+			? `🚨 ${situation.headline}. ${situation.body}`
+			: situation.body || `${incident.what} near ${incident.place}.`,
+		urgent,
+		facts: {
+			source: "pulsepoint-app",
+			level: situation.level,
+			incidentIds: [incident.id],
+			incidents: [incident],
+			places: publicPlaces(places),
+		},
+	});
+	await heatUp().catch(() => undefined);
+	return { told: told.written, level: situation.level, incident, pushed: told.pushed };
 }
 
 /** Every profile with a saved place or a live phone position. */
@@ -1063,8 +1125,10 @@ async function promptBlock(profileId) {
 
 module.exports = {
 	TRIGGER_ID,
+	PULSEPOINT_PACKAGE: phoneAlerts.PULSEPOINT_PACKAGE,
 	runOnce,
 	checkProfile,
+	recordPhoneAlert,
 	nearbyFor,
 	assess,
 	checkAnswer,

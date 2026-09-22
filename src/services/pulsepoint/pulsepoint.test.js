@@ -399,3 +399,59 @@ describe("weather alerts", () => {
 		expect(s.body).toMatch(/Take shelter now/);
 	});
 });
+
+describe("phone alerts (PulsePoint's own notifications)", () => {
+	const phone = require("./phoneAlerts");
+	const region = "TROUTMAN, NC";
+
+	test("reads the call type and a street address", () => {
+		const p = phone.parse({ title: "Structure Fire", text: "101 Brer Fox Trl", region });
+		expect(p).toMatchObject({ ok: true, code: "SF", what: "Structure Fire", address: "101 Brer Fox Trl", serious: true });
+		expect(p.query).toBe("101 Brer Fox Trl, TROUTMAN, NC");
+	});
+
+	test("reads an intersection", () => {
+		const p = phone.parse({ title: "PulsePoint", text: "Tree Down - Shady Cove Rd & Perth Rd", region });
+		expect(p).toMatchObject({ ok: true, what: "Tree Down", address: "Shady Cove Rd & Perth Rd" });
+	});
+
+	test("prefers the longest matching call type", () => {
+		expect(phone.parse({ title: "Confirmed Structure Fire", text: "12 Oak Dr", region }).what).toBe("Confirmed Structure Fire");
+	});
+
+	test("does not match a call type inside another word", () => {
+		// "Fire" inside "Firearms" is not a fire.
+		expect(phone.callTypeIn("Firearms seized at 12 Oak Dr")).toBeNull();
+	});
+
+	test("ignores what is not news to a neighbour: medical calls, drills", () => {
+		expect(phone.parse({ title: "Medical Emergency", text: "12 Oak Dr", region }).why).toBe("not worth telling");
+		expect(phone.parse({ title: "Training", text: "12 Oak Dr", region }).why).toBe("not worth telling");
+	});
+
+	test("refuses to guess when there is no call type or no address", () => {
+		expect(phone.parse({ title: "PulsePoint", text: "Welcome to PulsePoint", region }).ok).toBe(false);
+		expect(phone.parse({ title: "Vehicle Fire", text: "somewhere in the county", region }).ok).toBe(false);
+	});
+
+	test("keeps a town that is already in the text", () => {
+		expect(phone.parse({ title: "Vehicle Fire", text: "400 Main St, Mooresville, NC", region }).query).toBe(
+			"400 Main St, Mooresville, NC"
+		);
+	});
+
+	test("a phone-sourced call expires on its own clock; a feed call never does", () => {
+		const old = { via: "phone", receivedAt: new Date(Date.now() - 4 * 3600_000).toISOString() };
+		const recent = { via: "phone", receivedAt: new Date().toISOString() };
+		expect(phone.expired(old)).toBe(true);
+		expect(phone.expired(recent)).toBe(false);
+		expect(phone.expired({ receivedAt: new Date(0).toISOString() })).toBe(false);
+	});
+
+	test("the incident it builds looks like any other call on the board", () => {
+		const parsed = phone.parse({ title: "Vehicle Fire", text: "101 Brer Fox Trl", region });
+		const incident = phone.incidentFrom(parsed, { latitude: 35.6865, longitude: -80.9031 }, { miles: 0.93, place: { name: "Home" } }, null);
+		expect(incident).toMatchObject({ what: "Vehicle Fire", miles: 0.9, place: "Home", serious: true, via: "phone" });
+		expect(incident.id.startsWith("ph:")).toBe(true);
+	});
+});

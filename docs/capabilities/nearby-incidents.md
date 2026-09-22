@@ -197,6 +197,26 @@ The sanctioned replacement is the **PulsePoint Respond** app, which any member
 of the public can use (agency affiliation only gates the CPR responder tiers).
 Its notifications are per incident type across the whole agency, not a radius.
 
+## 911 calls after the block: the phone forwards PulsePoint's own alerts
+
+PulsePoint Respond (`mobi.firedepartment`) is open to any member of the public
+and notifies about chosen incident types across the whole agency. The Athena
+Android app reads THOSE notifications — `PulsePointListener`, a
+NotificationListenerService that ignores every other app's notifications — and
+posts title and text to `POST /api/v1/dashboard/incidents/phone-alert`
+(device-token authenticated, like location samples). Notification access is
+granted by the owner in Android settings, revocable there, and offered in the
+Watched places panel.
+
+`phoneAlerts.js` turns that line of text back into an incident: the call type
+by matching PulsePoint's own 112 names, the position by geocoding the address,
+and then the usual radius check. What it refuses to do matters more — an
+unrecognised type, an unparseable address or an unplaceable one is dropped
+rather than guessed at, and medical calls, drills and unit moves never raise
+anything. Because a notification has no id and nothing ever says a call is
+over, a phone-sourced call carries `via: "phone"` and expires after three
+hours instead of being cleared.
+
 ## Known gaps
 
 - **911 calls are unavailable** while PulsePoint blocks automated readers.
