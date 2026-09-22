@@ -49,3 +49,14 @@ test('a scope-insufficient 403 on a write is re-typed as needs_reauth, not treat
   providerRequest.mockRejectedValueOnce(Object.assign(new Error('insufficient permission'), { status: 403 }));
   await expect(gmail.fileMessage(42, 'msg1', 'Receipts')).rejects.toMatchObject({ code: 'needs_reauth', status: 409 });
 });
+
+test('trashMessage calls the trash endpoint, never users.messages.delete', async () => {
+  providerRequest.mockResolvedValueOnce({ id: 'msg1', labelIds: ['TRASH'] });
+  await gmail.trashMessage(42, 'msg1');
+  expect(providerRequest).toHaveBeenCalledWith(42, 'gmail', '/users/me/messages/msg1/trash', { method: 'POST' });
+});
+
+test('a scope-insufficient 403 on trash is also re-typed as needs_reauth', async () => {
+  providerRequest.mockRejectedValueOnce(Object.assign(new Error('insufficient scope'), { status: 403 }));
+  await expect(gmail.trashMessage(42, 'msg1')).rejects.toMatchObject({ code: 'needs_reauth', status: 409 });
+});

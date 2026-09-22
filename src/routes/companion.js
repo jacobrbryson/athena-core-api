@@ -57,6 +57,7 @@ router.get('/dashboard/email', requireAuth, require('../controllers/email').list
 router.get('/dashboard/email/:uuid', requireAuth, require('../controllers/email').detail);
 router.post('/dashboard/email/scan', requireAuth, express.json({ limit: '4kb' }), require('../controllers/email').scan);
 router.post('/dashboard/email/group/propose', requireAuth, express.json({ limit: '16kb' }), require('../controllers/email').proposeGroup);
+router.post('/dashboard/email/delete', requireAuth, express.json({ limit: '4kb' }), require('../controllers/email').deleteEmails);
 router.post('/dashboard/email/:uuid/propose', requireAuth, express.json({ limit: '8kb' }), require('../controllers/email').propose);
 router.post('/dashboard/email/:uuid/dismiss', requireAuth, express.json({ limit: '1kb' }), require('../controllers/email').dismiss);
 

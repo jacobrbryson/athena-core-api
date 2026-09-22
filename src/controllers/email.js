@@ -196,4 +196,28 @@ async function dismiss(req, res) {
 	}
 }
 
-module.exports = { list, detail, scan, propose, proposeGroup, dismiss };
+/**
+ * Propose moving one or more triaged emails to Gmail's Trash — the only
+ * genuine delete in this feature, and it still always stops for approval
+ * (unlike dismiss, which never touches Gmail at all).
+ */
+async function deleteEmails(req, res) {
+	const actor = await requireAdultActor(req, res);
+	if (!actor) return;
+	try {
+		const uuids = Array.isArray(req.body?.email_triage_uuids) ? req.body.email_triage_uuids : [];
+		if (!uuids.length) return res.status(400).json({ success: false, message: "Needs at least one email" });
+		const rows = await emailTriage.getRowsByUuids(actor.profileId, uuids);
+		if (!rows.length) return res.status(404).json({ success: false, message: "Those emails could not be found" });
+		const proposed = await actions.propose(actor.profileId, null, {
+			id: "delete_email",
+			params: { email_triage_uuids: rows.map((r) => r.uuid) },
+		});
+		if (!proposed) return res.status(422).json({ success: false, message: "Athena couldn't propose that" });
+		return res.json({ success: true, action: proposed });
+	} catch (err) {
+		return fail(res, err, "Failed to propose deleting that");
+	}
+}
+
+module.exports = { list, detail, scan, propose, proposeGroup, dismiss, deleteEmails };

@@ -146,6 +146,22 @@ async function fileMessage(profileId, id, labelName, { archive = true } = {}) {
 	return modifyMessage(profileId, id, { addLabelIds: [labelId], removeLabelIds: archive ? ["INBOX"] : [] });
 }
 
+/**
+ * Move a message to Gmail's Trash — NOT users.messages.delete. Trash is
+ * recoverable there for about 30 days before Gmail purges it, same as
+ * dragging something to Trash by hand; a true permanent, unrecoverable
+ * delete is deliberately never wired up here.
+ */
+async function trashMessage(profileId, id) {
+	try {
+		return await providerRequest(profileId, PROVIDER, `/users/me/messages/${encodeURIComponent(id)}/trash`, {
+			method: "POST",
+		});
+	} catch (err) {
+		throw asWriteAuthError(err);
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Chat grounding + Gemini tool (migrated from connectors/work.js, which used
 // to fold Gmail into the "Work" card/tool; email now has its own dashboard
@@ -211,6 +227,7 @@ module.exports = {
 	ensureLabel,
 	modifyMessage,
 	fileMessage,
+	trashMessage,
 	unreadSummary,
 	asWriteAuthError,
 };

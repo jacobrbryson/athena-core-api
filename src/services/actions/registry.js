@@ -551,6 +551,56 @@ const ACTIONS = [
 			return { ref: params.email_triage_uuid, detail: null };
 		},
 	},
+
+	{
+		id: "delete_email",
+		label: "Move to Trash",
+		provider: "gmail",
+		consentType: "action_authority",
+		// Gmail keeps a trashed message recoverable there for about 30 days
+		// before purging it — reversible in the same sense create_calendar_event
+		// is above. This is deliberately NOT users.messages.delete: a true
+		// permanent, unrecoverable delete is never wired up.
+		reversible: true,
+		standing: false,
+		describe:
+			"Move one or more triaged emails to Gmail's Trash — for junk, " +
+			"duplicates, or anything not worth keeping. Recoverable from Trash " +
+			"for about 30 days. Always confirm first, whatever the category.",
+		params: {
+			email_triage_uuids: "Array of 1-25 email_triage uuids to trash. Required.",
+		},
+
+		normalize(raw = {}) {
+			const uuids = Array.isArray(raw.email_triage_uuids) ? raw.email_triage_uuids : [];
+			if (!uuids.length) throw invalid("Needs at least one email");
+			if (uuids.length > 25) throw invalid("Too many emails in one proposal");
+			const clean = uuids.map((u) => {
+				const email_triage_uuid = str(u, 36);
+				if (!email_triage_uuid) throw invalid("Each entry needs an email_triage_uuid");
+				return email_triage_uuid;
+			});
+			return { email_triage_uuids: clean };
+		},
+
+		summarize(p) {
+			return p.email_triage_uuids.length === 1
+				? "Move this email to Trash (recoverable there for 30 days)"
+				: `Move ${p.email_triage_uuids.length} emails to Trash (recoverable there for 30 days)`;
+		},
+
+		async execute(profileId, params) {
+			const rows = await emailTriage.getRowsByUuids(profileId, params.email_triage_uuids);
+			const trashed = [];
+			for (const row of rows) {
+				await gmail.trashMessage(profileId, row.gmail_message_id);
+				trashed.push(row.uuid);
+			}
+			if (!trashed.length) throw new Error("None of these emails could be found");
+			await emailTriage.markStatus(profileId, trashed, "trashed");
+			return { ref: trashed.join(","), detail: { trashed: trashed.length } };
+		},
+	},
 ];
 
 const BY_ID = new Map(ACTIONS.map((a) => [a.id, a]));
