@@ -131,12 +131,17 @@ async function send(token, { title, body, data = {}, collapseKey } = {}) {
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
 	try {
-		const headers = await auth.client.getRequestHeaders();
+		// google-auth-library 10 returns a WHATWG Headers object, and spreading
+		// one yields {} — which silently dropped the Authorization header and
+		// made every Android push fail UNAUTHENTICATED while the browser (VAPID,
+		// no Google auth) kept working. `new Headers(...)` accepts either shape.
+		const headers = new Headers(await auth.client.getRequestHeaders());
+		headers.set("Content-Type", "application/json");
 		const response = await fetch(
 			`https://fcm.googleapis.com/v1/projects/${auth.projectId}/messages:send`,
 			{
 				method: "POST",
-				headers: { ...headers, "Content-Type": "application/json" },
+				headers,
 				body: JSON.stringify(message),
 				signal: controller.signal,
 			}
