@@ -533,15 +533,35 @@ describe("delivery and reactions", () => {
 		).toBe(true);
 	});
 
+	// Asserted on what the client RECEIVES, not on the SQL text: facts are now
+	// read so an emergency nudge can carry map pins, and the rule that matters
+	// is that nothing else in them ever reaches a client.
 	test("facts never leave the server", async () => {
 		pool.query.mockImplementation(async (sql) => {
 			if (sql.includes("FROM athena_nudge") && sql.includes("status = 'pending'"))
-				return [[{ uuid: "n1", trigger_id: "calendar_next_up", text: "soon", urgency: "high" }]];
+				return [[
+					{ uuid: "n1", trigger_id: "calendar_next_up", text: "soon", urgency: "high",
+						facts: JSON.stringify({ title: "Therapy — Dr. Lee", recovery: 31 }) },
+					{ uuid: "n2", trigger_id: "nearby_incident", text: "Fire", urgency: "high",
+						facts: JSON.stringify({
+							agency: "EMS1681", error: "secret-ish", incidentIds: ["x"],
+							incidents: [{ id: "x", what: "Structure Fire", where: "Brer Fox Trl", miles: 0.9, serious: true, latitude: 35.68, longitude: -80.9, units: 16 }],
+							places: [{ name: "Home", latitude: 35.67, longitude: -80.9, radiusMiles: 3 }],
+						}) },
+				]];
 			return [[], {}];
 		});
-		await initiative.pendingFor(PROFILE);
-		const select = pool.query.mock.calls[0][0];
-		expect(select).not.toContain("facts");
+		const out = await initiative.pendingFor(PROFILE);
+		const sent = JSON.stringify(out);
+		expect(sent).not.toContain("Therapy");
+		expect(sent).not.toContain("recovery");
+		expect(sent).not.toContain("secret-ish");
+		expect(sent).not.toContain('"facts"');
+		expect(out[0].map).toBeUndefined();
+		expect(out[1].map).toEqual({
+			incidents: [{ what: "Structure Fire", where: "Brer Fox Trl", miles: 0.9, serious: true, latitude: 35.68, longitude: -80.9 }],
+			places: [{ name: "Home", latitude: 35.67, longitude: -80.9, radiusMiles: 3 }],
+		});
 	});
 
 	test("an unknown reaction is refused", async () => {

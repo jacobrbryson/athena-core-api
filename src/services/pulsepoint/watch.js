@@ -427,6 +427,20 @@ function publicIncidents(hits) {
 		units: incident.units,
 		receivedAt: incident.receivedAt,
 		serious: incident.alertable,
+		// Five decimals is about a metre — more than the dispatch address knows.
+		latitude: Math.round(incident.latitude * 1e5) / 1e5,
+		longitude: Math.round(incident.longitude * 1e5) / 1e5,
+	}));
+}
+
+/** The watched places, as a map draws them: the centre of each ring. */
+function publicPlaces(places) {
+	return (places || []).map((p) => ({
+		name: p.live ? "you" : p.name,
+		latitude: Math.round(p.latitude * 1e5) / 1e5,
+		longitude: Math.round(p.longitude * 1e5) / 1e5,
+		radiusMiles: p.radiusMiles || DEFAULT_RADIUS_MILES,
+		live: !!p.live,
 	}));
 }
 
@@ -523,7 +537,8 @@ const keyOf = (ids) => createHash("sha1").update(ids.join(",")).digest("hex");
  * `dryRun` computes everything and writes/sends nothing.
  */
 async function checkProfile(profileId, { dryRun = false, list = null, countyActive = null, generate } = {}) {
-	const hits = await nearbyFor(profileId, { list });
+	const places = await placesFor(profileId);
+	const hits = await nearbyFor(profileId, { list, places });
 	const ids = hits.map((h) => h.incident.id).sort();
 	const key = ids.length ? keyOf(ids) : null;
 	const previous = await getSituation(profileId);
@@ -540,6 +555,13 @@ async function checkProfile(profileId, { dryRun = false, list = null, countyActi
 
 	if (dryRun) return { ...out, told: fresh.length, text: situation.body || null, dryRun: true };
 	if (changed) await saveSituation(profileId, situation, hits, key, previous);
+	// Same calls, fresher details: units arriving, positions for the map. The
+	// judgement is kept; only the list under it is rewritten.
+	else if (hits.length)
+		await pool.query("UPDATE athena_incident_situation SET incidents = ? WHERE profile_id = ?", [
+			JSON.stringify(publicIncidents(hits)),
+			profileId,
+		]);
 
 	if (fresh.length) {
 		const text = urgent ? `🚨 ${situation.headline}. ${situation.body}` : situation.body || wording(fresh);
@@ -552,6 +574,7 @@ async function checkProfile(profileId, { dryRun = false, list = null, countyActi
 				level: situation.level,
 				incidentIds: fresh.map((h) => h.incident.id),
 				incidents: publicIncidents(fresh),
+				places: publicPlaces(places),
 			},
 		});
 		return { ...out, told: told.written ? fresh.length : 0, text, pushed: told.pushed };
@@ -566,7 +589,7 @@ async function checkProfile(profileId, { dryRun = false, list = null, countyActi
 			dedupeKey: `pp-escalate:${key}`,
 			text,
 			urgent: true,
-			facts: { agency: AGENCY, level: "urgent", escalation: true, incidentIds: [], incidents: publicIncidents(hits) },
+			facts: { agency: AGENCY, level: "urgent", escalation: true, incidentIds: [], incidents: publicIncidents(hits), places: publicPlaces(places) },
 		});
 		return { ...out, told: told.written ? hits.length : 0, text, pushed: told.pushed, escalated: true };
 	}
@@ -676,8 +699,13 @@ async function runOnce({ dryRun = false, generate } = {}) {
 
 /** For the in-app banner: the situation plus whether the feed can be trusted. */
 async function alertFor(profileId) {
-	const [situation, health] = await Promise.all([getSituation(profileId), feedHealth().catch(() => null)]);
+	const [situation, health, places] = await Promise.all([
+		getSituation(profileId),
+		feedHealth().catch(() => null),
+		placesFor(profileId).catch(() => []),
+	]);
 	return {
+		places: publicPlaces(places),
 		level: situation.level,
 		headline: situation.headline,
 		body: situation.body,

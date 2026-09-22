@@ -1,5 +1,15 @@
 const { requireAdultActor } = require('../helpers/actor');
 const watch = require('../services/pulsepoint/watch');
+const geocode = require('../services/pulsepoint/geocode');
+
+/**
+ * Look again right away when the places change, so a newly added home with
+ * something already happening near it is told now rather than at the next
+ * scheduled pass. Fire-and-forget: saving a place never waits on PulsePoint.
+ */
+function recheck(profileId) {
+  watch.checkProfile(profileId).catch((err) => console.warn('[nearby-incidents] recheck failed:', err.message));
+}
 
 /**
  * Nearby emergencies: the places a person wants watched, and what is active
@@ -29,7 +39,9 @@ async function savePlace(req, res) {
   const actor = await requireAdultActor(req, res);
   if (!actor) return;
   try {
-    return res.json({ places: await watch.savePlace(actor.profileId, req.body || {}) });
+    const places = await watch.savePlace(actor.profileId, req.body || {});
+    recheck(actor.profileId);
+    return res.json({ places });
   } catch (err) {
     return fail(res, err);
   }
@@ -40,7 +52,9 @@ async function removePlace(req, res) {
   const actor = await requireAdultActor(req, res);
   if (!actor) return;
   try {
-    return res.json({ places: await watch.removePlace(actor.profileId, req.params.uuid) });
+    const places = await watch.removePlace(actor.profileId, req.params.uuid);
+    recheck(actor.profileId);
+    return res.json({ places });
   } catch (err) {
     return fail(res, err);
   }
@@ -88,4 +102,28 @@ async function alert(req, res) {
   }
 }
 
-module.exports = { listPlaces, savePlace, removePlace, nearby, alert };
+/** A person pausing in the address box is a few lookups, not a flood. */
+const LOOKUPS_PER_MINUTE = 20;
+const lookups = new Map(); // profileId -> recent timestamps
+
+/** Address -> candidate points, for the places panel. */
+async function lookupAddress(req, res) {
+  res.set('Cache-Control', 'no-store');
+  const actor = await requireAdultActor(req, res);
+  if (!actor) return;
+  const now = Date.now();
+  const recent = (lookups.get(actor.profileId) || []).filter((t) => now - t < 60_000);
+  if (recent.length >= LOOKUPS_PER_MINUTE) {
+    return res.status(429).json({ success: false, message: 'Give it a moment and try that address again.' });
+  }
+  lookups.set(actor.profileId, [...recent, now]);
+  try {
+    return res.json({ matches: await geocode.lookup(req.query.q) });
+  } catch (err) {
+    if (err?.status === 400) return res.status(400).json({ success: false, message: err.message });
+    console.warn('[nearby-incidents] address lookup failed:', err?.message || err);
+    return res.status(503).json({ success: false, message: "I couldn't look that address up just now. Try again, or use your current location." });
+  }
+}
+
+module.exports = { listPlaces, savePlace, removePlace, nearby, alert, lookupAddress };

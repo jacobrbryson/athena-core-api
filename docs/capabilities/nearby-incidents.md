@@ -2,7 +2,7 @@
 id: nearby-incidents
 title: Nearby emergencies
 summary: I watch the county dispatch board and tell you when something serious is happening close to home.
-where: Athena's notifications (in-app, phone, browser, text) and in conversation
+where: Athena's notifications (in-app, phone, browser, text), the alert banner, in conversation; places under your menu → Watched places
 status: live
 surfaces: [companion]
 audiences: [adult]
@@ -144,8 +144,20 @@ few service codes (lift assist, public service). PulsePoint's own
 `alertable` flag is not the gate — it marks Tree Down and Hazardous Condition
 as non-alertable.
 
-**Places:** `athena_watch_place` (home, family homes; `/dashboard/incidents/places`),
-plus the phone's latest location sample if under 45 minutes old.
+**Places:** your menu → **Watched places** (`companion/src/components/PlacesPanel.tsx`):
+home, family homes, each with its own radius (1–10 mi), pausable. Add one by
+street address — looked up server-side against the free US Census geocoder
+(`src/services/pulsepoint/geocode.js`, US street addresses only, no business
+names) — or "use my current location". A new place is checked immediately.
+Stored in `athena_watch_place`, plus the phone's latest location sample if
+under 45 minutes old.
+
+**Maps.** Every alert carries its calls' positions: the banner and each
+emergency message in the chat thread show a small OpenStreetMap map
+(`MiniMap.tsx`) with a numbered pin per call and the ring of each watched
+place. No map library — positioned tiles and Web Mercator maths. Nudges
+expose only the pins (`initiative.nudgeMap`); the rest of `facts` never leaves
+the server.
 
 ## Known gaps
 
@@ -157,4 +169,8 @@ plus the phone's latest location sample if under 45 minutes old.
   `undelivered` with error 30034 — the sending number is not registered for
   US A2P 10DLC. Nothing in code can fix that; the Twilio account needs a
   registered campaign or a verified toll-free number.
-- **No places panel yet.** Places are editable through the API only.
+- **The Android app bundles the web UI inside the APK.** `index.html` and
+  `/assets/` are served from the APK, so companion changes reach the phone only
+  after an APK rebuild (see `native-runtime/AndroidCompanion~/README.md`).
+- **"Use my current location" does not work inside the Android app** — the
+  WebView has no geolocation permission handler. Addresses do.

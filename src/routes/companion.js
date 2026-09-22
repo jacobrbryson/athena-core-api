@@ -29,6 +29,7 @@ router.get('/dashboard/alert', requireAuth, require('../controllers/nearbyIncide
 router.get('/dashboard/incidents/places', requireAuth, require('../controllers/nearbyIncidents').listPlaces);
 router.put('/dashboard/incidents/places', requireAuth, express.json({ limit: '4kb' }), require('../controllers/nearbyIncidents').savePlace);
 router.delete('/dashboard/incidents/places/:uuid', requireAuth, require('../controllers/nearbyIncidents').removePlace);
+router.get('/dashboard/incidents/geocode', requireAuth, require('../controllers/nearbyIncidents').lookupAddress);
 
 // "Right now": one suggestion for the gap in front of them, and the two lists
 // it is drawn from. The suggestion route reads; it never acts. Places are read

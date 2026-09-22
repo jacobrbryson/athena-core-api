@@ -81,11 +81,47 @@ const MINUTE = 60_000;
 /** Longest a nudge may sit unseen, whatever its trigger asked for. */
 const MAX_TTL_MS = 6 * 60 * MINUTE;
 
-// `facts` is deliberately absent: it is the audit record of what the trigger
+// `facts` is read but never sent: it is the audit record of what the trigger
 // observed, not something a client needs, and some of it (a calendar title, a
-// recovery score) is more than the nudge itself chose to reveal.
+// recovery score) is more than the nudge itself chose to reveal. The one
+// thing derived from it is an emergency nudge's map pins — see nudgeMap.
 const PUBLIC_COLUMNS = `uuid, trigger_id, urgency, text, status,
-	created_at, expires_at, delivered_at`;
+	created_at, expires_at, delivered_at, facts`;
+
+/** Triggers that live outside the registry but still speak through nudges. */
+const EXTERNAL_LABELS = { nearby_incident: "Nearby emergency" };
+
+/**
+ * The pins for an emergency nudge, so the app can draw each alert on a map:
+ * only positions, names and distances of the calls and the watched places.
+ */
+function nudgeMap(row) {
+	if (row.trigger_id !== "nearby_incident" || !row.facts) return undefined;
+	let facts = row.facts;
+	if (typeof facts === "string") {
+		try {
+			facts = JSON.parse(facts);
+		} catch {
+			return undefined;
+		}
+	}
+	const located = (p) => Number.isFinite(p?.latitude) && Number.isFinite(p?.longitude);
+	const incidents = (facts?.incidents || []).filter(located).map((i) => ({
+		what: i.what,
+		where: i.where,
+		miles: i.miles,
+		serious: !!i.serious,
+		latitude: i.latitude,
+		longitude: i.longitude,
+	}));
+	const places = (facts?.places || []).filter(located).map((p) => ({
+		name: p.name,
+		latitude: p.latitude,
+		longitude: p.longitude,
+		radiusMiles: p.radiusMiles,
+	}));
+	return incidents.length ? { incidents, places } : undefined;
+}
 
 function failure(message, status, code) {
 	return Object.assign(new Error(message), { status, code });
@@ -95,12 +131,13 @@ function publicNudge(row) {
 	return {
 		uuid: row.uuid,
 		trigger_id: row.trigger_id,
-		label: triggers.get(row.trigger_id)?.label || row.trigger_id,
+		label: triggers.get(row.trigger_id)?.label || EXTERNAL_LABELS[row.trigger_id] || row.trigger_id,
 		urgency: row.urgency,
 		text: row.text,
 		status: row.status,
 		created_at: row.created_at,
 		expires_at: row.expires_at,
+		map: nudgeMap(row),
 	};
 }
 
