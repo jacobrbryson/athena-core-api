@@ -628,12 +628,31 @@ async function watchedProfiles() {
 // because it is trusted.
 // ---------------------------------------------------------------------------
 
-/** Two-minute passes: three misses in a row is six minutes blind. */
-const OUTAGE_AFTER_FAILURES = 3;
+// ---------------------------------------------------------------------------
+// Cadence (owner, 2026-09-22): every 15 minutes normally; every 5 for an hour
+// once something comes up near a watched place, each new call extending the
+// hour. The scheduler fires every 5 minutes and a tick that is not due reads
+// nothing — so the rhythm lives here, in one place, and not in cron.
+// ---------------------------------------------------------------------------
+
+const MINUTE_MS = 60_000;
+const CALM_EVERY_MS = 15 * MINUTE_MS;
+const HOT_EVERY_MS = 5 * MINUTE_MS;
+const HOT_FOR_MS = 60 * MINUTE_MS;
+/** A source that has shut automated readers out is asked again this rarely. */
+const BLOCKED_EVERY_MS = 6 * 60 * MINUTE_MS;
+/** Scheduler ticks drift by seconds; a poll due in under this is due now. */
+const TICK_SLACK_MS = 45_000;
+
+/** Two misses in a row is half an hour blind at the calm rhythm — say so. */
+const OUTAGE_AFTER_FAILURES = 2;
+
+const time = (value) => (value ? new Date(value).getTime() : null);
 
 async function feedHealth() {
 	const [rows] = await pool.query(
-		"SELECT last_ok_at, last_error, consecutive_failures, outage_notified_at FROM athena_incident_feed WHERE id = 1"
+		`SELECT last_ok_at, last_error, consecutive_failures, outage_notified_at, last_attempt_at, hot_until, blocked_at
+		 FROM athena_incident_feed WHERE id = 1`
 	);
 	const row = rows[0] || {};
 	const failures = Number(row.consecutive_failures) || 0;
@@ -641,47 +660,104 @@ async function feedHealth() {
 		lastOkAt: row.last_ok_at || null,
 		lastError: row.last_error || null,
 		consecutiveFailures: failures,
-		down: failures >= OUTAGE_AFTER_FAILURES,
+		blocked: !!row.blocked_at,
+		blockedAt: row.blocked_at || null,
+		down: !!row.blocked_at || failures >= OUTAGE_AFTER_FAILURES,
 		outageNotifiedAt: row.outage_notified_at || null,
+		lastAttemptAt: row.last_attempt_at || null,
+		hotUntil: row.hot_until || null,
 	};
+}
+
+/** How often to read right now, and why — the answer `--status` prints. */
+function rhythmFor(health, now = Date.now()) {
+	if (health.blocked) return { everyMs: BLOCKED_EVERY_MS, why: "PulsePoint is blocking automated readers" };
+	const hot = time(health.hotUntil);
+	if (hot && hot > now) return { everyMs: HOT_EVERY_MS, why: "something is happening nearby" };
+	return { everyMs: CALM_EVERY_MS, why: "all quiet" };
+}
+
+/** Is this scheduler tick one that should actually read? */
+function isDue(health, now = Date.now()) {
+	const last = time(health.lastAttemptAt);
+	const { everyMs, why } = rhythmFor(health, now);
+	if (!last) return { due: true, everyMs, why };
+	const waited = now - last;
+	return { due: waited >= everyMs - TICK_SLACK_MS, everyMs, why, nextInMs: Math.max(0, everyMs - waited) };
+}
+
+async function recordAttempt() {
+	await pool.query(
+		`INSERT INTO athena_incident_feed (id, last_attempt_at) VALUES (1, NOW())
+		 ON DUPLICATE KEY UPDATE last_attempt_at = NOW()`
+	);
+}
+
+/** Something came up: read every 5 minutes for the next hour. */
+async function heatUp() {
+	await pool.query("UPDATE athena_incident_feed SET hot_until = DATE_ADD(NOW(), INTERVAL ? SECOND) WHERE id = 1", [
+		HOT_FOR_MS / 1000,
+	]);
 }
 
 async function recordFeedOk() {
 	await pool.query(
-		`INSERT INTO athena_incident_feed (id, last_ok_at, consecutive_failures, last_error, outage_notified_at)
-		 VALUES (1, NOW(), 0, NULL, NULL)
-		 ON DUPLICATE KEY UPDATE last_ok_at = NOW(), consecutive_failures = 0, last_error = NULL, outage_notified_at = NULL`
+		`INSERT INTO athena_incident_feed (id, last_ok_at, consecutive_failures, last_error, outage_notified_at, blocked_at)
+		 VALUES (1, NOW(), 0, NULL, NULL, NULL)
+		 ON DUPLICATE KEY UPDATE last_ok_at = NOW(), consecutive_failures = 0, last_error = NULL,
+		   outage_notified_at = NULL, blocked_at = NULL`
 	);
 }
 
-/** Record a miss; once it is an outage, tell every watched person — once per outage. */
+/**
+ * Record a miss; once it is an outage, tell every watched person — once per
+ * outage. A block is an outage on the first miss: it is a decision on their
+ * side, not a blip that the next read might clear.
+ */
 async function recordFeedFailure(error) {
 	await pool.query(
-		`INSERT INTO athena_incident_feed (id, consecutive_failures, last_error) VALUES (1, 1, ?)
-		 ON DUPLICATE KEY UPDATE consecutive_failures = consecutive_failures + 1, last_error = VALUES(last_error)`,
-		[String(error?.message || error).slice(0, 500)]
+		`INSERT INTO athena_incident_feed (id, consecutive_failures, last_error, blocked_at) VALUES (1, 1, ?, ?)
+		 ON DUPLICATE KEY UPDATE consecutive_failures = consecutive_failures + 1, last_error = VALUES(last_error),
+		   blocked_at = IF(VALUES(blocked_at) IS NULL, NULL, COALESCE(blocked_at, VALUES(blocked_at)))`,
+		[String(error?.message || error).slice(0, 500), error?.blocked ? new Date() : null]
 	);
 	const health = await feedHealth();
 	if (!health.down || health.outageNotifiedAt) return health;
 	await pool.query("UPDATE athena_incident_feed SET outage_notified_at = NOW() WHERE id = 1");
+	const text = health.blocked
+		? "Heads up: PulsePoint has started blocking automated readers, so I can't see the county 911 dispatch board or warn you about emergencies nearby. I'll check again every few hours. The PulsePoint Respond app can still notify you directly."
+		: "Heads up: I can't read the county 911 dispatch board right now, so I can't warn you about emergencies nearby until it's back. I'll keep trying.";
 	for (const profileId of await watchedProfiles()) {
 		await tell(profileId, {
 			dedupeKey: `pp-outage:${Date.now()}`,
-			text: "Heads up: I can't read the county 911 dispatch board right now, so I can't warn you about emergencies nearby until it's back. I'll keep trying every two minutes.",
+			text,
 			urgent: false,
-			facts: { agency: AGENCY, outage: true, error: health.lastError },
+			facts: { agency: AGENCY, outage: true, blocked: health.blocked, error: health.lastError },
 		}).catch(() => undefined);
 	}
 	return health;
 }
 
-/** One pass over everyone. Never throws for one profile's failure. */
-async function runOnce({ dryRun = false, generate } = {}) {
+/**
+ * One scheduler tick. Reads only when the rhythm says it is due (or `force`),
+ * then passes over everyone. Never throws for one profile's failure; a block
+ * is recorded and reported as `blocked`, not thrown, because it is a known
+ * state and not a crash.
+ */
+async function runOnce({ dryRun = false, generate, force = false } = {}) {
+	const health = await feedHealth();
+	const due = isDue(health);
+	if (!force && !dryRun && !due.due) {
+		return { agency: AGENCY, skipped: true, why: due.why, everyMs: due.everyMs, nextInMs: due.nextInMs, results: [] };
+	}
+	if (!dryRun) await recordAttempt();
+
 	let list;
 	try {
 		list = await board();
 	} catch (error) {
 		if (!dryRun) await recordFeedFailure(error).catch(() => undefined);
+		if (error?.blocked) return { agency: AGENCY, blocked: true, error: error.message, results: [] };
 		throw error;
 	}
 	if (!dryRun) await recordFeedOk().catch(() => undefined);
@@ -694,7 +770,10 @@ async function runOnce({ dryRun = false, generate } = {}) {
 			results.push({ profileId, error: error.message });
 		}
 	}
-	return { agency: AGENCY, active: countyActive, results };
+	// A new call anywhere — or a situation escalating — is "something came up".
+	if (!dryRun && results.some((r) => r.told > 0 || r.escalated)) await heatUp().catch(() => undefined);
+	const after = rhythmFor(dryRun ? health : await feedHealth().catch(() => health));
+	return { agency: AGENCY, active: countyActive, results, everyMs: after.everyMs, why: after.why };
 }
 
 /** For the in-app banner: the situation plus whether the feed can be trusted. */
@@ -715,7 +794,7 @@ async function alertFor(profileId) {
 		updatedAt: situation.updatedAt || null,
 		assessedBy: situation.assessedBy || null,
 		feed: health
-			? { ok: !health.down, lastOkAt: health.lastOkAt, error: health.down ? health.lastError : null }
+			? { ok: !health.down, blocked: health.blocked, lastOkAt: health.lastOkAt, error: health.down ? health.lastError : null }
 			: { ok: false, lastOkAt: null, error: "unknown" },
 	};
 }
@@ -734,8 +813,12 @@ async function promptBlock(profileId) {
 		lines.push(
 			"# You cannot see the county 911 dispatch board right now",
 			"",
-			"Your emergency feed has been failing, so you cannot currently warn them about emergencies",
-			"nearby. If they ask about sirens or anything happening near home, say so plainly.",
+			health.blocked
+				? "PulsePoint has started blocking automated readers, so you cannot see 911 calls near them. " +
+					"You will not try to get around that. If they ask about sirens or anything nearby, say so " +
+					"plainly, and mention the PulsePoint Respond app can notify them directly."
+				: "Your emergency feed has been failing, so you cannot currently warn them about emergencies " +
+					"nearby. If they ask about sirens or anything happening near home, say so plainly.",
 			""
 		);
 	}
@@ -788,6 +871,10 @@ module.exports = {
 	alertFor,
 	getSituation,
 	feedHealth,
+	isDue,
+	rhythmFor,
+	isDue,
+	rhythmFor,
 	promptBlock,
 	placesFor,
 	listPlaces,

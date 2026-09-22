@@ -27,6 +27,7 @@
 		"news:status": "node src/jobs/news.js --status",
 		"incidents": "node src/jobs/incidents.js",
 		"incidents:dry": "node src/jobs/incidents.js --dry-run",
+		"incidents:status": "node src/jobs/incidents.js --status",
 		"nightly": "node src/jobs/nightly.js",
 		"nightly:dry": "node src/jobs/nightly.js --dry-run",
 		"nightly:review": "node src/jobs/nightly.js --only review",

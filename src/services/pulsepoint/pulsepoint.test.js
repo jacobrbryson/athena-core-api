@@ -308,3 +308,39 @@ describe("answer check", () => {
 		expect(checkAnswer({ ...ok, body: "Five calls nearby." }, ["a1", "b1", "c1", "d1"])).toBe(true);
 	});
 });
+
+describe("cadence", () => {
+	const { isDue, rhythmFor } = require("./watch");
+	const now = Date.parse("2026-09-22T15:00:00Z");
+	const ago = (m) => new Date(now - m * 60000);
+	const health = (over = {}) => ({ blocked: false, hotUntil: null, lastAttemptAt: null, ...over });
+
+	test("quiet: every 15 minutes", () => {
+		expect(rhythmFor(health(), now).everyMs).toBe(15 * 60000);
+		expect(isDue(health({ lastAttemptAt: ago(10) }), now).due).toBe(false);
+		expect(isDue(health({ lastAttemptAt: ago(15) }), now).due).toBe(true);
+	});
+
+	test("something nearby: every 5 minutes until the hour runs out", () => {
+		const hot = health({ hotUntil: new Date(now + 30 * 60000), lastAttemptAt: ago(5) });
+		expect(rhythmFor(hot, now).everyMs).toBe(5 * 60000);
+		expect(isDue(hot, now).due).toBe(true);
+		const cooled = health({ hotUntil: ago(1), lastAttemptAt: ago(5) });
+		expect(isDue(cooled, now).due).toBe(false);
+	});
+
+	test("a scheduler tick a few seconds early still counts", () => {
+		const last = new Date(now - (15 * 60000 - 20000));
+		expect(isDue(health({ lastAttemptAt: last }), now).due).toBe(true);
+	});
+
+	test("blocked: back right off, whatever else is going on", () => {
+		const blocked = health({ blocked: true, hotUntil: new Date(now + 30 * 60000), lastAttemptAt: ago(20) });
+		expect(rhythmFor(blocked, now).everyMs).toBe(6 * 60 * 60000);
+		expect(isDue(blocked, now).due).toBe(false);
+	});
+
+	test("never read: due immediately", () => {
+		expect(isDue(health(), now).due).toBe(true);
+	});
+});

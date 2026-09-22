@@ -140,6 +140,20 @@ function get(path) {
 				timeout: TIMEOUT_MS,
 			},
 			(response) => {
+				// A WAF challenge is PulsePoint saying "no automated readers" — seen
+				// from 2026-09-22 as a 202 with x-amzn-waf-action: challenge and no
+				// body. It is a decision, not an outage, and is never to be worked
+				// around (no browser disguise, no challenge solving). Flag it so
+				// the watcher backs right off instead of retrying.
+				if (response.headers["x-amzn-waf-action"]) {
+					response.resume();
+					reject(
+						Object.assign(new Error("PulsePoint is blocking automated readers (AWS WAF challenge)."), {
+							blocked: true,
+						})
+					);
+					return;
+				}
 				if (response.statusCode !== 200) {
 					response.resume();
 					reject(new Error(`PulsePoint answered ${response.statusCode}.`));
