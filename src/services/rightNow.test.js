@@ -6,6 +6,8 @@ jest.mock('./weather', () => ({ forecast: jest.fn() }));
 jest.mock('./connectors/strava', () => ({ listActivities: jest.fn() }));
 jest.mock('./consent', () => ({ hasConsentForProfile: jest.fn() }));
 jest.mock('./credentials', () => ({ list: jest.fn() }));
+jest.mock('./pulsepoint/watch', () => ({ listPlaces: jest.fn() }));
+jest.mock('../helpers/db', () => ({ query: jest.fn() }));
 jest.mock('./readCache', () => ({ read: (_opts, load) => load(), hash: (parts) => JSON.stringify(parts).length.toString(), invalidate: jest.fn() }));
 
 const llm = require('./llm');
@@ -16,6 +18,8 @@ const weather = require('./weather');
 const strava = require('./connectors/strava');
 const consent = require('./consent');
 const credentials = require('./credentials');
+const incidents = require('./pulsepoint/watch');
+const pool = require('../helpers/db');
 const rightNow = require('./rightNow');
 
 const MINUTE = 60_000;
@@ -47,7 +51,18 @@ beforeEach(() => {
   weather.forecast.mockResolvedValue(null);
   credentials.list.mockResolvedValue([]);
   consent.hasConsentForProfile.mockResolvedValue(false);
+  incidents.listPlaces.mockResolvedValue([]);
+  pool.query.mockResolvedValue([[]]);
 });
+
+afterEach(() => jest.useRealTimers());
+
+/** A Wednesday at 10am in New York: daylight, and inside working hours. */
+const WEDNESDAY_MORNING = new Date('2026-09-23T14:00:00Z');
+/** The same Wednesday at 10pm: dark, and nobody wants a ticket. */
+const WEDNESDAY_NIGHT = new Date('2026-09-24T02:00:00Z');
+
+const rides = (daysBack) => daysBack.map((d) => ({ type: 'Ride', name: 'Morning ride', start: daysAgo(d) }));
 
 describe('openWindow', () => {
   it('runs to the next timed event', () => {
@@ -175,7 +190,7 @@ describe('getRightNow', () => {
   it('asks for nothing when there is nothing to suggest', async () => {
     const result = await rightNow.getRightNow(7, {});
     expect(result.lead).toBeNull();
-    expect(result.reason).toMatch(/Add a place/);
+    expect(result.reason).toMatch(/Connect Strava/);
     expect(llm.generateJson).not.toHaveBeenCalled();
   });
 
@@ -264,5 +279,154 @@ describe('getRightNow', () => {
 
     await rightNow.getRightNow(7, {});
     expect(strava.listActivities).toHaveBeenCalledWith(7, expect.objectContaining({ days: 90 }));
+  });
+});
+
+describe('allRhythms', () => {
+  it('counts a mountain bike ride once, not also as cycling', () => {
+    const list = [
+      { type: 'MountainBikeRide', name: 'Trails', start: daysAgo(3) },
+      { type: 'Ride', name: 'Road loop', start: daysAgo(4) },
+    ];
+    const rhythms = rightNow.allRhythms(list);
+    expect(rhythms.get('mountain biking').count).toBe(1);
+    expect(rhythms.get('cycling').count).toBe(1);
+  });
+});
+
+describe('habitCandidates', () => {
+  const window = { freeMinutes: null, busyWith: null, nextEvent: null };
+  const due = new Map([['cycling', { activity: 'cycling', perWeek: 1.5, thisWeek: 0, daysSince: 8, isUsualDayToday: false, usualDay: null }]]);
+  const opts = { daylight: true, coveredByPlace: new Set() };
+
+  it('offers a habit that is due, with no place needed', () => {
+    const { candidates } = rightNow.habitCandidates(due, window, null, opts);
+    expect(candidates[0]).toMatchObject({ id: 'habit:cycling', kind: 'habit', title: 'Cycling' });
+  });
+
+  it('leaves it to the saved place when one already carries the habit', () => {
+    const { candidates } = rightNow.habitCandidates(due, window, null, { ...opts, coveredByPlace: new Set(['cycling']) });
+    expect(candidates).toHaveLength(0);
+  });
+
+  it('rules an outdoor habit out in the rain, and says so', () => {
+    const wet = { outdoorOutlook: 'wet', now: { shortForecast: 'Light Rain' } };
+    const { candidates, ruledOut } = rightNow.habitCandidates(due, window, wet, opts);
+    expect(candidates).toHaveLength(0);
+    expect(ruledOut[0].reason).toMatch(/light rain/);
+  });
+
+  it('does not suggest a ride after dark', () => {
+    expect(rightNow.habitCandidates(due, window, null, { ...opts, daylight: false }).candidates).toHaveLength(0);
+  });
+
+  it('stays quiet about a habit already kept this week', () => {
+    const kept = new Map([['cycling', { activity: 'cycling', perWeek: 1, thisWeek: 1, daysSince: 1, isUsualDayToday: true }]]);
+    expect(rightNow.habitCandidates(kept, window, null, opts).candidates).toHaveLength(0);
+  });
+});
+
+describe('goalCandidates', () => {
+  it('names a goal from memory and skips one already on the project list', () => {
+    const rows = [
+      { uuid: 'g1', memory_key: 'learn_spanish', memory_value: 'Wants to be conversational by summer', updated_at: daysAgo(2) },
+      { uuid: 'g2', memory_key: 'rehang the garage shelves', memory_value: '', updated_at: daysAgo(2) },
+    ];
+    const goals = rightNow.goalCandidates(rows, ['Rehang the garage shelves']);
+    expect(goals).toHaveLength(1);
+    expect(goals[0]).toMatchObject({ id: 'goal:g1', kind: 'goal', title: 'Learn spanish', detail: 'Wants to be conversational by summer' });
+  });
+});
+
+describe('workCandidates', () => {
+  const window = { freeMinutes: 120, busyWith: null, nextEvent: null };
+  const issues = [
+    { key: 'A-1', title: 'Backlog thing', status: 'To Do' },
+    { key: 'A-2', title: 'Half done', status: 'In Progress', url: 'https://x.atlassian.net/browse/A-2' },
+  ];
+
+  it('puts work in progress first during working hours', () => {
+    expect(rightNow.workCandidates(issues, window, { workHours: true })[0].id).toBe('work:A-2');
+  });
+
+  it('offers no tickets outside working hours', () => {
+    expect(rightNow.workCandidates(issues, window, { workHours: false })).toHaveLength(0);
+  });
+});
+
+describe('restCandidate', () => {
+  it('suggests taking it easy on a red recovery', () => {
+    expect(rightNow.restCandidate({ recoveryScore: 22, hoursAsleepLastNight: 7 })).toMatchObject({ kind: 'rest' });
+  });
+
+  it('says nothing on a normal day', () => {
+    expect(rightNow.restCandidate({ recoveryScore: 70, hoursAsleepLastNight: 7.5 })).toBeNull();
+  });
+});
+
+describe('getRightNow with no lists at all', () => {
+  const stravaOn = (activities) => {
+    credentials.list.mockResolvedValue([{ provider: 'strava', status: 'active' }]);
+    consent.hasConsentForProfile.mockResolvedValue(true);
+    strava.listActivities.mockResolvedValue(activities);
+  };
+
+  it('suggests the habit Strava already knows about', async () => {
+    jest.useFakeTimers({ now: WEDNESDAY_MORNING, doNotFake: ['nextTick', 'setImmediate'] });
+    stravaOn(rides([9, 16, 23, 30, 37, 44]));
+    llm.generateJson.mockRejectedValue(new Error('offline'));
+
+    const result = await rightNow.getRightNow(7, {});
+    expect(result.lead).toMatchObject({ kind: 'habit', activity: 'cycling' });
+    expect(result.headline).toMatch(/cycling/);
+  });
+
+  it('checks the weather at home for it', async () => {
+    jest.useFakeTimers({ now: WEDNESDAY_MORNING, doNotFake: ['nextTick', 'setImmediate'] });
+    stravaOn(rides([9, 16, 23, 30, 37, 44]));
+    incidents.listPlaces.mockResolvedValue([{ name: 'Home', latitude: 35.5, longitude: -80.8, enabled: true }]);
+    weather.forecast.mockResolvedValue({ outdoorOutlook: 'wet', now: { shortForecast: 'Thunderstorms' } });
+
+    const result = await rightNow.getRightNow(7, {});
+    expect(weather.forecast).toHaveBeenCalledWith(35.5, -80.8);
+    expect(result.lead).toBeNull();
+    expect(result.reason).toMatch(/thunderstorms/);
+  });
+
+  it('falls back to a goal they told Athena about', async () => {
+    pool.query.mockResolvedValue([[{ uuid: 'g1', memory_key: 'learn_spanish', memory_value: 'Conversational by summer', updated_at: daysAgo(1) }]]);
+    llm.generateJson.mockRejectedValue(new Error('offline'));
+
+    const result = await rightNow.getRightNow(7, {});
+    expect(result.lead).toMatchObject({ kind: 'goal', title: 'Learn spanish' });
+  });
+
+  it('leads with rest on a red recovery, ahead of a due habit', async () => {
+    jest.useFakeTimers({ now: WEDNESDAY_MORNING, doNotFake: ['nextTick', 'setImmediate'] });
+    stravaOn(rides([9, 16, 23, 30, 37, 44]));
+    dashboard.getDashboard.mockResolvedValue({
+      calendar: { status: 'ready', data: { events: [], timeZone: 'America/New_York' } },
+      recovery: { data: [{ state: 'SCORED', recovery_score: 18 }] },
+    });
+    llm.generateJson.mockRejectedValue(new Error('offline'));
+
+    const result = await rightNow.getRightNow(7, {});
+    expect(result.lead.kind).toBe('rest');
+    expect(result.alternates[0].kind).toBe('habit');
+  });
+
+  it('offers an in-progress ticket on a weekday morning, and not at night', async () => {
+    const summary = {
+      calendar: { status: 'ready', data: { events: [], timeZone: 'America/New_York' } },
+      jira: { data: { issues: [{ key: 'ATH-9', title: 'Ship the thing', status: 'In Progress' }] } },
+    };
+    dashboard.getDashboard.mockResolvedValue(summary);
+    llm.generateJson.mockRejectedValue(new Error('offline'));
+
+    jest.useFakeTimers({ now: WEDNESDAY_MORNING, doNotFake: ['nextTick', 'setImmediate'] });
+    expect((await rightNow.getRightNow(7, {})).lead).toMatchObject({ kind: 'work', issueKey: 'ATH-9' });
+
+    jest.setSystemTime(WEDNESDAY_NIGHT);
+    expect((await rightNow.getRightNow(7, {})).lead).toBeNull();
   });
 });
