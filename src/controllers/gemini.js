@@ -189,9 +189,10 @@ async function processAiResponse(session, message, clients, ctx = {}) {
       }
     }
 
-    // Emergency calls near their saved places / current position, live from
-    // the county dispatch board, so "what are all the sirens?" has an answer
-    // and she can raise one herself. Bounded to 2.5s inside, never fatal.
+    // Emergencies near their saved places, as the stored situation the
+    // athena-incidents job assessed (one DB read, no fetch). When it is urgent
+    // the block instructs her to lead with it — the owner asked for exactly
+    // that. Never fatal.
     if (mayPropose) {
       try {
         const nearbyBlock = await nearbyIncidents.promptBlock(session.profile_id);

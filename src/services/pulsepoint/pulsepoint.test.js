@@ -217,3 +217,94 @@ describe("watch", () => {
 		expect(text.split("\n")[1]).toMatch(/^• Hazardous Condition/);
 	});
 });
+
+describe("situation assessment", () => {
+	const watch = require("./watch");
+	const home = { name: "Home", latitude: 35.6741, longitude: -80.9073, radiusMiles: 3 };
+	const call = (id, code, lat) => ({
+		id, code, status: "active", what: calltypes.describe(code),
+		category: calltypes.lookup(code)?.category || null, alertable: calltypes.isAlertable(code),
+		latitude: lat, longitude: -80.9073, locatable: true, address: "PERTH RD, TROUTMAN, NC",
+		units: 2, receivedAt: new Date(),
+	});
+	const hitsFor = (list) => watch.nearbyFor(1, { list, places: [home] });
+
+	test("two trees down is urgent even though neither is 'alertable' — the owner's rule", async () => {
+		const hits = await hitsFor([call("a", "TD", 35.69), call("b", "TD", 35.68)]);
+		expect(watch.floorLevel(hits)).toBe("urgent");
+	});
+
+	test("one serious call alone is urgent; one routine call is watch", async () => {
+		expect(watch.floorLevel(await hitsFor([call("f", "SF", 35.69)]))).toBe("urgent");
+		expect(watch.floorLevel(await hitsFor([call("t", "TD", 35.69)]))).toBe("watch");
+		expect(watch.floorLevel([])).toBe("none");
+	});
+
+	test("the model writes the words but cannot talk the level down", async () => {
+		const hits = await hitsFor([call("a", "TD", 35.69), call("b", "HC", 35.68)]);
+		const generate = async () => ({ data: { level: "watch", headline: "Storm damage near home.", body: "Two calls on Perth Rd." }, model: "test" });
+		const s = await watch.assess(hits, { generate });
+		expect(s.level).toBe("urgent");
+		expect(s.headline).toBe("Storm damage near home");
+		expect(s.body).toBe("Two calls on Perth Rd.");
+		expect(s.assessedBy).toBe("test");
+	});
+
+	test("the model may raise the level", async () => {
+		const hits = await hitsFor([call("t", "TD", 35.69)]);
+		const generate = async () => ({ data: { level: "urgent", headline: "Tree down", body: "On Perth Rd." } });
+		expect((await watch.assess(hits, { generate })).level).toBe("urgent");
+	});
+
+	test("a failing model still produces the alert, from the rules", async () => {
+		const hits = await hitsFor([call("a", "TD", 35.69), call("b", "TD", 35.68)]);
+		const s = await watch.assess(hits, { generate: async () => { throw new Error("down"); } });
+		expect(s.level).toBe("urgent");
+		expect(s.assessedBy).toBe("rules");
+		expect(s.headline).toBe("2 emergencies near home");
+		expect(s.body).toMatch(/Tree Down/);
+	});
+
+	test("a model answer with no words falls back rather than sending an empty alert", async () => {
+		const hits = await hitsFor([call("f", "SF", 35.69)]);
+		const s = await watch.assess(hits, { generate: async () => ({ data: { level: "urgent", headline: "", body: "" } }) });
+		expect(s.assessedBy).toBe("rules");
+		expect(s.headline).toBe("Structure Fire near home");
+	});
+});
+
+describe("dashboard alert merge", () => {
+	jest.mock("../llm", () => ({}));
+	jest.mock("../dashboard", () => ({}));
+	jest.mock("../actions", () => ({}));
+	jest.mock("../readCache", () => ({}));
+	const { mergeAlert } = require("../dashboardPriority");
+	const urgent = { level: "urgent", headline: "Fires near home", body: "Two calls." };
+
+	test("an urgent situation shows even when the model raised nothing", () => {
+		expect(mergeAlert(null, urgent)).toMatchObject({ level: "urgent", source: "emergencies" });
+	});
+	test("the model cannot downgrade it", () => {
+		expect(mergeAlert({ level: "watch", headline: "x", body: "y" }, urgent).level).toBe("urgent");
+	});
+	test("the model can raise an alert about anything else", () => {
+		expect(mergeAlert({ level: "urgent", headline: "Flight in 40 min", body: "Leave now." }, { level: "none" })).toMatchObject({ source: "athena", level: "urgent" });
+	});
+	test("most days: nothing", () => {
+		expect(mergeAlert(null, { level: "none" })).toBeNull();
+	});
+});
+
+describe("answer check", () => {
+	const { checkAnswer } = require("./watch");
+	const ok = { level: "urgent", headline: "Fire near home", body: "A structure fire on Brer Fox Trail and a hazard on Neill Farm Road." };
+	test("accepts an answer that names every call", () => {
+		expect(checkAnswer(ok, ["brer", "neill"])).toBe(true);
+	});
+	test("rejects one that drops a call, so the router tries a stronger model", () => {
+		expect(checkAnswer({ ...ok, body: "Fire on Brer Fox Trail." }, ["brer", "neill"])).toMatch(/missing: neill/);
+	});
+	test("with more than three calls it only needs the shape", () => {
+		expect(checkAnswer({ ...ok, body: "Five calls nearby." }, ["a1", "b1", "c1", "d1"])).toBe(true);
+	});
+});

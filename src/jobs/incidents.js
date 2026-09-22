@@ -32,10 +32,10 @@ async function pass() {
 	log(`${agency}: ${active} active county-wide`);
 	for (const r of results) {
 		if (r.error) log(`profile ${r.profileId}: FAILED ${r.error}`);
-		else if (!r.told) log(`profile ${r.profileId}: ${r.nearby} nearby, nothing new`);
+		else if (!r.told && !r.cleared) log(`profile ${r.profileId}: ${r.nearby} nearby [${r.level}], nothing new`);
 		else
 			log(
-				`profile ${r.profileId}: told ${r.told}${r.serious ? " (serious)" : ""}` +
+				`profile ${r.profileId}: [${r.level}] told ${r.told}${r.cleared ? " (all clear)" : ""}` +
 					(r.pushed ? ` — pushed ${JSON.stringify(r.pushed.sent ?? 0)}${r.pushed.skipped ? ` (${r.pushed.skipped})` : ""}` : "") +
 					`\n${r.text}`
 			);

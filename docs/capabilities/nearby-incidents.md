@@ -79,18 +79,22 @@ be able to place. A redacted incident is kept and named, carries
 
 `alertable` is **PulsePoint's own judgement**, tuned for a county-wide CPR
 app. It turned out to be the wrong gate for "near my house" — see *How it
-tells you* below — so it now only decides what may break quiet hours.
+tells you* below — so it now only feeds the level: a serious call is urgent
+on its own.
 
 ## Under the hood
 
-**Never sent to a model.**
+**Model use:** only the situation assessment (headline, body, level), once per
+change, through the normal access gate; the fetch, the radius check and the
+floor are rules. Background calls are charged to `ATHENA_BACKGROUND_GOOGLE_ID`.
 
 - Service: `../../src/services/pulsepoint/` — `fetch.js` (the call and the
   decrypt), `normalise.js` (their shape to ours), `geo.js` (great-circle
   distance and the radius check), `calltypes.js` + `calltypes.json` (what a
   code means).
-- Tests: `../../src/services/pulsepoint/pulsepoint.test.js` — 19, all pure, no
-  network.
+- Job: `../../src/jobs/incidents.js`; situation, feed health and alert in
+  `watch.js`; banner in `../../../companion/src/components/EmergencyBanner.tsx`.
+- Tests: `../../src/services/pulsepoint/pulsepoint.test.js` — pure, no network.
 - Politeness: one request per poll, well under the rate their own web app uses,
   an honest User-Agent, a hard timeout, a capped read. This is an undocumented
   endpoint belonging to someone else, serving public-safety data at their
@@ -98,31 +102,59 @@ tells you* below — so it now only decides what may break quiet hours.
 
 ## How it tells you
 
-`src/jobs/incidents.js` runs every two minutes (`athena-incidents`). Each pass
-reads the county board once, finds active calls inside a watched radius, and
-writes ONE `athena_nudge` (trigger `nearby_incident`) for the calls it has not
-told you about in the last 24 hours. That row is the in-app card, and
-`push.deliverNudge` fans it out to Android, browser and SMS. The text is
-deterministic — no model call.
+It is meant to be a big deal. On 2026-09-21 a structure fire and several
+trees down sat within two miles of home while nothing was said, and the owner's
+instruction afterwards was that an emergency nearby should be all Athena wants
+to talk about.
+
+**The situation, judged once.** `src/jobs/incidents.js` runs every two
+minutes (`athena-incidents`). When the set of nearby active calls changes, the
+model is shown them and decides how loud to be (`none` / `watch` / `urgent`)
+and what to say. Underneath it is a floor it cannot go below: **two or more
+calls, or any serious one, is urgent**; one routine call is watch. The answer
+is checked — with three calls or fewer it must name every one, or the router
+moves on to a stronger model — and if no model answers in 25 seconds the
+rules' own wording goes out. The result is stored in
+`athena_incident_situation`, and every surface reads that one judgement.
+
+**Everywhere at once.** Each new call becomes one `athena_nudge`
+(trigger `nearby_incident`): the in-app entry, plus push and text through
+`push.deliverNudge`. Urgent ignores quiet hours; a lone watch-level call waits
+for morning. When an urgent situation ends, an all-clear goes out.
+
+**In the app.** A banner across the top of every screen
+(`GET /dashboard/alert`, polled each minute and on resume): huge and red when
+urgent, with every call, distance, units and time. "Got it" shrinks it to a
+bar that stays until the situation ends; in chat it is pinned under the top
+bar. On sign-in, Athena's spoken greeting is the emergency instead of
+"welcome back". The dashboard's own model call (`dashboardPriority`) also
+sees the situation and may raise an alert about anything on the dashboard; it
+cannot lower an emergency.
+
+**In conversation.** `watch.promptBlock` puts the situation in Athena's
+system prompt. When urgent it tells her to open every reply with it until
+it is acknowledged.
+
+**The feed itself.** `athena_incident_feed` tracks every read. Three misses in
+a row (six minutes) is an outage: the owner is told once, the banner says the
+watch is offline, and Athena knows she cannot see the board.
 
 **What is told:** every locatable call in range except medical calls and a
-few service codes (lift assist, public service). PulsePoint's `alertable`
-flag is NOT the gate — it marks Tree Down and Hazardous Condition as
-non-alertable, which is exactly what piled up near home on 2026-09-21 while
-nothing was said. `alertable` only decides whether a call may break quiet
-hours: a fire wakes you, a tree down waits until morning (still written
-in-app immediately).
+few service codes (lift assist, public service). PulsePoint's own
+`alertable` flag is not the gate — it marks Tree Down and Hazardous Condition
+as non-alertable.
 
-**In conversation:** `watch.promptBlock` puts the live nearby list into
-Athena's system prompt (adult sessions, 2.5s bound), so she knows about it
-without having pushed anything.
+**Places:** `athena_watch_place` (home, family homes; `/dashboard/incidents/places`),
+plus the phone's latest location sample if under 45 minutes old.
 
-**Places:** `PULSEPOINT_WATCH_PLACES` JSON, plus the phone's latest location
-sample if under 45 minutes old.
+## Known gaps
 
-## Not built yet
-
-- **Saved places table + panel** (home, family homes, each radius) — today
-  it is an env var; needs a migration.
-- **Phone location is on but no samples arrive**, so "near me" currently
-  means near home only.
+- **No phone position reaches the server.** `POST /location/sample` exists
+  and the location switch saves a preference, but nothing sends samples: the
+  Android app has no location permission or reporter. "Near me" is therefore
+  "near my saved places" until that native work ships.
+- **Texts are blocked by carriers.** Twilio accepts them and reports
+  `undelivered` with error 30034 — the sending number is not registered for
+  US A2P 10DLC. Nothing in code can fix that; the Twilio account needs a
+  registered campaign or a verified toll-free number.
+- **No places panel yet.** Places are editable through the API only.

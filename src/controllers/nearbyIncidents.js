@@ -72,4 +72,20 @@ async function nearby(req, res) {
   }
 }
 
-module.exports = { listPlaces, savePlace, removePlace, nearby };
+/**
+ * The in-app banner: the stored situation (model-assessed, rules-floored) and
+ * whether the feed behind it is alive. Cheap — two indexed reads, no fetch and
+ * no model — because the companion polls it every minute.
+ */
+async function alert(req, res) {
+  res.set('Cache-Control', 'no-store');
+  const actor = await requireAdultActor(req, res);
+  if (!actor) return;
+  try {
+    return res.json(await watch.alertFor(actor.profileId));
+  } catch (err) {
+    return fail(res, err);
+  }
+}
+
+module.exports = { listPlaces, savePlace, removePlace, nearby, alert };

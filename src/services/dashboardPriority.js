@@ -152,9 +152,13 @@ function describe(summary, pendingCount) {
 	];
 }
 
-const PROMPT = (cards) =>
+const PROMPT = (cards, emergencies = null) =>
 	`These are the cards on someone's personal dashboard right now, with the live ` +
 	`signals behind each one:\n\n${JSON.stringify(cards, null, 1)}\n\n` +
+	(emergencies
+		? `Emergency calls on the county 911 dispatch board near their home right now:\n` +
+			`${JSON.stringify(emergencies, null, 1)}\n\n`
+		: "") +
 	`Put them in the order this person should look at them, most important first.\n\n` +
 	`Weigh it the way a thoughtful assistant would:\n` +
 	`- A card marked "empty": true has nothing behind it right now. It cannot ` +
@@ -166,8 +170,41 @@ const PROMPT = (cards) =>
 	`- A source that is not connected, or has nothing in it, sinks.\n` +
 	`- Low recovery next to a heavy day is worth raising; a good night is not.\n` +
 	`- Background reading comes last unless nothing else needs them.\n\n` +
+	`\nThen decide whether anything here is serious enough to put a big alert across ` +
+	`the top of their screen the moment they open it — something they would be upset ` +
+	`to find out about later. Ongoing emergencies near their home always are. Most ` +
+	`days nothing is: use null.\n\n` +
 	`Return every id exactly once, no others, as JSON:\n` +
-	`{"order":[{"id":"...","why":"under 12 words, addressed to them"}]}`;
+	`{"order":[{"id":"...","why":"under 12 words, addressed to them"}],` +
+	`"alert":null or {"level":"watch" or "urgent","headline":"at most 8 words","body":"at most 40 words, addressed to them"}}`;
+
+/**
+ * The alert the model raised, floored by the emergency situation.
+ *
+ * The model reads the whole dashboard and may raise an alert about anything.
+ * It may not LOWER one the incident watcher already judged: an urgent
+ * situation near home is urgent on the banner whatever the ranking call
+ * thought, and if the model said nothing the situation's own words are used.
+ */
+function mergeAlert(raw, situation) {
+	const RANK = { watch: 1, urgent: 2 };
+	const fromModel =
+		raw && RANK[raw.level] && typeof raw.headline === "string" && raw.headline.trim()
+			? {
+					level: raw.level,
+					headline: raw.headline.trim().slice(0, 200),
+					body: typeof raw.body === "string" ? raw.body.trim().slice(0, 600) : "",
+					source: "athena",
+				}
+			: null;
+	const floor =
+		situation && RANK[situation.level]
+			? { level: situation.level, headline: situation.headline, body: situation.body, source: "emergencies" }
+			: null;
+	if (!floor) return fromModel;
+	if (!fromModel || RANK[fromModel.level] < RANK[floor.level]) return floor;
+	return fromModel;
+}
 
 /**
  * An empty card may not outrank one with something in it.
@@ -218,33 +255,53 @@ function normalize(raw) {
  * an ordering nobody chose.
  */
 async function getPriority(profileId, user) {
+	// The emergency situation first: it is the floor under the alert, and it
+	// must stand even when the dashboard or the model cannot be reached.
+	const situation = await require("./pulsepoint/watch").getSituation(profileId).catch(() => null);
+	const fallback = () => ({
+		order: DEFAULT_ORDER,
+		source: "default",
+		alert: mergeAlert(null, situation),
+		generatedAt: new Date().toISOString(),
+	});
+	const emergencies =
+		situation && situation.level !== "none" && situation.incidents?.length
+			? {
+					level: situation.level,
+					calls: situation.incidents
+						.slice(0, 10)
+						.map((i) => ({ what: i.what, where: i.where, miles: i.miles, units: i.units })),
+				}
+			: null;
+
 	let summary = dashboard.cachedDashboard(profileId);
 	if (!summary) {
 		try {
 			summary = await dashboard.getDashboard(profileId, user);
 		} catch {
-			return { order: DEFAULT_ORDER, source: "default", generatedAt: new Date().toISOString() };
+			return fallback();
 		}
 	}
 	const pending = await actions.listPending(profileId).catch(() => []);
 	const cards = describe(summary, pending.length);
 	const empty = new Map(cards.map((c) => [c.id, c.empty]));
 	// Reuse only an identical signal sheet and prompt, not merely a profile.
-	const inputKey = readCache.hash(['dashboard-order-v2', PROMPT(cards)]);
+	const inputKey = readCache.hash(['dashboard-order-v3', PROMPT(cards, emergencies)]);
 
 	// Nothing on the page has anything in it. Usually this is a snapshot taken
 	// before the providers answered, and there is no "more important" to find —
 	// so leave the order alone rather than spend a model call shuffling empties
-	// and then cache the result for ten minutes.
-	if (cards.every((c) => c.empty !== false)) {
-		return { order: DEFAULT_ORDER, source: "default", generatedAt: new Date().toISOString() };
+	// and then cache the result for ten minutes. Not when there are emergencies:
+	// then there is something to say regardless of the cards.
+	if (cards.every((c) => c.empty !== false) && !emergencies) {
+		return fallback();
 	}
 
 	try {
 		const value = await readCache.read({ profileId, namespace: 'dashboard-order', key: inputKey, ttlMs: CACHE_TTL_MS }, async () => {
 			const { data, model } = await llm.generateJson({
 				task: "json",
-				contents: [{ role: "user", parts: [{ text: PROMPT(cards) }] }],
+				contents: [{ role: "user", parts: [{ text: PROMPT(cards, emergencies) }] }],
 				check: (parsed) => {
 					const ids = (Array.isArray(parsed?.order) ? parsed.order : [])
 						.map((e) => (typeof e === "string" ? e : e?.id))
@@ -254,16 +311,17 @@ async function getPriority(profileId, user) {
 			});
 			return {
 				order: applyEmptyFloor(normalize(data?.order), empty),
+				alert: data?.alert ?? null,
 				source: "athena",
 				model: model || null,
 				generatedAt: new Date().toISOString(),
 			};
 		});
-		return value;
+		return { ...value, alert: mergeAlert(value.alert, situation) };
 	} catch (err) {
 		console.warn("[dashboard] prioritisation unavailable:", err.message);
 		// Not cached: the next open should get a real ordering if the model is back.
-		return { order: DEFAULT_ORDER, source: "default", generatedAt: new Date().toISOString() };
+		return fallback();
 	}
 }
 
@@ -272,4 +330,4 @@ function invalidate(profileId) {
 	return readCache.invalidate(profileId, 'dashboard-order');
 }
 
-module.exports = { getPriority, invalidate, CARDS };
+module.exports = { getPriority, invalidate, mergeAlert, CARDS };

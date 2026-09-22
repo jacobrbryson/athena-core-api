@@ -18,9 +18,18 @@
  * Initiative runs every ten minutes, raises one observation per trigger per
  * pass, and has a model word every sentence. For "a tree is down across the
  * road you are about to drive" all three are wrong: too slow, one-at-a-time
- * during a storm that produces five at once, and a model call on the path of
- * something that must arrive whether or not a model is answering. The text
- * here is deterministic — the facts ARE the message.
+ * during a storm that produces five at once, and a model call that can fail
+ * the whole thing. Here the model is asked once per CHANGE in the situation,
+ * with a time bound, and a rules floor underneath it: it decides how loud and
+ * what to say, never whether (see floorLevel), and when it does not answer the
+ * rules' own wording goes out instead.
+ *
+ * ## One situation, every surface
+ *
+ * Each pass stores the assessed situation in athena_incident_situation. The
+ * in-app banner (GET /dashboard/alert), Athena's chat prompt and the nudge text
+ * all read that one judgement, so the app, the text message and the
+ * conversation never disagree about how serious it is.
  *
  * ## What is worth telling
  *
@@ -33,8 +42,10 @@
  *   - medical calls (someone else's private emergency; also redacted to 0,0
  *     most of the time anyway), and
  *   - the pure-noise service codes in QUIET_CODES.
- * `alertable` still matters for one thing: it is what may break quiet hours.
- * A structure fire at 2am wakes you; a tree down at 2am waits for 6am.
+ * `alertable` still feeds the level (see floorLevel): any serious call, or two
+ * or more calls of any kind, is URGENT, and urgent is what breaks quiet hours.
+ * A lone tree down at 2am waits for 6am; a fire, or a storm's worth of calls,
+ * wakes you.
  *
  * ## Where the places come from
  *
@@ -216,7 +227,7 @@ function line(hit) {
 	return `${incident.what} — ${street(incident.address)}, ${geo.describeDistance(nearest.miles)} from ${placeName(nearest.place)}${units}`;
 }
 
-/** The whole message. Deterministic on purpose — see the header. */
+/** The whole message, without a model. The floor every other path falls back to. */
 function wording(hits) {
 	if (hits.length === 1) {
 		const { incident, nearest } = hits[0];
@@ -230,6 +241,222 @@ function wording(hits) {
 		.slice(0, 500);
 }
 
+// ---------------------------------------------------------------------------
+// The situation: how serious, in one judgement every surface shares
+// ---------------------------------------------------------------------------
+
+const LEVELS = ["none", "watch", "urgent"];
+const rank = (level) => Math.max(0, LEVELS.indexOf(level));
+const higher = (a, b) => (rank(a) >= rank(b) ? a : b);
+/** A model that does not answer in this long is treated as not answering. */
+const MODEL_TIMEOUT_MS = 25_000;
+
+/**
+ * The level the model is not allowed to go under.
+ *
+ * The owner's rule, after a night of trees down and a structure fire within
+ * two miles while Athena said nothing (2026-09-21): more than one active call
+ * near home, or any serious one, is URGENT — full stop. The model decides how
+ * to say it and may raise the level; it may never talk it down, because a
+ * model that is "not sure it's a big deal" is exactly the failure being fixed.
+ */
+function floorLevel(hits) {
+	if (!hits.length) return "none";
+	if (hits.length >= 2 || hits.some((h) => h.incident.alertable)) return "urgent";
+	return "watch";
+}
+
+const minutesAgo = (date) =>
+	date instanceof Date && !Number.isNaN(date.getTime())
+		? Math.max(0, Math.round((Date.now() - date.getTime()) / 60000))
+		: null;
+
+/** What the model is shown: the calls, as facts, and nothing it could mistake for an instruction. */
+function sheet(hits, countyActive) {
+	return {
+		countyWideActiveCalls: countyActive,
+		nearbyActiveCalls: hits.map(({ incident, nearest }) => ({
+			what: incident.what,
+			category: incident.category,
+			where: street(incident.address),
+			milesAway: Math.round(nearest.miles * 10) / 10,
+			nearestWatchedPlace: placeName(nearest.place),
+			unitsResponding: incident.units,
+			dispatchedMinutesAgo: minutesAgo(incident.receivedAt),
+			seriousByDispatchStandards: incident.alertable,
+		})),
+	};
+}
+
+const PROMPT = (facts, floor) =>
+	"You are Athena, looking after the person you live with. Below is what the county 911 " +
+	"dispatch board says is happening near their home and the places they asked you to watch, " +
+	"right now.\n\n" +
+	JSON.stringify(facts, null, 1) +
+	"\n\nDecide how loudly to tell them, then write it.\n" +
+	`- level: "none", "watch" or "urgent". It must be at least "${floor}". Ongoing emergencies ` +
+	"close to home are a big deal to this person: they would rather be told too loudly than " +
+	"find out later that they had no clue.\n" +
+	"- headline: at most 8 words. Plain, specific, no exclamation marks.\n" +
+	"- body: at most 45 words, spoken to them directly. Say what is happening and how close. " +
+	"With three calls or fewer, mention every one by what and street; with more, give the count " +
+	"and the nearest. If several calls share a cause you can see in the list (e.g. many trees " +
+	"down), say so plainly. You may add one practical suggestion only if it follows directly " +
+	"from the list (e.g. avoid a named street with a call on it). Do not invent anything that is " +
+	"not in the list — no injuries, causes, advice about other roads, or closures it does not state.\n\n" +
+	'Reply as JSON: {"level":"...","headline":"...","body":"..."}';
+
+function fallbackAssessment(hits) {
+	const level = floorLevel(hits);
+	if (level === "none") return { level, headline: null, body: null, assessedBy: "rules" };
+	const place = placeName(hits[0].nearest.place);
+	const headline =
+		hits.length === 1 ? `${hits[0].incident.what} near ${place}` : `${hits.length} emergencies near ${place}`;
+	return { level, headline, body: wording(hits).slice(0, 1000), assessedBy: "rules" };
+}
+
+/** The first distinctive word of each street, for checking the model named them. */
+function streetMarks(hits) {
+	return hits.map(
+		(h) =>
+			street(h.incident.address)
+				.toLowerCase()
+				.split(/[^a-z0-9]+/)
+				.find((w) => w.length > 2 && /[a-z]/.test(w)) || ""
+	);
+}
+
+/**
+ * Is this answer good enough to send? Returning a string rejects it, and the
+ * model router then tries the next tier — which is how a lazy answer from a
+ * small local model ("Fire near home", dropping the second call) is replaced
+ * by a stronger one instead of reaching someone's phone.
+ */
+function checkAnswer(p, marks = []) {
+	if (!LEVELS.includes(p?.level) || typeof p?.headline !== "string" || typeof p?.body !== "string") {
+		return "need level, headline and body";
+	}
+	if (marks.length <= 3) {
+		const body = p.body.toLowerCase();
+		const missing = marks.filter((m) => m && !body.includes(m));
+		if (missing.length) return `body must mention every call; missing: ${missing.join(", ")}`;
+	}
+	return true;
+}
+
+/** The real model call, through the same access gate every model call passes. */
+async function generateWithModel(prompt, marks = []) {
+	await require("../../security/access").assertModelAccess();
+	const llm = require("../llm");
+	return llm.generateJson({
+		task: "json",
+		contents: [{ role: "user", parts: [{ text: prompt }] }],
+		check: (p) => checkAnswer(p, marks),
+	});
+}
+
+/**
+ * The model's judgement of the situation, floored by the rules and bounded in
+ * time. Never throws and never returns less than the floor: an emergency alert
+ * must go out whether or not a model is answering tonight.
+ */
+async function assess(hits, { countyActive = null, generate = generateWithModel } = {}) {
+	const fallback = fallbackAssessment(hits);
+	if (!hits.length) return fallback;
+	const floor = floorLevel(hits);
+	let timer;
+	try {
+		const result = await Promise.race([
+			generate(PROMPT(sheet(hits, countyActive), floor), streetMarks(hits)),
+			new Promise((_, reject) => {
+				timer = setTimeout(() => reject(new Error("model timed out")), MODEL_TIMEOUT_MS);
+			}),
+		]);
+		const data = result?.data || {};
+		const headline = String(data.headline || "").trim().replace(/[.!]+$/, "").slice(0, 200);
+		const body = String(data.body || "").trim().slice(0, 1000);
+		if (!headline || !body) return fallback;
+		return { level: higher(LEVELS.includes(data.level) ? data.level : floor, floor), headline, body, assessedBy: result.model || "model" };
+	} catch (error) {
+		console.warn("[pulsepoint] assessment fell back to rules:", error.message);
+		return fallback;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+function parseJson(value) {
+	if (value && typeof value === "object") return value;
+	try {
+		return JSON.parse(value);
+	} catch {
+		return null;
+	}
+}
+
+/** The stored situation for one person, or a quiet default. */
+async function getSituation(profileId) {
+	const [rows] = await pool.query(
+		`SELECT level, headline, body, incidents, incident_key, assessed_by, started_at, updated_at
+		 FROM athena_incident_situation WHERE profile_id = ?`,
+		[profileId]
+	);
+	const row = rows[0];
+	if (!row) return { level: "none", headline: null, body: null, incidents: [], key: null };
+	return {
+		level: row.level,
+		headline: row.headline,
+		body: row.body,
+		incidents: parseJson(row.incidents) || [],
+		key: row.incident_key,
+		assessedBy: row.assessed_by,
+		startedAt: row.started_at,
+		updatedAt: row.updated_at,
+	};
+}
+
+/** The nearby calls as the clients see them. Street names, never raw codes. */
+function publicIncidents(hits) {
+	return hits.map(({ incident, nearest }) => ({
+		id: incident.id,
+		what: incident.what,
+		category: incident.category,
+		where: street(incident.address),
+		miles: Math.round(nearest.miles * 10) / 10,
+		place: placeName(nearest.place),
+		units: incident.units,
+		receivedAt: incident.receivedAt,
+		serious: incident.alertable,
+	}));
+}
+
+async function saveSituation(profileId, assessment, hits, key, previous) {
+	const continuing = previous.level !== "none" && previous.startedAt;
+	const startedAt = assessment.level === "none" ? null : continuing ? previous.startedAt : new Date();
+	await pool.query(
+		`INSERT INTO athena_incident_situation
+			(profile_id, level, headline, body, incidents, incident_key, assessed_by, started_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE level = VALUES(level), headline = VALUES(headline), body = VALUES(body),
+		   incidents = VALUES(incidents), incident_key = VALUES(incident_key),
+		   assessed_by = VALUES(assessed_by), started_at = VALUES(started_at)`,
+		[
+			profileId,
+			assessment.level,
+			assessment.headline,
+			assessment.body,
+			JSON.stringify(publicIncidents(hits)),
+			key,
+			assessment.assessedBy,
+			startedAt,
+		]
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Telling them
+// ---------------------------------------------------------------------------
+
 /** Incident ids already told to this person recently. */
 async function alreadyTold(profileId) {
 	const [rows] = await pool.query(
@@ -239,10 +466,7 @@ async function alreadyTold(profileId) {
 	);
 	const seen = new Set();
 	for (const row of rows) {
-		let facts = row.facts;
-		if (typeof facts === "string") {
-			try { facts = JSON.parse(facts); } catch { facts = null; }
-		}
+		const facts = parseJson(row.facts);
 		for (const id of facts?.incidentIds || []) seen.add(String(id));
 	}
 	return seen;
@@ -259,59 +483,93 @@ async function quietNow(profileId) {
 }
 
 /**
- * One profile: find what is new, write one nudge for the batch, push it.
- * `dryRun` computes and returns the message without writing or sending.
+ * Write one nudge and send it everywhere they can be reached: the in-app card
+ * (the row itself), push and text (push.sendToProfile fans out to both).
+ * Urgent goes out regardless of quiet hours; a lone watch-level call waits.
  */
-async function checkProfile(profileId, { dryRun = false, list = null } = {}) {
-	const hits = await nearbyFor(profileId, { list });
-	if (!hits.length) return { profileId, nearby: 0, told: 0 };
-
-	const seen = await alreadyTold(profileId);
-	const fresh = hits.filter((h) => !seen.has(h.incident.id));
-	if (!fresh.length) return { profileId, nearby: hits.length, told: 0 };
-
-	const text = wording(fresh);
-	const ids = fresh.map((h) => h.incident.id).sort();
-	const serious = fresh.some((h) => h.incident.alertable);
-	if (dryRun) return { profileId, nearby: hits.length, told: fresh.length, text, serious, dryRun: true };
-
+async function tell(profileId, { dedupeKey, text, urgent, facts }) {
 	const uuid = randomUUID();
-	const dedupeKey = `pp:${createHash("sha1").update(ids.join(",")).digest("hex")}`;
-	const facts = {
-		agency: AGENCY,
-		incidentIds: ids,
-		incidents: fresh.map(({ incident, nearest }) => ({
-			id: incident.id,
-			code: incident.code,
-			what: incident.what,
-			address: incident.address,
-			miles: Math.round(nearest.miles * 100) / 100,
-			place: nearest.place.name,
-			units: incident.units,
-			receivedAt: incident.receivedAt,
-			alertable: incident.alertable,
-		})),
-	};
 	const [result] = await pool.query(
 		`INSERT IGNORE INTO athena_nudge
 			(uuid, profile_id, trigger_id, dedupe_key, urgency, text, facts, expires_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND))`,
-		[uuid, profileId, TRIGGER_ID, dedupeKey, serious ? "high" : "normal", text, JSON.stringify(facts), NUDGE_TTL_S]
+		[
+			uuid,
+			profileId,
+			TRIGGER_ID,
+			dedupeKey.slice(0, 190),
+			urgent ? "high" : "normal",
+			text.slice(0, 500),
+			JSON.stringify(facts || {}),
+			NUDGE_TTL_S,
+		]
 	);
-	if (!result.affectedRows) return { profileId, nearby: hits.length, told: 0, raced: true };
-
-	// Quiet hours hold the push for routine calls; a PulsePoint-alertable one
-	// (fire, wreck, gas, wires down) goes through. The nudge is written either
-	// way, so the in-app card and Athena's awareness do not wait.
-	let pushed = { sent: 0, skipped: "held for quiet hours" };
-	if (serious || !(await quietNow(profileId))) {
-		const push = require("../push");
-		pushed = await push.deliverNudge(profileId, { uuid, text, trigger_id: TRIGGER_ID }).catch((error) => ({
-			sent: 0,
-			error: error.message,
-		}));
+	if (!result.affectedRows) return { written: false, pushed: { sent: 0, skipped: "already told" } };
+	if (!urgent && (await quietNow(profileId))) {
+		return { written: true, pushed: { sent: 0, skipped: "held for quiet hours" } };
 	}
-	return { profileId, nearby: hits.length, told: fresh.length, text, serious, pushed };
+	const push = require("../push");
+	const pushed = await push
+		.deliverNudge(profileId, { uuid, text: text.slice(0, 500), trigger_id: TRIGGER_ID })
+		.catch((error) => ({ sent: 0, error: error.message }));
+	return { written: true, pushed };
+}
+
+const keyOf = (ids) => createHash("sha1").update(ids.join(",")).digest("hex");
+
+/**
+ * One profile: re-judge the situation when the nearby calls change, tell them
+ * about any call they have not heard about, and say when it is over.
+ * `dryRun` computes everything and writes/sends nothing.
+ */
+async function checkProfile(profileId, { dryRun = false, list = null, countyActive = null, generate } = {}) {
+	const hits = await nearbyFor(profileId, { list });
+	const ids = hits.map((h) => h.incident.id).sort();
+	const key = ids.length ? keyOf(ids) : null;
+	const previous = await getSituation(profileId);
+
+	// Re-assess only when the set of calls changed: the model is asked once per
+	// development, not once every two minutes.
+	const changed = key !== previous.key;
+	const situation = changed ? { ...(await assess(hits, { countyActive, generate })), key } : previous;
+
+	const seen = await alreadyTold(profileId);
+	const fresh = hits.filter((h) => !seen.has(h.incident.id));
+	const urgent = situation.level === "urgent";
+	const out = { profileId, nearby: hits.length, level: situation.level, told: 0, headline: situation.headline };
+
+	if (dryRun) return { ...out, told: fresh.length, text: situation.body || null, dryRun: true };
+	if (changed) await saveSituation(profileId, situation, hits, key, previous);
+
+	if (fresh.length) {
+		const text = urgent ? `🚨 ${situation.headline}. ${situation.body}` : situation.body || wording(fresh);
+		const told = await tell(profileId, {
+			dedupeKey: `pp:${keyOf(fresh.map((h) => h.incident.id).sort())}`,
+			text,
+			urgent,
+			facts: {
+				agency: AGENCY,
+				level: situation.level,
+				incidentIds: fresh.map((h) => h.incident.id),
+				incidents: publicIncidents(fresh),
+			},
+		});
+		return { ...out, told: told.written ? fresh.length : 0, text, pushed: told.pushed };
+	}
+
+	// The all-clear. Someone who was told "urgent" deserves to hear when it is
+	// over, rather than being left to wonder whether silence means safe.
+	if (changed && !hits.length && previous.level === "urgent") {
+		const text = "All clear near home — the emergency calls I told you about have closed.";
+		const told = await tell(profileId, {
+			dedupeKey: `pp-clear:${previous.key}`,
+			text,
+			urgent: false,
+			facts: { agency: AGENCY, level: "none", clears: previous.key },
+		});
+		return { ...out, text, pushed: told.pushed, cleared: true };
+	}
+	return out;
 }
 
 /** Every profile with a saved place or a live phone position. */
@@ -328,50 +586,153 @@ async function watchedProfiles() {
 	return [...ids];
 }
 
+// ---------------------------------------------------------------------------
+// Feed health: a watcher that silently stops reading is worse than none,
+// because it is trusted.
+// ---------------------------------------------------------------------------
+
+/** Two-minute passes: three misses in a row is six minutes blind. */
+const OUTAGE_AFTER_FAILURES = 3;
+
+async function feedHealth() {
+	const [rows] = await pool.query(
+		"SELECT last_ok_at, last_error, consecutive_failures, outage_notified_at FROM athena_incident_feed WHERE id = 1"
+	);
+	const row = rows[0] || {};
+	const failures = Number(row.consecutive_failures) || 0;
+	return {
+		lastOkAt: row.last_ok_at || null,
+		lastError: row.last_error || null,
+		consecutiveFailures: failures,
+		down: failures >= OUTAGE_AFTER_FAILURES,
+		outageNotifiedAt: row.outage_notified_at || null,
+	};
+}
+
+async function recordFeedOk() {
+	await pool.query(
+		`INSERT INTO athena_incident_feed (id, last_ok_at, consecutive_failures, last_error, outage_notified_at)
+		 VALUES (1, NOW(), 0, NULL, NULL)
+		 ON DUPLICATE KEY UPDATE last_ok_at = NOW(), consecutive_failures = 0, last_error = NULL, outage_notified_at = NULL`
+	);
+}
+
+/** Record a miss; once it is an outage, tell every watched person — once per outage. */
+async function recordFeedFailure(error) {
+	await pool.query(
+		`INSERT INTO athena_incident_feed (id, consecutive_failures, last_error) VALUES (1, 1, ?)
+		 ON DUPLICATE KEY UPDATE consecutive_failures = consecutive_failures + 1, last_error = VALUES(last_error)`,
+		[String(error?.message || error).slice(0, 500)]
+	);
+	const health = await feedHealth();
+	if (!health.down || health.outageNotifiedAt) return health;
+	await pool.query("UPDATE athena_incident_feed SET outage_notified_at = NOW() WHERE id = 1");
+	for (const profileId of await watchedProfiles()) {
+		await tell(profileId, {
+			dedupeKey: `pp-outage:${Date.now()}`,
+			text: "Heads up: I can't read the county 911 dispatch board right now, so I can't warn you about emergencies nearby until it's back. I'll keep trying every two minutes.",
+			urgent: false,
+			facts: { agency: AGENCY, outage: true, error: health.lastError },
+		}).catch(() => undefined);
+	}
+	return health;
+}
+
 /** One pass over everyone. Never throws for one profile's failure. */
-async function runOnce({ dryRun = false } = {}) {
-	const list = await board();
+async function runOnce({ dryRun = false, generate } = {}) {
+	let list;
+	try {
+		list = await board();
+	} catch (error) {
+		if (!dryRun) await recordFeedFailure(error).catch(() => undefined);
+		throw error;
+	}
+	if (!dryRun) await recordFeedOk().catch(() => undefined);
+	const countyActive = list.filter((i) => i.status === "active").length;
 	const results = [];
 	for (const profileId of await watchedProfiles()) {
 		try {
-			results.push(await checkProfile(profileId, { dryRun, list }));
+			results.push(await checkProfile(profileId, { dryRun, list, countyActive, generate }));
 		} catch (error) {
 			results.push({ profileId, error: error.message });
 		}
 	}
-	return { agency: AGENCY, active: list.filter((i) => i.status === "active").length, results };
+	return { agency: AGENCY, active: countyActive, results };
+}
+
+/** For the in-app banner: the situation plus whether the feed can be trusted. */
+async function alertFor(profileId) {
+	const [situation, health] = await Promise.all([getSituation(profileId), feedHealth().catch(() => null)]);
+	return {
+		level: situation.level,
+		headline: situation.headline,
+		body: situation.body,
+		incidents: situation.incidents,
+		key: situation.key,
+		startedAt: situation.startedAt || null,
+		updatedAt: situation.updatedAt || null,
+		assessedBy: situation.assessedBy || null,
+		feed: health
+			? { ok: !health.down, lastOkAt: health.lastOkAt, error: health.down ? health.lastError : null }
+			: { ok: false, lastOkAt: null, error: "unknown" },
+	};
 }
 
 /**
- * For Athena's prompt: what is happening near them right now, so "what are
- * all the sirens?" gets an answer and she can raise it herself mid-chat.
- * Short timeout — a slow PulsePoint must never slow a reply.
+ * For Athena's prompt. Read from the stored situation — no fetch, no model —
+ * so it costs one indexed query per message. When it is urgent it is written
+ * to take over the conversation, because the owner asked for exactly that:
+ * "it should be all Athena wants to talk about".
  */
 async function promptBlock(profileId) {
 	if (!profileId) return null;
-	const places = await placesFor(profileId);
-	if (!places.length) return null;
-	const hits = await Promise.race([
-		nearbyFor(profileId, { places }),
-		new Promise((resolve) => setTimeout(() => resolve(null), 2500)),
-	]).catch(() => null);
-	if (!hits || !hits.length) return null;
-	return [
-		"# Emergency calls near them right now",
-		"",
-		"Live from the county 911 dispatch board (PulsePoint, Iredell County).",
-		"If they ask about sirens, the storm, road closures or anything happening",
-		"nearby, this is what you know. If they have not heard about it and it",
-		"could affect them (a road they use, near home), mention it briefly.",
-		"Do not speculate beyond what is listed.",
-		"",
-		...hits.slice(0, 10).map((h) => {
-			const at = h.incident.receivedAt
-				? ` (dispatched ${Math.max(0, Math.round((Date.now() - h.incident.receivedAt.getTime()) / 60000))} min ago)`
-				: "";
-			return `- ${line(h)}${at}`;
-		}),
-	].join("\n");
+	const [situation, health] = await Promise.all([getSituation(profileId), feedHealth().catch(() => null)]);
+	const lines = [];
+	if (health?.down) {
+		lines.push(
+			"# You cannot see the county 911 dispatch board right now",
+			"",
+			"Your emergency feed has been failing, so you cannot currently warn them about emergencies",
+			"nearby. If they ask about sirens or anything happening near home, say so plainly.",
+			""
+		);
+	}
+	if (situation.level === "none" || !situation.incidents.length) return lines.length ? lines.join("\n") : null;
+
+	const list = situation.incidents.slice(0, 10).map((i) => {
+		const mins = i.receivedAt ? minutesAgo(new Date(i.receivedAt)) : null;
+		const ago = mins === null ? "" : `, dispatched ${mins} min ago`;
+		const units = i.units > 1 ? `, ${i.units} units` : "";
+		return `- ${i.what} — ${i.where}, ${i.miles} miles from ${i.place}${units}${ago}${i.serious ? " [serious]" : ""}`;
+	});
+	if (situation.level === "urgent") {
+		lines.push(
+			"# URGENT — ongoing emergencies near their home",
+			"",
+			"This outranks everything else in this conversation.",
+			`Your assessment: ${situation.headline}. ${situation.body}`,
+			"",
+			"- If you have not already raised this in this conversation, OPEN your reply with it,",
+			"  whatever they asked — then answer their question.",
+			"- Keep it at the front until they have acknowledged it. After that, answer them normally",
+			"  but mention any change (new calls, calls closing).",
+			"- Be specific and calm: what, where, how close, one practical suggestion.",
+			"- Only what is listed below. Do not invent injuries, causes or closures.",
+			"",
+			"Live from the county dispatch board (PulsePoint, Iredell County):",
+			...list
+		);
+	} else {
+		lines.push(
+			"# An emergency call near them",
+			"",
+			"From the county 911 dispatch board. If they have not heard about it, mention it briefly;",
+			"if they ask about sirens or anything nearby, this is what you know. Do not speculate.",
+			"",
+			...list
+		);
+	}
+	return lines.join("\n");
 }
 
 module.exports = {
@@ -379,6 +740,12 @@ module.exports = {
 	runOnce,
 	checkProfile,
 	nearbyFor,
+	assess,
+	checkAnswer,
+	floorLevel,
+	alertFor,
+	getSituation,
+	feedHealth,
 	promptBlock,
 	placesFor,
 	listPlaces,
