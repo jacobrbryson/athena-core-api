@@ -181,7 +181,10 @@ async function initiativeMetrics() {
 				-- that was pushed reached a lock screen even if the app was
 				-- never opened, so counting it as unseen would understate her
 				-- reach and teach the review the wrong lesson about TTLs.
-				COALESCE(SUM(status = 'expired' AND delivered_at IS NULL AND pushed_at IS NULL), 0) AS unseen
+				COALESCE(SUM(status = 'expired' AND delivered_at IS NULL AND pushed_at IS NULL), 0) AS unseen,
+				-- The other half of expired: it reached someone and got silence.
+				-- Same reading as the nudgeAppraisal sweep's "ignored".
+				COALESCE(SUM(status = 'expired' AND (delivered_at IS NOT NULL OR pushed_at IS NOT NULL)), 0) AS ignored
 			 FROM athena_nudge
 			 WHERE created_at >= NOW() - INTERVAL 7 DAY
 			 GROUP BY trigger_id;`
@@ -228,6 +231,7 @@ async function initiativeMetrics() {
 				engaged,
 				dismissed,
 				unseen: Number(r.unseen),
+				ignored: Number(r.ignored),
 				mutedBy: mutedBy[r.trigger_id] || 0,
 				learned: learnedBy[r.trigger_id] || null,
 				// null, not 0: "nobody has reacted yet" and "everybody hated it"

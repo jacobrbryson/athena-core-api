@@ -13,10 +13,15 @@ jest.mock("../llm", () => ({
 
 const llm = require("../llm");
 const { summarizeCalls } = require("./metrics");
-const { ruleFindings, fallbackPlan, renderMarkdown } = require("./plan");
+const { ruleFindings, fallbackPlan, renderMarkdown, writePlan, evalRecord, flakyCases, thinSamples } = require("./plan");
 const { runEvals, DONT_REMEMBER } = require("./evals");
 
 const row = (over) => ({ task: "chat", endpoint_id: "gemini", tier: "frontier", outcome: "ok", latency_ms: 1000, attempt: 0, ...over });
+// One night's evals for gemini, failing the named cases.
+const night = (failed) => ({
+	cases: [{ id: "admits-gap" }, { id: "uses-memory" }],
+	endpoints: { gemini: { tier: "frontier", passRate: 1, failures: failed.map((c) => ({ case: c, problem: "x" })) } },
+});
 
 describe("summarizeCalls", () => {
 	// A smoke test after a deploy is a real call that answered a real request,
@@ -164,6 +169,105 @@ describe("ruleFindings", () => {
 		});
 		expect(f.find((x) => x.area === "memory").title).toMatch(/no new memories/);
 	});
+
+	// 09-22: 6 nudges appraised, 6 ignored, 0 engaged — acceptance was null
+	// (nobody engaged or dismissed), so no rule fired and the plan called
+	// initiative "improved".
+	const nudges = (byTrigger) => ({
+		models: { last24h: healthyModels },
+		initiative: { available: true, enabledProfiles: 1, sent7d: 6, byTrigger },
+	});
+	const trig = (over) => ({ sent: 0, engaged: 0, dismissed: 0, unseen: 0, ignored: 0, mutedBy: 0, learned: null, acceptance: null, ...over });
+
+	test("nudges that reached people and got silence are flagged", () => {
+		const f = ruleFindings({
+			metrics: nudges({ "calendar-soon": trig({ sent: 4, ignored: 4 }), "news-pick": trig({ sent: 2, ignored: 2 }) }),
+			evals: {},
+			config: { orcwoodCount: 1 },
+		});
+		const silent = f.find((x) => x.area === "initiative");
+		expect(silent).toMatchObject({ severity: "high", title: "100% of nudges people saw got no response" });
+		expect(silent.evidence).toMatch(/6\/6 ignored, 0 engaged.*calendar-soon 4, news-pick 2/);
+	});
+
+	test("a few ignored nudges among engaged ones are not flagged", () => {
+		const f = ruleFindings({
+			metrics: nudges({ a: trig({ sent: 6, ignored: 2, engaged: 4, acceptance: 1 }) }),
+			evals: {},
+			config: { orcwoodCount: 1 },
+		});
+		expect(f.find((x) => x.area === "initiative")).toBeUndefined();
+	});
+
+	// admits-gap failed 09-18, passed four nights, failed 09-22 — graded
+	// "improved" in between and treated as a regression after.
+
+	test("a failure with passes in its history is marked intermittent context", () => {
+		const f = ruleFindings({
+			metrics: { models: { last24h: healthyModels } },
+			evals: night(["admits-gap"]),
+			evalHistory: [[], [], [], ["admits-gap"]].map((x) => ({ evals: night(x) })),
+			config: { orcwoodCount: 1 },
+		});
+		expect(f.find((x) => x.area === "evals")).toMatchObject({
+			severity: "low",
+			title: "gemini admits-gap is intermittent, not a regression",
+			evidence: expect.stringMatching(/failed 2 of the last 5 nights/),
+		});
+	});
+
+	test("a case that fails every night is not called intermittent", () => {
+		const f = ruleFindings({
+			metrics: { models: { last24h: healthyModels } },
+			evals: night(["admits-gap"]),
+			evalHistory: [{ evals: night(["admits-gap"]) }, { evals: night(["admits-gap"]) }],
+			config: { orcwoodCount: 1 },
+		});
+		expect(f.find((x) => x.area === "evals")).toBeUndefined();
+	});
+});
+
+describe("evalRecord / thinSamples", () => {
+	test("counts runs and failures per endpoint and case", () => {
+		const rec = evalRecord(
+			{ cases: [{ id: "a" }, { id: "b" }], endpoints: { g: { failures: [{ case: "a" }] } } },
+			[{ evals: { cases: [{ id: "a" }, { id: "b" }], endpoints: { g: { failures: [] } } } }, { evals: { skipped: true, endpoints: {} } }]
+		);
+		expect(rec["g:a"]).toEqual({ endpoint: "g", case: "a", ran: 2, failed: 1 });
+		expect(rec["g:b"]).toEqual({ endpoint: "g", case: "b", ran: 2, failed: 0 });
+		expect(flakyCases(rec).map((x) => x.case)).toEqual(["a"]);
+	});
+
+	test("lists tasks and endpoints below the sample-size bar", () => {
+		const thin = thinSamples({
+			models: { last24h: { available: true, byTask: { json: { calls: 31 }, chat: { calls: 1 } }, byEndpoint: { "orcwood-dev": { calls: 4 }, gemini: { calls: 28 } } } },
+		});
+		expect(thin).toEqual(["task chat (1 calls)", "endpoint orcwood-dev (4 calls)"]);
+	});
+});
+
+describe("writePlan", () => {
+	test("gives the model context findings, thin samples and intermittent evals separately", async () => {
+		llm.generateJson.mockResolvedValue({ data: { summary: "s", plan: [] }, endpointId: "gemini", tier: "frontier" });
+		await writePlan({
+			date: "2026-09-22",
+			metrics: { models: { last24h: { available: true, byTask: { json: { calls: 31 } }, byEndpoint: { "orcwood-dev": { calls: 4 } } } } },
+			evals: night(["admits-gap"]),
+			evalHistory: [{ evals: night([]) }],
+			findings: [
+				{ severity: "medium", area: "models", title: "json invalid", evidence: "2/31" },
+				{ severity: "low", area: "localization", title: "Orcwood served 6% of calls, but this job cannot reach those endpoints", evidence: "x" },
+			],
+			previousPlan: null,
+		});
+		const prompt = llm.generateJson.mock.calls.at(-1)[0].contents;
+		const [actionable, rest] = prompt.split("Context only (not plan items):");
+		expect(actionable).toMatch(/json invalid/);
+		expect(actionable).not.toMatch(/Orcwood served 6%/);
+		expect(rest).toMatch(/Orcwood served 6%/);
+		expect(prompt).toMatch(/Too few calls to judge: endpoint orcwood-dev \(4 calls\)/);
+		expect(prompt).toMatch(/Intermittent evals over recent nights: gemini admits-gap: failed 1\/2 nights/);
+	});
 });
 
 describe("runEvals", () => {
@@ -233,5 +337,13 @@ describe("report", () => {
 			maintenance: {},
 		});
 		expect(md).toMatch(/3 smoke-test calls excluded/);
+	});
+
+	test("the rules-only plan never turns a context finding into work", () => {
+		const plan = fallbackPlan([
+			{ severity: "medium", area: "models", title: "json invalid", evidence: "x" },
+			{ severity: "low", area: "localization", title: "Orcwood served 6% of calls", evidence: "x" },
+		]);
+		expect(plan.plan.map((p) => p.title)).toEqual(["json invalid"]);
 	});
 });

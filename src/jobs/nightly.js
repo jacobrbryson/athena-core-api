@@ -130,6 +130,19 @@ async function previousPlan() {
 	}
 }
 
+/** Recent nights' evals, so one night's failure can be read against its history. */
+async function recentEvals(before, nights = 7) {
+	try {
+		const [rows] = await pool.query(
+			`SELECT report_date, evals FROM self_review_report WHERE report_date < ? ORDER BY report_date DESC LIMIT ?;`,
+			[before, nights]
+		);
+		return rows.map((r) => ({ date: r.report_date, evals: typeof r.evals === "string" ? JSON.parse(r.evals) : r.evals }));
+	} catch {
+		return [];
+	}
+}
+
 async function review({ dryRun, skipEvals, out }, maintenanceResults) {
 	const date = new Date().toLocaleDateString("en-CA", { timeZone: DEFAULT_TZ }); // YYYY-MM-DD
 	const status = llm.status();
@@ -142,13 +155,14 @@ async function review({ dryRun, skipEvals, out }, maintenanceResults) {
 		evals = await runEvals().catch((err) => ({ error: err.message, endpoints: {} }));
 	}
 
-	const findings = ruleFindings({ metrics, evals, config: { orcwoodCount: status.orcwood.length } });
+	const evalHistory = await recentEvals(date);
+	const findings = ruleFindings({ metrics, evals, evalHistory, config: { orcwoodCount: status.orcwood.length } });
 	const prior = await previousPlan();
 
 	log("writing plan");
 	let plan;
 	try {
-		plan = await writePlan({ metrics, evals, findings, previousPlan: prior, date });
+		plan = await writePlan({ metrics, evals, findings, previousPlan: prior, date, evalHistory });
 	} catch (err) {
 		log("no model could write the plan — using rules only:", err.message);
 		plan = fallbackPlan(findings);

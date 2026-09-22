@@ -28,10 +28,63 @@ const THRESHOLDS = {
 	initiativeMinReactions: 5,
 	// Nudges that expired before anyone could see them: budget spent on nothing.
 	initiativeUnseen: 0.5,
+	// Nudges people saw (or got pushed) and let expire without a word.
+	initiativeIgnored: 0.8,
+	// A rate over fewer calls than this is an anecdote. "50% invalid" once
+	// meant 2 of 4 calls and still became the night's top plan item.
+	minCallsToJudge: 20,
 };
 
-/** Rule-based findings: [{ severity, area, title, evidence }]. */
-function ruleFindings({ metrics, evals, config }) {
+/**
+ * Per-case eval record across tonight plus recent nights:
+ * { "endpoint:case": { endpoint, case, ran, failed } }.
+ *
+ * One night's eval is a single sample of a sampled model. admits-gap failed
+ * on 09-18, passed four nights, failed on 09-22 — and was graded "improved"
+ * and then treated as a regression. The record lets a failure be read against
+ * its own history.
+ */
+function evalRecord(evals, history = []) {
+	const rec = {};
+	for (const e of [evals, ...history.map((h) => h.evals)]) {
+		if (!e?.endpoints) continue;
+		for (const [endpoint, r] of Object.entries(e.endpoints)) {
+			const failed = new Set((r.failures || []).map((f) => f.case));
+			// Older rows may lack `cases`; then only the failures are known.
+			const ran = e.cases?.length ? e.cases.map((c) => c.id) : [...failed];
+			for (const c of ran) {
+				const k = `${endpoint}:${c}`;
+				const x = (rec[k] ||= { endpoint, case: c, ran: 0, failed: 0 });
+				x.ran += 1;
+				if (failed.has(c)) x.failed += 1;
+			}
+		}
+	}
+	return rec;
+}
+
+/** Cases that both passed and failed in the window — noise, not a trend. */
+function flakyCases(record) {
+	return Object.values(record).filter((x) => x.failed > 0 && x.failed < x.ran);
+}
+
+/** Tasks and endpoints with too few calls tonight for their rates to mean anything. */
+function thinSamples(metrics) {
+	const m24 = metrics.models?.last24h;
+	if (!m24?.available) return [];
+	const thin = [];
+	for (const [task, t] of Object.entries(m24.byTask)) if (t.calls < THRESHOLDS.minCallsToJudge) thin.push(`task ${task} (${t.calls} calls)`);
+	for (const [id, e] of Object.entries(m24.byEndpoint)) if (e.calls < THRESHOLDS.minCallsToJudge) thin.push(`endpoint ${id} (${e.calls} calls)`);
+	return thin;
+}
+
+/**
+ * Rule-based findings: [{ severity, area, title, evidence }].
+ *
+ * Severity "low" is context, not work: it explains the tables (why a row is
+ * missing, why a failure is noise) and never becomes a plan item.
+ */
+function ruleFindings({ metrics, evals, config, evalHistory = [] }) {
 	const out = [];
 	const add = (severity, area, title, evidence) => out.push({ severity, area, title, evidence });
 	const m24 = metrics.models?.last24h;
@@ -106,6 +159,27 @@ function ruleFindings({ metrics, evals, config }) {
 				add("medium", "initiative", `${id}: ${((t.unseen / t.sent) * 100).toFixed(0)}% of these expired before anyone saw them`, `${t.unseen}/${t.sent} in 7 days — the TTL is shorter than people's habits`);
 			}
 		}
+		// Reached people and got silence. Acceptance above only counts
+		// engaged/dismissed, so a week where every nudge was seen and let expire
+		// has acceptance null and produced no finding at all — the 09-22 report
+		// had 6 appraised, 6 ignored, 0 engaged and called initiative "improved".
+		let reached = 0;
+		let ignored = 0;
+		let engaged = 0;
+		for (const t of Object.values(init.byTrigger)) {
+			reached += (t.ignored || 0) + t.engaged + t.dismissed;
+			ignored += t.ignored || 0;
+			engaged += t.engaged;
+		}
+		if (reached >= THRESHOLDS.initiativeMinReactions && ignored / reached >= THRESHOLDS.initiativeIgnored) {
+			const worst = Object.entries(init.byTrigger)
+				.filter(([, t]) => t.ignored > 0)
+				.sort(([, a], [, b]) => b.ignored - a.ignored)
+				.slice(0, 3)
+				.map(([id, t]) => `${id} ${t.ignored}`)
+				.join(", ");
+			add("high", "initiative", `${((ignored / reached) * 100).toFixed(0)}% of nudges people saw got no response`, `${ignored}/${reached} ignored, ${engaged} engaged over 7 days (${worst}) — she is speaking first but not being heard; fix what she says or when, before sending more`);
+		}
 		if (init.sent7d === 0) {
 			add("opportunity", "initiative", "Initiative is switched on but Athena has not spoken first all week", "either nothing triggered, or the budget is too tight to ever fire");
 		}
@@ -121,6 +195,19 @@ function ruleFindings({ metrics, evals, config }) {
 		} else if (r.passRate < THRESHOLDS.demoteLocalPassRate) {
 			const worst = r.failures.slice(0, 3).map((f) => `${f.case}: ${f.problem}`).join("; ");
 			add("high", "localization", `${id} passed only ${(r.passRate * 100).toFixed(0)}% of capability evals`, worst || "see eval failures");
+		}
+	}
+	// A failed case with passes in its recent history is sampling noise; say so
+	// before the plan calls it a regression (or tomorrow's pass an improvement).
+	if (evalHistory.length) {
+		const record = evalRecord(evals, evalHistory);
+		for (const [endpoint, r] of Object.entries(evals?.endpoints || {})) {
+			for (const f of r.failures || []) {
+				const x = record[`${endpoint}:${f.case}`];
+				if (x && x.failed < x.ran) {
+					add("low", "evals", `${endpoint} ${f.case} is intermittent, not a regression`, `failed ${x.failed} of the last ${x.ran} nights — judge it on the rate, not tonight`);
+				}
+			}
 		}
 	}
 	// Is anything actually running locally? Answer from the call log, not from
@@ -142,16 +229,19 @@ function ruleFindings({ metrics, evals, config }) {
 	}
 	if (m24?.available) {
 		if (servedTotal >= THRESHOLDS.localMinCalls && localTotal === 0) {
+			// Not "set LLM_ORCWOOD_ENDPOINTS here": this job can't reach the house
+			// LAN, so that advice fixes nothing. The question is why production
+			// stopped routing locally.
 			const why = config.orcwoodCount
 				? `${config.orcwoodCount} endpoint(s) configured but none of them answered`
-				: "no endpoints are configured here either — set LLM_ORCWOOD_ENDPOINTS";
+				: "check Orcwood's health and the API service's route to it";
 			add("opportunity", "localization", "Everything ran on the frontier in the last 24h", `${servedTotal} calls served, none by Orcwood or the device; ${why}`);
 		} else if (localTotal > 0 && !config.orcwoodCount) {
 			// Orcwood is serving real traffic, just not from where the review
 			// runs — which is also why the eval suite above only ever tested the
 			// frontier. Worth saying plainly, so the missing rows in the
 			// abilities table don't read as a local model that failed.
-			add("low", "localization", `Orcwood served ${((localTotal / servedTotal) * 100).toFixed(0)}% of calls, but this job cannot reach those endpoints`, "LLM_ORCWOOD_ENDPOINTS is unset where the review runs, so capability evals skipped every local model");
+			add("low", "localization", `Orcwood served ${((localTotal / servedTotal) * 100).toFixed(0)}% of calls, but this job cannot reach those endpoints`, "the review runs in Cloud Run, off the house LAN, so capability evals only test the frontier — expected, nothing to fix");
 		}
 	} else if (!config.orcwoodCount) {
 		add("opportunity", "localization", "No Orcwood endpoints configured — everything runs on the frontier", "set LLM_ORCWOOD_ENDPOINTS to start localizing");
@@ -197,7 +287,13 @@ const PLAN_SCHEMA = {
 	required: ["summary", "wins", "regressions", "plan", "previousPlanStatus", "questionsForOwner"],
 };
 
-async function writePlan({ metrics, evals, findings, previousPlan, date }) {
+async function writePlan({ metrics, evals, findings, previousPlan, date, evalHistory = [] }) {
+	// Split so the model can't mistake context for work: a "low" finding is
+	// there to explain a table, and it topped seven straight plans anyway.
+	const actionable = findings.filter((f) => f.severity !== "low");
+	const context = findings.filter((f) => f.severity === "low");
+	const thin = thinSamples(metrics);
+	const flaky = flakyCases(evalRecord(evals, evalHistory)).map((x) => `${x.endpoint} ${x.case}: failed ${x.failed}/${x.ran} nights`);
 	const prompt = `${require("../../security/mission").CORE_MISSION}
 
 You are Athena, reviewing your own performance and abilities for ${date}. Be an engineer, not a cheerleader: specific, evidence-based, candid.
@@ -208,11 +304,26 @@ You run as a companion app with long-term memory, a tiered model router (device 
 3. Run as much as possible locally (Orcwood/device) without losing quality; frontier is the last resort.
 4. Protect children's privacy absolutely.
 
-Write a plan of at most 5 concrete improvements for the next few days, highest value first. Each item: what to change (specific enough for an engineer to start — a module, prompt, threshold, model swap, or config), why, the evidence from the data below, and how tomorrow's review will measure it. Prefer small, testable changes. Don't propose anything the data doesn't support; if the data is thin, the plan can be short and questionsForOwner can ask for what's missing.
-For previousPlanStatus, judge each of yesterday's items against tonight's numbers.
+Write a plan of at most 5 concrete improvements for the next few days, highest value first. Each item: what to change (specific enough for an engineer to start — a module, prompt, threshold, model swap, or config), why, the evidence from the data below, and how tomorrow's review will measure it. Prefer small, testable changes. Don't propose anything the data doesn't support; if the data is thin, the plan can be short and questionsForOwner can ask for what's missing. An empty plan is a valid answer on a quiet night.
 
-Rule-based findings:
-${JSON.stringify(findings, null, 1)}
+Rules for the plan — these override your instincts:
+- Plan items come only from "Actionable findings" or from a pattern in the metrics that clears the sample-size rule. "Context only" findings explain the tables; never turn one into a plan item or a question.
+- Sample size: never cite or act on a rate from fewer than ${THRESHOLDS.minCallsToJudge} calls. The tasks/endpoints below that bar tonight are listed under "Too few calls to judge"; quote their raw counts if you mention them at all, never a percentage.
+- Intermittent evals (listed below) pass some nights and fail others. Tonight's result for them is neither a regression nor an improvement; mention them only if the failure rate itself is the problem.
+- Don't repeat an item from yesterday's plan unless tonight's data gives new evidence or a more specific change. If it needs something only the owner can provide, drop it from the plan and ask once in questionsForOwner.
+- Every number you write must appear in the data below, with the same denominator. Don't restate or re-add counts.
+
+For previousPlanStatus, judge each of yesterday's items against tonight's numbers: "improved" or "worse" only when the metric the item named moved beyond noise on at least ${THRESHOLDS.minCallsToJudge} calls; "unchanged" when nothing relevant moved (including when nobody acted on it); "unknown" when the sample is too small or the item was about an intermittent eval.
+
+Actionable findings:
+${JSON.stringify(actionable, null, 1)}
+
+Context only (not plan items):
+${JSON.stringify(context, null, 1)}
+
+Too few calls to judge: ${thin.length ? thin.join("; ") : "(none)"}
+
+Intermittent evals over recent nights: ${flaky.length ? flaky.join("; ") : "(none)"}
 
 Metrics (last 24h, with a 7-day baseline for model calls):
 ${JSON.stringify(metrics, null, 1).slice(0, 12000)}
@@ -245,7 +356,7 @@ function fallbackPlan(findings) {
 		wins: [],
 		regressions: findings.filter((f) => f.severity === "high").map((f) => f.title),
 		previousPlanStatus: [],
-		plan: findings.slice(0, 5).map((f) => ({
+		plan: findings.filter((f) => f.severity !== "low").slice(0, 5).map((f) => ({
 			title: f.title,
 			area: f.area,
 			why: f.evidence,
@@ -341,4 +452,4 @@ function renderMarkdown({ date, metrics, evals, findings, plan, maintenance }) {
 	return L.join("\n");
 }
 
-module.exports = { ruleFindings, writePlan, fallbackPlan, renderMarkdown, THRESHOLDS, PLAN_SCHEMA };
+module.exports = { ruleFindings, writePlan, fallbackPlan, renderMarkdown, evalRecord, flakyCases, thinSamples, THRESHOLDS, PLAN_SCHEMA };
