@@ -557,6 +557,20 @@ async function checkProfile(profileId, { dryRun = false, list = null, countyActi
 		return { ...out, told: told.written ? fresh.length : 0, text, pushed: told.pushed };
 	}
 
+	// Escalation without a new call: calls they already heard about, one at a
+	// time, now add up to something urgent (a second call joined, or the model
+	// read the pattern). That is news in itself and gets said as such.
+	if (changed && urgent && previous.level !== "urgent") {
+		const text = `🚨 ${situation.headline}. ${situation.body}`;
+		const told = await tell(profileId, {
+			dedupeKey: `pp-escalate:${key}`,
+			text,
+			urgent: true,
+			facts: { agency: AGENCY, level: "urgent", escalation: true, incidentIds: [], incidents: publicIncidents(hits) },
+		});
+		return { ...out, told: told.written ? hits.length : 0, text, pushed: told.pushed, escalated: true };
+	}
+
 	// The all-clear. Someone who was told "urgent" deserves to hear when it is
 	// over, rather than being left to wonder whether silence means safe.
 	if (changed && !hits.length && previous.level === "urgent") {
