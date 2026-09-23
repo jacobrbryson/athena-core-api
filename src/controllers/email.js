@@ -15,6 +15,7 @@
 const { requireAdultActor } = require("../helpers/actor");
 const emailTriage = require("../services/emailTriage");
 const actions = require("../services/actions");
+const gmail = require("../services/connectors/gmail");
 
 /** Map a service error onto a status, defaulting to 500 rather than 400. */
 function fail(res, err, fallbackMessage) {
@@ -47,13 +48,28 @@ async function list(req, res) {
 	}
 }
 
+/**
+ * The body isn't stored in email_triage — only what the extraction pass
+ * needed lives at rest there — so it's read live from Gmail each time the
+ * detail modal opens. A failure here (needs_reauth, the message was since
+ * deleted in Gmail, ...) must not hide the rest of the detail the person
+ * came here for, so it's reported alongside the row rather than failing it.
+ */
 async function detail(req, res) {
 	const actor = await requireAdultActor(req, res);
 	if (!actor) return;
 	try {
 		const row = await emailTriage.getByUuid(actor.profileId, req.params.uuid);
 		if (!row) return res.status(404).json({ success: false, message: "That email could not be found" });
-		return res.json(row);
+		let body = null;
+		let bodyError = null;
+		try {
+			const message = await gmail.getMessage(actor.profileId, row.gmail_message_id, { format: "full" });
+			body = gmail.plainTextBody(message) || null;
+		} catch (err) {
+			bodyError = err.message || "Could not load the email body";
+		}
+		return res.json({ ...row, body, bodyError });
 	} catch (err) {
 		return fail(res, err, "Failed to load that email");
 	}
