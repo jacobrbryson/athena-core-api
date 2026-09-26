@@ -27,8 +27,12 @@ async function generateSpeech(req, res) {
 		});
 	}
 
+	// `style: "sing"` sings the text as lyrics (the chat reply's `sing` flag).
+	// Same access rule and length cap as speech.
+	const sing = req.body?.style === "sing";
+
 	try {
-		const audio = await geminiService.generateSpeech(text);
+		const audio = await geminiService.generateSpeech(text, { sing });
 		res.set("Cache-Control", "no-store");
 		return res.json(audio);
 	} catch (error) {

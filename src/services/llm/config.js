@@ -56,6 +56,9 @@ const TASKS = {
 	dream: { pinned: null },
 	tools: { pinned: "frontier" }, // Gemini function-calling format
 	tts: { pinned: "frontier" }, // Gemini neural voice
+	// Singing: the same voice on the Pro TTS model, which holds pitch and
+	// sustains notes where Flash mostly reads in rhythm. See speech() in router.js.
+	sing: { pinned: "frontier" },
 	// Image generation. Frontier-only: no local tier does it, and the output is
 	// binary, so it never goes through generate() — see image() in router.js.
 	image: { pinned: "frontier" },
@@ -171,6 +174,7 @@ function loadConfig() {
 				tools: GEMINI_CHAT_MODEL,
 				embed: process.env.GEMINI_EMBED_MODEL || "gemini-embedding-001",
 				tts: process.env.GEMINI_TTS_MODEL || "gemini-2.5-flash-preview-tts",
+				sing: process.env.GEMINI_SING_MODEL || "gemini-2.5-pro-preview-tts",
 			},
 			timeoutMs: 60000,
 			priority: 0,

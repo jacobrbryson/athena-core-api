@@ -451,6 +451,10 @@ async function processAiResponse(session, message, clients, ctx = {}) {
         is_human: false,
         text: parsedResponse.response,
         created_at: Date.now(),
+        // Tells the client to request sung rather than spoken audio. Live
+        // socket only: it isn't stored, so a reply fetched by polling is
+        // spoken.
+        ...(parsedResponse.sing === true && !fellBack ? { sung: true } : {}),
       },
     });
 

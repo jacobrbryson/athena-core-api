@@ -1,5 +1,10 @@
 # Capability ledger
 
+- 2026-09-26 — Athena sings: ask her for a song and she sings it in her own
+  voice with a real melody, whether a public-domain song or a short original.
+  Voice only, no backing music; the lyrics show at once, she says a quick warm-up line, and she starts singing about fifteen seconds later —
+  `singing.md` (status: partial)
+
 - 2026-09-26 — Athena dreams: each night she reorganizes remembered facts
   into tables and views of her own design in her own database (people, places,
   relationships), reads them back in conversation, and asks when something

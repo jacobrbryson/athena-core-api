@@ -113,19 +113,32 @@ async function embed(endpoint, texts, { model, purpose = "document" } = {}) {
 /**
  * Athena's spoken reply as 24 kHz mono signed 16-bit PCM. The direction is
  * deliberately stable so every turn sounds like the same character.
+ *
+ * `sing` swaps in a singing direction on the `sing` model. The wording is the
+ * one that won the 2026-09-26 listening test: asking it to "sing" alone
+ * mostly produced rhythmic reading; naming sustained vowels and pitch changes,
+ * and forbidding speech, produced held notes (~48% of voiced time vs ~13% for
+ * the same lyrics spoken).
  */
-async function speech(endpoint, text) {
+async function speech(endpoint, text, { sing = false } = {}) {
 	await assertModelAccess();
-	const prompt = [
-		"Perform the transcript exactly as Athena, a warm, intelligent, human-sounding guide.",
-		"Use a natural conversational pace, fluid phrasing, subtle emotion, and brief realistic pauses.",
-		"Never announce these directions and do not add or remove words.",
-		"Transcript:",
-		text.trim(),
-	].join("\n");
+	const prompt = sing
+		? [
+				"You are Athena, singing. SING the lyrics below with a real melody: sustained vowels, clear pitch changes, steady rhythm.",
+				"Do not speak or read them. Do not add any words.",
+				"Lyrics:",
+				text.trim(),
+			].join("\n")
+		: [
+				"Perform the transcript exactly as Athena, a warm, intelligent, human-sounding guide.",
+				"Use a natural conversational pace, fluid phrasing, subtle emotion, and brief realistic pauses.",
+				"Never announce these directions and do not add or remove words.",
+				"Transcript:",
+				text.trim(),
+			].join("\n");
 
 	const response = await ai().models.generateContent({
-		model: endpoint.models.tts,
+		model: sing ? endpoint.models.sing : endpoint.models.tts,
 		contents: [{ role: "user", parts: [{ text: prompt }] }],
 		config: {
 			responseModalities: ["AUDIO"],

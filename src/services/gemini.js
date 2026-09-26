@@ -33,13 +33,16 @@ async function generateContentRaw(contents, config = {}) {
 	return llm.raw(contents, config);
 }
 
-/** Athena's neural voice as 24 kHz mono 16-bit PCM (frontier only). */
-async function generateSpeech(text) {
+/**
+ * Athena's neural voice as 24 kHz mono 16-bit PCM (frontier only).
+ * `{ sing: true }` treats the text as lyrics and sings them.
+ */
+async function generateSpeech(text, { sing = false } = {}) {
 	if (typeof text !== "string" || !text.trim()) {
 		throw new Error("Speech text is required.");
 	}
 	try {
-		return await llm.speech(text);
+		return await llm.speech(text, { sing });
 	} catch (error) {
 		console.error("Error generating speech:", error.message);
 		throw new Error("Failed to generate Athena speech.");

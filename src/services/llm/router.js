@@ -236,18 +236,20 @@ async function image(prompt, opts = {}) {
 	throw new NoModelAvailableError("image", attempts);
 }
 
-async function speech(text) {
-	const endpoint = config.frontier.find((e) => e.models?.tts);
-	if (!endpoint) throw new NoModelAvailableError("tts", []);
+/** Spoken audio; `{ sing: true }` sings the text instead, on the `sing` model. */
+async function speech(text, { sing = false } = {}) {
+	const task = sing ? "sing" : "tts";
+	const endpoint = config.frontier.find((e) => e.models?.[task]);
+	if (!endpoint) throw new NoModelAvailableError(task, []);
 	const started = Date.now();
 	try {
-		const out = await geminiAdapter.speech(endpoint, text);
+		const out = await geminiAdapter.speech(endpoint, text, { sing });
 		health.reportSuccess(endpoint.id, Date.now() - started);
-		telemetry.recordCall({ task: "tts", endpointId: endpoint.id, tier: endpoint.tier, model: endpoint.models.tts, outcome: "ok", latencyMs: Date.now() - started, inputChars: text.length });
+		telemetry.recordCall({ task, endpointId: endpoint.id, tier: endpoint.tier, model: endpoint.models[task], outcome: "ok", latencyMs: Date.now() - started, inputChars: text.length });
 		return out;
 	} catch (err) {
 		health.reportFailure(endpoint.id, err);
-		telemetry.recordCall({ task: "tts", endpointId: endpoint.id, tier: endpoint.tier, model: endpoint.models.tts, outcome: "error", latencyMs: Date.now() - started, error: err.message });
+		telemetry.recordCall({ task, endpointId: endpoint.id, tier: endpoint.tier, model: endpoint.models[task], outcome: "error", latencyMs: Date.now() - started, error: err.message });
 		throw err;
 	}
 }

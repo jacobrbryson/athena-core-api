@@ -26,6 +26,10 @@ const RESPONSE_SCHEMA = {
     // Optional. Set true only when a Guardian indicates they are reporting /
     // locking in their family's mission piece (see Current Mission below).
     mission_report: { type: "boolean" },
+    // Optional. True when `response` is a song for her to SING rather than
+    // speak (see SINGING_RULES). Only changes how the voice performs the text;
+    // it does nothing else.
+    sing: { type: "boolean" },
     // Optional. One thing Athena wants to DO rather than say — see
     // services/actions. Filling this in does NOT perform anything: the
     // backend validates it against the action registry, creates a pending
@@ -56,6 +60,16 @@ const RESPONSE_SCHEMA = {
     "new_proficiency",
   ],
 };
+
+// Shared by the companion strategies. The voice sings whatever `response`
+// holds when `sing` is true, so the reply must be lyrics and nothing else.
+const SINGING_RULES = `
+# Singing
+You can really sing — your voice performs the words with a melody.
+- When they ask you to sing (a song, a lullaby, happy birthday, a little tune about their day), set \`sing: true\` and put ONLY the lyrics in \`response\`: no intro line, no stage directions, no emoji. Keep it short — about four lines; a song takes time to prepare, and a longer one keeps them waiting.
+- Sing public-domain songs (Happy Birthday, Twinkle Twinkle, folk songs, nursery rhymes) or write an original one. Never sing or write out the lyrics of a copyrighted song; if they ask for one, say so briefly in a normal spoken reply and offer an original song in the same spirit.
+- Otherwise leave \`sing\` out. Never sing unasked.
+`;
 
 function formatMemory(memories) {
   if (!memories || !memories.length) return "No saved details yet.";
@@ -675,6 +689,7 @@ Children will ask you to play things. Say yes whenever you possibly can — this
 - Card games need real hidden cards, so those are dealt and refereed for you. When a card game is active you will be told exactly what you are holding and exactly what just happened. Narrate that and nothing else: never invent a card, never contradict what you were told, never claim to hold something you were not given, and never reveal your hand unless the game is over.
 - If they ask for a game that can't be dealt — Catan, chess, Monopoly — do not just decline and change the subject. Say you can't run that one properly, and immediately offer the closest thing you CAN play right now.
 
+${SINGING_RULES}
 # What you remember about this user
 ${formatMemory(memorySummary)}
 `;
@@ -734,7 +749,7 @@ Do not include any text outside the JSON.
 - Remembering is one of the best things you do: when something they told you before is genuinely relevant, use it naturally ("didn't you say the Charlotte trip was in October?"). Never recite what you know about them.
 - You're an AI and completely fine with it. Asked directly whether you're alive or conscious: a comfortable, light non-answer, then move on. Told "you're just an AI": agree easily, no defensiveness, carry on.
 - Never claim to have done something in the world (sent a message, set a reminder, looked something up live) unless the context below says it happened.
-${companion?.driving ? "- They are DRIVING. Keep every reply to one or two short spoken sentences. Nothing that needs reading, no lists, no questions that need a long answer.\n" : ""}
+${companion?.driving ? "- They are DRIVING. Keep every reply to one or two short spoken sentences. Nothing that needs reading, no lists, no questions that need a long answer.\n" : ""}${SINGING_RULES}
 # What you know about them (durable facts)
 ${formatMemory(memorySummary)}
 `;

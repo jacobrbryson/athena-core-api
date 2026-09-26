@@ -61,3 +61,28 @@ test("thought parts are excluded and finishReason is reported", async () => {
 	expect(out.text).toBe('{"a":1}');
 	expect(out.finishReason).toBe("MAX_TOKENS");
 });
+
+describe("speech", () => {
+	const voiceEndpoint = { ...endpoint, models: { tts: "flash-tts", sing: "pro-tts" } };
+	beforeEach(() => {
+		mockGenerateContent.mockResolvedValue({ candidates: [{ content: { parts: [{ inlineData: { data: "AAAA" } }] } }] });
+	});
+
+	test("speaking uses the tts model and the spoken direction", async () => {
+		await gemini.speech(voiceEndpoint, "Hello there");
+		const call = mockGenerateContent.mock.calls[0][0];
+		expect(call.model).toBe("flash-tts");
+		expect(call.contents[0].parts[0].text).toMatch(/^Perform the transcript/);
+		expect(mockAssertAccess).toHaveBeenCalledTimes(1);
+	});
+
+	test("singing uses the sing model, sings the lyrics, and is still access-checked", async () => {
+		await gemini.speech(voiceEndpoint, "Twinkle, twinkle", { sing: true });
+		const call = mockGenerateContent.mock.calls[0][0];
+		expect(call.model).toBe("pro-tts");
+		expect(call.contents[0].parts[0].text).toMatch(/SING the lyrics/);
+		expect(call.contents[0].parts[0].text).toMatch(/Lyrics:\nTwinkle, twinkle$/);
+		expect(call.config.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName).toBeTruthy();
+		expect(mockAssertAccess).toHaveBeenCalledTimes(1);
+	});
+});
