@@ -11,6 +11,8 @@ const selfKnowledge = require("../services/selfKnowledge");
 const actions = require("../services/actions");
 const initiative = require("../services/initiative");
 const nearbyIncidents = require("../services/pulsepoint/watch");
+const familyHealth = require("../services/familyHealth");
+const dreams = require("../services/dreams");
 const { audienceForSession } = require("../services/audience");
 const sessionParticipants = require("../services/sessionParticipant");
 
@@ -202,6 +204,38 @@ async function processAiResponse(session, message, clients, ctx = {}) {
             : nearbyBlock;
       } catch (e) {
         console.warn("[gemini] nearby incidents block failed:", e.message);
+      }
+    }
+
+    // Anyone in the family currently reported under the weather. Same rule as
+    // the blocks above: adult, non-guardian sessions only — the account this
+    // is reported against is the parent's, not a child's or a guest world.
+    if (mayPropose) {
+      try {
+        const healthBlock = await familyHealth.promptBlock(session.profile_id);
+        if (healthBlock)
+          initiativeBlock = initiativeBlock
+            ? [initiativeBlock, healthBlock].join("\n\n")
+            : healthBlock;
+      } catch (e) {
+        console.warn("[gemini] family health block failed:", e.message);
+      }
+    }
+
+    // What she organized while dreaming (her own tables, this person's rows
+    // only) and any question she wants to ask them. Adult sessions only: a
+    // child's memories never reach athena_mind. Time-boxed and never fatal.
+    if (mayPropose) {
+      try {
+        const mindBlock = await dreams.promptBlock(session.profile_id, message, {
+          sessionId: session.id,
+        });
+        if (mindBlock)
+          initiativeBlock = initiativeBlock
+            ? [initiativeBlock, mindBlock].join("\n\n")
+            : mindBlock;
+      } catch (e) {
+        console.warn("[gemini] dreams block failed:", e.message);
       }
     }
 

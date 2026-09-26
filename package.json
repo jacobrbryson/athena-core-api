@@ -31,6 +31,9 @@
 		"nightly": "node src/jobs/nightly.js",
 		"nightly:dry": "node src/jobs/nightly.js --dry-run",
 		"nightly:review": "node src/jobs/nightly.js --only review",
+		"dream": "node src/jobs/nightly.js --only dream",
+		"dreams": "node src/jobs/dreams.js",
+		"mind:setup": "node db/mind-setup.js",
 		"lint": "eslint .",
 		"lint:fix": "eslint . --fix",
 		"format": "prettier --write .",
@@ -42,6 +45,7 @@
 	"dependencies": {
 		"@google-cloud/recaptcha-enterprise": "^5.13.0",
 		"@google-cloud/secret-manager": "^7.1.0",
+		"@google-cloud/storage": "^7.22.0",
 		"@google/genai": "^1.29.0",
 		"dotenv": "^17.2.3",
 		"express": "^5.1.0",

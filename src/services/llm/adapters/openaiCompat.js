@@ -107,16 +107,46 @@ async function post(endpoint, path, body, timeoutMs) {
 	}
 }
 
+/**
+ * OpenAI's strict structured outputs accept a narrower schema than Gemini's:
+ * every object must list ALL its properties as required and forbid extras.
+ * Our schemas are written the Gemini way (optional fields simply omitted from
+ * `required`), so optional fields become nullable here — the model returns
+ * null for them, which callers already treat as absent. maxItems is dropped:
+ * strict mode doesn't take it, and the callers slice anyway.
+ */
+function toStrictSchema(schema) {
+	if (!schema || typeof schema !== "object") return schema;
+	if (Array.isArray(schema)) return schema.map(toStrictSchema);
+	const out = {};
+	for (const [k, v] of Object.entries(schema)) {
+		if (k === "maxItems" || k === "minItems") continue;
+		out[k] = k === "properties" ? Object.fromEntries(Object.entries(v).map(([name, sub]) => [name, toStrictSchema(sub)])) : toStrictSchema(v);
+	}
+	if (out.type === "object" && out.properties) {
+		const required = new Set(schema.required || []);
+		for (const [name, sub] of Object.entries(out.properties)) {
+			if (!required.has(name) && typeof sub.type === "string") out.properties[name] = { ...sub, type: [sub.type, "null"] };
+		}
+		out.required = Object.keys(out.properties);
+		out.additionalProperties = false;
+	}
+	return out;
+}
+
+/** Reasoning models (gpt-5*, o-series) reject any temperature but the default. */
+const fixedTemperature = (model) => /^(gpt-5|gpt-6|o\d)/.test(String(model));
+
 async function generate(endpoint, { task, contents, json = true, schema = null, temperature }) {
 	const model = endpoint.models[task] || endpoint.models.chat;
 	if (!model) throw new Error(`${endpoint.id} has no model for task "${task}"`);
 
 	const body = { model, messages: [{ role: "system", content: require("../../../security/mission").CORE_MISSION }, ...toMessages(contents)], stream: false };
-	if (Number.isFinite(temperature)) body.temperature = temperature;
+	if (Number.isFinite(temperature) && !fixedTemperature(model)) body.temperature = temperature;
 	if (json) {
 		body.response_format =
 			schema && endpoint.supportsJsonSchema
-				? { type: "json_schema", json_schema: { name: "athena", schema, strict: true } }
+				? { type: "json_schema", json_schema: { name: "athena", schema: toStrictSchema(schema), strict: true } }
 				: { type: "json_object" };
 	}
 
@@ -195,4 +225,5 @@ async function probe(endpoint) {
 	}
 }
 
-module.exports = { generate, embed, image, probe, toMessages, cleanOutput };
+module.exports = {
+	toStrictSchema, generate, embed, image, probe, toMessages, cleanOutput };

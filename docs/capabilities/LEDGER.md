@@ -1,5 +1,38 @@
 # Capability ledger
 
+- 2026-09-26 — Athena dreams: each night she reorganizes remembered facts
+  into tables and views of her own design in her own database (people, places,
+  relationships), reads them back in conversation, and asks when something
+  needs clarifying — in chat, and as a nudge if initiative is on. A 30-day
+  Dreams log records every statement. Needs the one-time athena_mind setup and
+  migration 0046 before it runs — `dreaming.md` (status: partial)
+
+- 2026-09-26 — Athena now dreams with ChatGPT (falling back to Gemini on a
+  night it can't), and paints a picture of each dream from its retelling,
+  shown on the dashboard card and the Dreams page and kept 30 days —
+  `dreaming.md` (status: partial)
+
+- 2026-09-26 — Dreams on the dashboard: "Last night's dream" tells the night
+  as a whimsical dream built from what really happened in her database (with
+  the plain account a click away), and a new Dreams page in the left menu keeps
+  thirty nights with every step and the questions she's holding —
+  `dreaming.md` (status: partial)
+
+- 2026-09-26 — Dashboard cards are now always in the same order with Health &
+  Performance first; Athena no longer re-sorts them. Nearby emergencies no
+  longer read PulsePoint's website (it blocks automated readers) — 911 calls
+  come only from PulsePoint Respond's notifications on the phone, weather from
+  the NWS — and the "partly offline" banner is gone. "Got it" on the alert
+  banner is remembered on the server until something new happens —
+  `companion-dashboard.md`, `nearby-incidents.md` (status: live)
+
+- 2026-09-23 — Added a family health watch: log that someone in the family is
+  under the weather (who, what symptom, how bad), see it on the Family card
+  and dashboard, and have Athena stay aware of it in conversation — she'll
+  remind the household about ordinary precautions where it fits, and once a
+  day if initiative is on. Migration not yet applied to production —
+  `family-health.md` (status: partial)
+
 - 2026-09-20 — The dashboard now leads with one thing worth doing with the time before your next appointment: a place you go if its page says it's open and the weather holds, or a project around the house if it doesn't — with the closing time, the distance, your Strava habit and the forecast shown under it — `right-now.md` (status: planned)
 
 - 2026-09-20 — Added the around-the-house project list, with a one-time import for a list that already lives in a spreadsheet — `house-projects.md` (status: planned)

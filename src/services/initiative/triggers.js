@@ -39,6 +39,8 @@
 
 const googleCalendar = require("../connectors/googleCalendar");
 const whoop = require("../connectors/whoop");
+const familyHealth = require("../familyHealth");
+const dreamQuestions = require("../dreams/questions");
 
 const MINUTE = 60_000;
 
@@ -200,6 +202,79 @@ const TRIGGERS = [
 			return (
 				`Their Whoop recovery is ${f.recovery}% today and they still have ` +
 				`${f.meetings_left} things booked.`
+			);
+		},
+	},
+
+	{
+		id: "family_illness_precaution",
+		label: "Someone in the family is under the weather",
+		// Athena's own family data, not an external connector — always
+		// worth evaluating.
+		sources: [],
+		urgency: "normal",
+		ttlMs: 12 * 60 * MINUTE,
+		describe: "Remind the household about basic precautions while someone is sick.",
+
+		async evaluate(profileId, { now = new Date() } = {}) {
+			const active = await familyHealth.activeFor(profileId).catch(() => []);
+			if (!active.length) return null;
+			// The longest-running case leads — the one most worth a reminder about.
+			const worst = [...active].sort((a, b) => b.daysActive - a.daysActive)[0];
+			const day = new Date(now).toISOString().slice(0, 10);
+			return {
+				// One reminder per person per day while their status stays active —
+				// an illness that runs a week is still worth repeating on day five.
+				dedupeKey: `illness:${worst.uuid}:${day}`,
+				facts: {
+					personName: worst.personName,
+					symptom: worst.symptom,
+					severity: worst.severity,
+					daysActive: worst.daysActive,
+					householdCount: active.length,
+				},
+			};
+		},
+
+		brief(f) {
+			return (
+				`${f.personName} has had ${f.symptom} for ${f.daysActive} day${f.daysActive === 1 ? "" : "s"} — ` +
+				`worth reminding the household about handwashing, not sharing cups or towels, and wiping down shared surfaces to keep it from spreading.`
+			);
+		},
+	},
+
+	{
+		id: "dream_question",
+		label: "A question after dreaming",
+		// Added on the owner's instruction (2026-09-26): questions she couldn't
+		// settle while organizing someone's memories overnight. The source is
+		// that person's own memories — nothing they haven't already told her.
+		// Opt-in, mutes and quiet hours apply exactly as for every trigger.
+		sources: [],
+		urgency: "low",
+		ttlMs: 12 * 60 * MINUTE,
+		describe: "Ask me when something you're organizing about my life needs clarifying.",
+
+		async evaluate(profileId) {
+			const waiting = await dreamQuestions.pendingFor(profileId, 10).catch(() => []);
+			if (!waiting.length) return null;
+			// Per night: one nudge carries everything that night raised, and every
+			// question stays pending — and in the chat prompt — until answered,
+			// so nothing a later night asks is lost behind an earlier nudge.
+			const night = Math.max(...waiting.map((w) => Number(w.dream_id) || 0));
+			const first = waiting.find((w) => (Number(w.dream_id) || 0) === night) || waiting[0];
+			return {
+				dedupeKey: `dream:${night}`,
+				facts: { count: waiting.length, first: first.question },
+			};
+		},
+
+		brief(f) {
+			return (
+				`While organizing what they've told her overnight, Athena came up with ` +
+				`${f.count === 1 ? "a question" : `${f.count} questions`} only they can answer. ` +
+				`The first: "${f.first}". Ask permission first, like "Can I ask you something?"`
 			);
 		},
 	},

@@ -304,3 +304,27 @@ describe("router.image", () => {
 		expect(recent.some((c) => c.task === "image" && c.outcome === "ok")).toBe(true);
 	});
 });
+
+describe("toStrictSchema", () => {
+	const { toStrictSchema } = require("./adapters/openaiCompat");
+	test("optional fields become nullable and required; extras are forbidden; caps are dropped", () => {
+		const out = toStrictSchema({
+			type: "object",
+			properties: {
+				steps: { type: "array", maxItems: 5, items: { type: "object", properties: { op: { type: "string" }, why: { type: "string" }, tags: { type: "array", maxItems: 3, items: { type: "string" } } }, required: ["op"] } },
+				done: { type: "boolean" },
+			},
+			required: ["steps", "done"],
+		});
+		expect(out.additionalProperties).toBe(false);
+		expect(out.required).toEqual(["steps", "done"]);
+		expect(out.properties.steps.maxItems).toBeUndefined();
+		const step = out.properties.steps.items;
+		expect(step.required).toEqual(["op", "why", "tags"]);
+		expect(step.additionalProperties).toBe(false);
+		expect(step.properties.op.type).toBe("string");
+		expect(step.properties.why.type).toEqual(["string", "null"]);
+		expect(step.properties.tags.type).toEqual(["array", "null"]);
+		expect(step.properties.tags.maxItems).toBeUndefined();
+	});
+});

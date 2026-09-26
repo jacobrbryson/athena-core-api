@@ -13,6 +13,13 @@ const router = express.Router();
 router.get('/dashboard', requireAuth, require('../controllers/dashboard').summary);
 router.get('/dashboard/priority', requireAuth, require('../controllers/dashboard').priority);
 router.get('/system/twilio-billing', requireAuth, require('../controllers/system').twilioBillingStatus);
+// The Dreams log: what Athena did in her own database overnight, told plainly
+// and as a dream. Read-only; statements leave redacted (services/dreams/redact).
+router.get('/dreams', requireAuth, require('../controllers/dreams').list);
+router.get('/dreams/latest', requireAuth, require('../controllers/dreams').latest);
+router.get('/dreams/questions', requireAuth, require('../controllers/dreams').questions);
+router.get('/dreams/:uuid', requireAuth, require('../controllers/dreams').night);
+router.get('/dreams/:uuid/image', requireAuth, require('../controllers/dreams').picture);
 // News: the watch list is the person's, the interval is Athena's. There is no
 // route for setting an interval by hand, by design — see services/news.
 router.get('/dashboard/news', requireAuth, require('../controllers/dashboard').newsFeed);
@@ -26,6 +33,7 @@ router.post('/dashboard/news/check', requireAuth, require('../controllers/dashbo
 // and what is active near them. Delivery is the athena-incidents job.
 router.get('/dashboard/incidents', requireAuth, require('../controllers/nearbyIncidents').nearby);
 router.get('/dashboard/alert', requireAuth, require('../controllers/nearbyIncidents').alert);
+router.post('/dashboard/alert/ack', requireAuth, express.json({ limit: '2kb' }), require('../controllers/nearbyIncidents').acknowledgeAlert);
 router.get('/dashboard/incidents/places', requireAuth, require('../controllers/nearbyIncidents').listPlaces);
 router.put('/dashboard/incidents/places', requireAuth, express.json({ limit: '4kb' }), require('../controllers/nearbyIncidents').savePlace);
 router.delete('/dashboard/incidents/places/:uuid', requireAuth, require('../controllers/nearbyIncidents').removePlace);
@@ -60,6 +68,11 @@ router.post('/dashboard/email/group/propose', requireAuth, express.json({ limit:
 router.post('/dashboard/email/delete', requireAuth, express.json({ limit: '4kb' }), require('../controllers/email').deleteEmails);
 router.post('/dashboard/email/:uuid/propose', requireAuth, express.json({ limit: '8kb' }), require('../controllers/email').propose);
 router.post('/dashboard/email/:uuid/dismiss', requireAuth, express.json({ limit: '1kb' }), require('../controllers/email').dismiss);
+
+// Family health watch: who's under the weather right now. Read lives on the
+// dashboard summary's `familyHealth` source; these two are the only writes.
+router.post('/dashboard/health/family', requireAuth, express.json({ limit: '4kb' }), require('../controllers/familyHealth').report);
+router.patch('/dashboard/health/family/:uuid/resolve', requireAuth, express.json({ limit: '1kb' }), require('../controllers/familyHealth').resolve);
 
 // Public: the on-device model manifest carries no secrets, and devices poll it
 // before (and after) pairing.

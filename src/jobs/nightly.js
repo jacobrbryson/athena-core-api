@@ -7,6 +7,7 @@
  *   node src/jobs/nightly.js --dry-run       no DB writes; report printed + saved locally
  *   node src/jobs/nightly.js --only review   skip maintenance
  *   node src/jobs/nightly.js --only maintenance
+ *   node src/jobs/nightly.js --only dream    just the dream (see services/dreams)
  *   node src/jobs/nightly.js --skip-evals    metrics + plan only (cheaper)
  *   node src/jobs/nightly.js --out <dir>     where to write the Markdown (default reports/self-review)
  *
@@ -28,6 +29,7 @@ const { startOfLocalDay, DEFAULT_TZ } = require("../services/memoryStore/timeRan
 const actions = require("../services/actions");
 const initiative = require("../services/initiative");
 const lookRequests = require("../services/lookRequests");
+const dreams = require("../services/dreams");
 const { collectMetrics } = require("../services/selfReview/metrics");
 const { runEvals } = require("../services/selfReview/evals");
 const { ruleFindings, writePlan, fallbackPlan, renderMarkdown } = require("../services/selfReview/plan");
@@ -114,7 +116,27 @@ async function maintenance({ dryRun }) {
 	// somebody to read a report about it. Runs AFTER expiry so the night's
 	// unanswered nudges are already terminal and get counted.
 	await step("nudgeAppraisal", () => initiative.sweepAppraisals(), results);
+	await dreamSteps(results);
 	return results;
+}
+
+/**
+ * Dreaming: Athena reorganizing her memories into her own tables. After
+ * extraction and reflection, so tonight's facts are in the mirror she builds
+ * from. Then the Dreams log keeps 30 days, and questions nobody answered in
+ * their two weeks retire.
+ */
+async function dreamSteps(results) {
+	await step("dream", () => dreams.dream({ log }), results);
+	await step(
+		"dreamTidy",
+		async () => ({
+			expiredQuestions: await dreams.questions.expireStale(),
+			prunedQuestions: await dreams.questions.prune(30),
+			prunedDreams: await dreams.pruneAudit(30),
+		}),
+		results
+	);
 }
 
 async function previousPlan() {
@@ -156,7 +178,7 @@ async function review({ dryRun, skipEvals, out }, maintenanceResults) {
 	}
 
 	const evalHistory = await recentEvals(date);
-	const findings = ruleFindings({ metrics, evals, evalHistory, config: { orcwoodCount: status.orcwood.length } });
+	const findings = ruleFindings({ metrics, evals, evalHistory, maintenance: maintenanceResults, config: { orcwoodCount: status.orcwood.length } });
 	const prior = await previousPlan();
 
 	log("writing plan");
@@ -195,6 +217,13 @@ async function main() {
 	const args = parseArgs(process.argv);
 	log(`starting${args.dryRun ? " (dry run)" : ""}; policy=${llm.status().policy}`);
 	await llm.startHealthLoop?.();
+
+	if (args.only === "dream") {
+		if (args.dryRun) log("dream skipped: a dream runs real DDL, so there is no dry run");
+		else await dreamSteps({});
+		await pool.end().catch(() => undefined);
+		return;
+	}
 
 	let maintenanceResults = null;
 	if (args.only !== "review") maintenanceResults = await maintenance(args);

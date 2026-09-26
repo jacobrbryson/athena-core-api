@@ -33,6 +33,7 @@
  *   OPENAI_API_KEY         enables the endpoint
  *   OPENAI_CHAT_MODEL      opt in to OpenAI for chat/json/extract/review
  *   OPENAI_VISION_MODEL    opt in for image understanding
+ *   OPENAI_DREAM_MODEL     the model Athena dreams with (services/dreams)
  *   OPENAI_IMAGE_MODEL     image generation (default gpt-image-1)
  *   OPENAI_PRIORITY        chain position; default 10, behind Gemini's 0
  */
@@ -49,6 +50,10 @@ const TASKS = {
 	extract: { pinned: null }, // background memory extraction
 	vision: { pinned: null }, // image -> structured JSON scene description
 	review: { pinned: null }, // nightly self-review / planning
+	// Dreaming (services/dreams): schema design + the dream retelling. Served
+	// only by endpoints that declare a `dream` model — today OpenAI, via
+	// OPENAI_DREAM_MODEL — and dream.js falls back to "review" when none can.
+	dream: { pinned: null },
 	tools: { pinned: "frontier" }, // Gemini function-calling format
 	tts: { pinned: "frontier" }, // Gemini neural voice
 	// Image generation. Frontier-only: no local tier does it, and the output is
@@ -119,6 +124,8 @@ function buildOpenAi() {
 		extract: process.env.OPENAI_EXTRACT_MODEL || chat,
 		review: process.env.OPENAI_REVIEW_MODEL || chat,
 		vision: process.env.OPENAI_VISION_MODEL || null,
+		// Explicit only: dreaming is the one task the owner chose ChatGPT for.
+		dream: process.env.OPENAI_DREAM_MODEL || null,
 		// gpt-image-1 is the long-standing id; newer gpt-image-2.5-* models
 		// exist but are not on every account, so they are opt-in by env.
 		image: process.env.OPENAI_IMAGE_MODEL || "gpt-image-1",
