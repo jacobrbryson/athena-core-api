@@ -234,6 +234,31 @@ async function worldItemsSince(since, limit = 200) {
 	return rows;
 }
 
+/**
+ * Enabled world-scope sources, and the ones nobody has visited when they
+ * should have been. Only the athena-news job polls on a schedule, so an
+ * overdue list here means that job isn't running — from 09-21 NPR and BBC sat
+ * seeded and never polled for a week while the nightly step reported "ok".
+ *
+ * Grace is the longer of a day and twice the source's own interval, and a
+ * source seeded in the last hour isn't judged yet.
+ */
+async function worldPollHealth() {
+	const [rows] = await pool.query(
+		`SELECT host, last_checked_at, interval_minutes,
+            (created_at < NOW() - INTERVAL 1 HOUR
+             AND (last_checked_at IS NULL
+                  OR last_checked_at < NOW() - INTERVAL GREATEST(1440, 2 * interval_minutes) MINUTE)) AS overdue
+     FROM news_source WHERE scope = 'world' AND enabled = 1 ORDER BY id`
+	);
+	return {
+		worldSources: rows.length,
+		overdue: rows
+			.filter((r) => Number(r.overdue) === 1)
+			.map((r) => ({ host: r.host, lastCheckedAt: r.last_checked_at || null })),
+	};
+}
+
 async function recordPoll(sourceId, entry) {
 	await pool.query(
 		`INSERT INTO news_poll (source_id, status, http_status, items_found, items_new, duration_ms,
@@ -393,6 +418,7 @@ module.exports = {
 	saveItems,
 	recentItems,
 	worldItemsSince,
+	worldPollHealth,
 	recordPoll,
 	pollStats,
 	lastPolls,

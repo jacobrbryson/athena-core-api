@@ -274,6 +274,7 @@ module.exports = {
 	listAll: store.listAll,
 	seedHouseSources,
 	catchUpWorldMemory,
+	worldPollHealth: store.worldPollHealth,
 	prune: store.pruneItems,
 	rhythm,
 	STEPS: cadence.STEPS,

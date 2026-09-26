@@ -1,11 +1,9 @@
 /**
- * Card ordering.
+ * Card order and the dashboard alert.
  *
- * The thing worth testing here is not whether the model ranks well — it is
- * whether a bad answer can damage the dashboard. An ordering is a rendering
- * hint over a fixed set of cards, so every path has to end with all of them,
- * once each, whatever came back. A dropped card is a section of
- * someone's day that silently stops existing.
+ * The order is fixed — Health & Performance first — and no model answer may
+ * move it (owner, 2026-09-26). The model is asked only whether anything
+ * deserves the alert banner.
  */
 jest.mock("./llm", () => ({ generateJson: jest.fn() }));
 jest.mock('../helpers/db', () => ({ query: jest.fn(async () => [[]]) }));
@@ -61,59 +59,59 @@ beforeEach(() => {
 });
 
 describe("getPriority", () => {
-	it("uses the model's order when it answers with every card", async () => {
-		const model = ["notifications", "calendar", "health", "work", "family", "mail", "projects", "news"];
-		llm.generateJson.mockResolvedValue({ data: { order: model.map((id) => ({ id, why: `${id} reason` })) }, model: "test" });
+	it("keeps the fixed order, health first, whatever the model says", async () => {
+		llm.generateJson.mockResolvedValue({
+			data: { order: [{ id: "notifications" }, { id: "calendar" }], alert: null },
+			model: "test",
+		});
+
+		const result = await priority.getPriority(profile, {});
+
+		expect(ALL[0]).toBe("health");
+		expect(result.order.map((e) => e.id)).toEqual(ALL);
+		expect(result.order.every((e) => e.why === null)).toBe(true);
+	});
+
+	it("does not ask the model to order anything", async () => {
+		llm.generateJson.mockResolvedValue({ data: { alert: null }, model: "test" });
+		await priority.getPriority(profile, {});
+		const prompt = llm.generateJson.mock.calls[0][0].contents[0].parts[0].text;
+		expect(prompt).not.toMatch(/order this person should look/i);
+		expect(prompt).not.toContain('"order"');
+	});
+
+	it("passes the model's alert through", async () => {
+		llm.generateJson.mockResolvedValue({
+			data: { alert: { level: "watch", headline: "Low recovery, heavy day", body: "Take it easy." } },
+			model: "test",
+		});
 
 		const result = await priority.getPriority(profile, {});
 
 		expect(result.source).toBe("athena");
-		expect(result.order.map((e) => e.id)).toEqual(model);
-		expect(result.order[0].why).toBe("notifications reason");
+		expect(result.alert).toEqual(expect.objectContaining({ level: "watch", headline: "Low recovery, heavy day" }));
 	});
 
-	it("appends anything the model left out rather than dropping the card", async () => {
-		llm.generateJson.mockResolvedValue({ data: { order: [{ id: "work", why: "three issues" }] }, model: "test" });
-
-		const { order } = await priority.getPriority(profile, {});
-
-		expect(order[0]).toEqual({ id: "work", why: "three issues" });
-		expect(order.map((e) => e.id).sort()).toEqual([...ALL].sort());
-	});
-
-	it("discards ids it does not know and repeats of ones it does", async () => {
-		llm.generateJson.mockResolvedValue({
-			data: { order: [{ id: "news" }, { id: "news" }, { id: "inbox" }, { id: "calendar" }] },
-			model: "test",
-		});
-
-		const { order } = await priority.getPriority(profile, {});
-
-		expect(order.slice(0, 2).map((e) => e.id)).toEqual(["news", "calendar"]);
-		expect(order).toHaveLength(ALL.length);
-		expect(order.map((e) => e.id)).not.toContain("inbox");
-	});
-
-	it("falls back to the declared order, marked as such, when the model is down", async () => {
+	it("falls back to the fixed order, marked as such, when the model is down", async () => {
 		llm.generateJson.mockRejectedValue(new Error("no endpoint available"));
 
 		const result = await priority.getPriority(profile, {});
 
 		expect(result.source).toBe("default");
 		expect(result.order.map((e) => e.id)).toEqual(ALL);
-		expect(result.order.every((e) => e.why === null)).toBe(true);
+		expect(result.alert).toBeNull();
 	});
 
-	it("does not memoise a fallback, so the next open can still be ranked", async () => {
+	it("does not memoise a fallback, so the next open can still be assessed", async () => {
 		llm.generateJson.mockRejectedValueOnce(new Error("down"));
 		expect((await priority.getPriority(profile, {})).source).toBe("default");
 
-		llm.generateJson.mockResolvedValue({ data: { order: ALL.map((id) => ({ id })) }, model: "test" });
+		llm.generateJson.mockResolvedValue({ data: { alert: null }, model: "test" });
 		expect((await priority.getPriority(profile, {})).source).toBe("athena");
 	});
 
-	it("serves a ranked order from memory instead of asking again", async () => {
-		llm.generateJson.mockResolvedValue({ data: { order: ALL.map((id) => ({ id })) }, model: "test" });
+	it("serves a judgement from memory instead of asking again", async () => {
+		llm.generateJson.mockResolvedValue({ data: { alert: null }, model: "test" });
 
 		await priority.getPriority(profile, {});
 		await priority.getPriority(profile, {});
@@ -121,8 +119,8 @@ describe("getPriority", () => {
 		expect(llm.generateJson).toHaveBeenCalledTimes(1);
 	});
 
-	it("reranks when the pending decisions change even within the TTL", async () => {
-		llm.generateJson.mockResolvedValue({ data: { order: ALL }, model: 'test' });
+	it("re-assesses when the pending decisions change even within the TTL", async () => {
+		llm.generateJson.mockResolvedValue({ data: { alert: null }, model: "test" });
 		await priority.getPriority(profile, {});
 		actions.listPending.mockResolvedValue([]);
 		await priority.getPriority(profile, {});
@@ -130,13 +128,13 @@ describe("getPriority", () => {
 	});
 
 	it("coalesces model generation for simultaneous identical signal sheets", async () => {
-		llm.generateJson.mockResolvedValue({ data: { order: ALL }, model: 'test' });
+		llm.generateJson.mockResolvedValue({ data: { alert: null }, model: "test" });
 		await Promise.all(Array.from({ length: 10 }, () => priority.getPriority(profile, {})));
 		expect(llm.generateJson).toHaveBeenCalledTimes(1);
 	});
 
-	it("re-ranks after the data is declared stale", async () => {
-		llm.generateJson.mockResolvedValue({ data: { order: ALL.map((id) => ({ id })) }, model: "test" });
+	it("re-assesses after the data is declared stale", async () => {
+		llm.generateJson.mockResolvedValue({ data: { alert: null }, model: "test" });
 
 		await priority.getPriority(profile, {});
 		priority.invalidate(profile);
@@ -145,14 +143,14 @@ describe("getPriority", () => {
 		expect(llm.generateJson).toHaveBeenCalledTimes(2);
 	});
 
-	it("rejects a model answer that does not cover every card", async () => {
-		llm.generateJson.mockResolvedValue({ data: { order: ALL.map((id) => ({ id })) }, model: "test" });
+	it("rejects a model answer without an alert field", async () => {
+		llm.generateJson.mockResolvedValue({ data: { alert: null }, model: "test" });
 		await priority.getPriority(profile, {});
 
 		const { check } = llm.generateJson.mock.calls[0][0];
-		expect(check({ order: ALL.map((id) => ({ id })) })).toBe(true);
-		expect(check({ order: [{ id: "news" }] })).toEqual(expect.any(String));
-		expect(check({ order: "not a list" })).toEqual(expect.any(String));
+		expect(check({ alert: null })).toBe(true);
+		expect(check({ order: [] })).toEqual(expect.any(String));
+		expect(check(null)).toEqual(expect.any(String));
 	});
 
 	it("still answers when the dashboard itself cannot be read", async () => {
@@ -166,110 +164,45 @@ describe("getPriority", () => {
 		expect(llm.generateJson).not.toHaveBeenCalled();
 	});
 
-	describe("an empty card cannot outrank a full one", () => {
-		it("sinks the notifications card when nothing is awaiting approval", async () => {
-			// The reported bug: an empty bell ranked above a calendar holding
-			// the day's meetings, on the strength of its name alone.
-			quietExceptCalendar();
-			llm.generateJson.mockResolvedValue({
-				data: { order: ["notifications", "calendar", "health", "family", "work", "projects", "news"].map((id) => ({ id, why: `${id} reason` })) },
-				model: "test",
-			});
-
-			const { order } = await priority.getPriority(profile, {});
-
-			expect(order[0].id).toBe("calendar");
-			expect(order.map((e) => e.id).indexOf("notifications")).toBeGreaterThan(
-				order.map((e) => e.id).indexOf("calendar")
-			);
-			expect(order).toHaveLength(ALL.length);
+	it("does not call the model when every card is empty", async () => {
+		quietExceptCalendar();
+		dashboard.cachedDashboard.mockReturnValue({
+			calendar: source("ready", { events: [], timeZone: "UTC", days: 7 }),
+			recovery: source("not_connected"), sleep: source("not_connected"),
+			strain: source("not_connected"), activity: source("not_connected"),
+			familyChores: source("not_connected"), jira: source("not_connected"),
+			slack: source("not_connected"), emailTriage: source("not_connected"),
 		});
 
-		it("drops the reason from a card it demoted, so no line claims content that is not there", async () => {
-			quietExceptCalendar();
-			llm.generateJson.mockResolvedValue({
-				data: { order: ["notifications", "calendar", "health", "family", "work", "projects", "news"].map((id) => ({ id, why: `${id} reason` })) },
-				model: "test",
-			});
+		const result = await priority.getPriority(profile, {});
 
-			const { order } = await priority.getPriority(profile, {});
+		expect(llm.generateJson).not.toHaveBeenCalled();
+		expect(result.source).toBe("default");
+	});
 
-			expect(order.find((e) => e.id === "notifications").why).toBeNull();
-			// A card that kept its place keeps its reason.
-			expect(order.find((e) => e.id === "calendar").why).toBe("calendar reason");
-		});
+	it("tells the model which cards are empty", async () => {
+		quietExceptCalendar();
+		llm.generateJson.mockResolvedValue({ data: { alert: null }, model: "test" });
 
-		it("leaves a full card where the model put it, bell included", async () => {
-			// The default fixture HAS a pending approval, so notifications is
-			// not empty and the floor must not touch it.
-			llm.generateJson.mockResolvedValue({
-				data: { order: ["notifications", "calendar", "health", "work", "family", "projects", "news"].map((id) => ({ id, why: `${id} reason` })) },
-				model: "test",
-			});
+		await priority.getPriority(profile, {});
+		const prompt = llm.generateJson.mock.calls[0][0].contents[0].parts[0].text;
 
-			const { order } = await priority.getPriority(profile, {});
-
-			expect(order[0]).toEqual({ id: "notifications", why: "notifications reason" });
-		});
-
-		it("never sinks News, whose feeds this sheet cannot see", async () => {
-			quietExceptCalendar();
-			llm.generateJson.mockResolvedValue({
-				data: { order: ["news", "calendar", "health", "family", "work", "projects", "notifications"].map((id) => ({ id })) },
-				model: "test",
-			});
-
-			const { order } = await priority.getPriority(profile, {});
-
-			expect(order.slice(0, 2).map((e) => e.id)).toEqual(["news", "calendar"]);
-		});
-
-		it("does not rank at all when every card is empty", async () => {
-			quietExceptCalendar();
-			dashboard.cachedDashboard.mockReturnValue({
-				calendar: source("ready", { events: [], timeZone: "UTC", days: 7 }),
-				recovery: source("not_connected"), sleep: source("not_connected"),
-				strain: source("not_connected"), activity: source("not_connected"),
-				familyChores: source("not_connected"), jira: source("not_connected"),
-				slack: source("not_connected"), emailTriage: source("not_connected"),
-			});
-
-			const result = await priority.getPriority(profile, {});
-
-			expect(llm.generateJson).not.toHaveBeenCalled();
-			expect(result.source).toBe("default");
-			expect(result.order.map((e) => e.id)).toEqual(ALL);
-		});
-
-		it("tells the model which cards are empty", async () => {
-			quietExceptCalendar();
-			llm.generateJson.mockResolvedValue({ data: { order: ALL.map((id) => ({ id })) }, model: "test" });
-
-			await priority.getPriority(profile, {});
-			const [sheet] = llm.generateJson.mock.calls[0][0].contents[0].parts[0].text.split("Put them in the order");
-
-			expect(sheet).toContain('"empty": true');
-			expect(sheet).toContain('"empty": false');
-			// An empty bell must not describe a decision that is not waiting.
-			expect(sheet).toContain("Nothing is waiting on a decision.");
-		});
+		expect(prompt).toContain('"empty": true');
+		expect(prompt).toContain('"empty": false');
+		// An empty bell must not describe a decision that is not waiting.
+		expect(prompt).toContain("Nothing is waiting on a decision.");
 	});
 
 	it("sends counts and timings, never raw provider payloads", async () => {
-		llm.generateJson.mockResolvedValue({ data: { order: ALL.map((id) => ({ id })) }, model: "test" });
+		llm.generateJson.mockResolvedValue({ data: { alert: null }, model: "test" });
 
 		await priority.getPriority(profile, {});
 		const prompt = llm.generateJson.mock.calls[0][0].contents[0].parts[0].text;
 
 		expect(prompt).toContain('"awaitingYourApproval": 1');
 		expect(prompt).toContain('"assignedOpenIssues": 1');
-		// A card whose own source is missing says so, so it can sink.
 		expect(prompt).toContain('"source":');
-		// A disconnected sub-source reads as null, never as a zero: "no Slack
-		// mentions" and "no Slack" should not rank the same.
 		expect(prompt).toContain('"slackMentions": null');
-		// The sheet carries the next event's title, not the attendees, links or
-		// descriptions that came with it — and no account addresses.
 		expect(prompt).toContain('"nextEventTitle": "Design review"');
 		expect(prompt).not.toContain("a@b.c");
 	});

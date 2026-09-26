@@ -456,3 +456,45 @@ describe("stored headlines", () => {
 		expect(saved.added.map((item) => item.title)).toEqual(["A story we have not seen before"]);
 	});
 });
+
+// From 09-21 NPR and BBC sat seeded and never polled for a week — the
+// athena-news job wasn't running — and the nightly step reported "ok" because
+// there was simply nothing to catch up.
+describe("world poll health", () => {
+	const news = require("./index");
+	const { ingestNews } = require("../memoryStore/news");
+	const source = (host, overdue, last = null) => ({ host, overdue, last_checked_at: last, interval_minutes: 360 });
+
+	test("lists the sources nobody has visited on schedule", async () => {
+		pool.query.mockResolvedValueOnce([[source("feeds.npr.org", 1), source("www.troutmannc.gov", 0, new Date())]]);
+		const h = await store.worldPollHealth();
+		expect(h).toEqual({ worldSources: 2, overdue: [{ host: "feeds.npr.org", lastCheckedAt: null }] });
+		const [sql] = pool.query.mock.calls[0];
+		expect(sql).toMatch(/GREATEST\(1440, 2 \* interval_minutes\)/);
+		expect(sql).toMatch(/created_at < NOW\(\) - INTERVAL 1 HOUR/);
+	});
+
+	test("the nightly step fails when every world source is overdue", async () => {
+		jest.spyOn(news, "seedHouseSources").mockResolvedValue({ added: 0 });
+		jest.spyOn(news, "catchUpWorldMemory").mockResolvedValue({ items: 0, added: 0, skipped: 0 });
+		jest.spyOn(news, "worldPollHealth").mockResolvedValue({
+			worldSources: 2,
+			overdue: [{ host: "feeds.npr.org" }, { host: "feeds.bbci.co.uk" }],
+		});
+		await expect(ingestNews()).rejects.toThrow(/all 2 world source\(s\) overdue \(feeds.npr.org, feeds.bbci.co.uk\).*athena-news/);
+	});
+
+	test("one overdue source is reported, not fatal", async () => {
+		jest.spyOn(news, "seedHouseSources").mockResolvedValue({ added: 0 });
+		jest.spyOn(news, "catchUpWorldMemory").mockResolvedValue({ items: 4, added: 4, skipped: 0 });
+		jest.spyOn(news, "worldPollHealth").mockResolvedValue({ worldSources: 2, overdue: [{ host: "feeds.npr.org" }] });
+		await expect(ingestNews()).resolves.toMatchObject({ added: 4, worldSources: 2, overdue: ["feeds.npr.org"] });
+	});
+
+	test("no world sources at all is not an outage", async () => {
+		jest.spyOn(news, "seedHouseSources").mockResolvedValue({ added: 0 });
+		jest.spyOn(news, "catchUpWorldMemory").mockResolvedValue({ items: 0, added: 0, skipped: 0 });
+		jest.spyOn(news, "worldPollHealth").mockResolvedValue({ worldSources: 0, overdue: [] });
+		await expect(ingestNews()).resolves.toMatchObject({ worldSources: 0, overdue: [] });
+	});
+});

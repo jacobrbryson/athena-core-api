@@ -33,6 +33,13 @@ const THRESHOLDS = {
 	// A rate over fewer calls than this is an anecdote. "50% invalid" once
 	// meant 2 of 4 calls and still became the night's top plan item.
 	minCallsToJudge: 20,
+	// Extraction that returns nothing at all, across this many runs on this many
+	// distinct days, is broken rather than quiet.
+	extractionMinRuns: 3,
+	extractionQuietDays: 3,
+	// Enough proposals for "none of them were written" to mean something.
+	extractionMinProposals: 5,
+	extractionDuplicateShare: 0.8,
 };
 
 /**
@@ -84,7 +91,7 @@ function thinSamples(metrics) {
  * Severity "low" is context, not work: it explains the tables (why a row is
  * missing, why a failure is noise) and never becomes a plan item.
  */
-function ruleFindings({ metrics, evals, config, evalHistory = [] }) {
+function ruleFindings({ metrics, evals, config, evalHistory = [], maintenance = null }) {
 	const out = [];
 	const add = (severity, area, title, evidence) => out.push({ severity, area, title, evidence });
 	const m24 = metrics.models?.last24h;
@@ -121,12 +128,62 @@ function ruleFindings({ metrics, evals, config, evalHistory = [] }) {
 		if (mem.embeddingCoverage < THRESHOLDS.embeddingCoverage) {
 			add("medium", "memory", `Only ${(mem.embeddingCoverage * 100).toFixed(0)}% of memories are searchable semantically`, `${mem.totalEvents} episodes; the backfill should close this gap`);
 		}
-		const human = metrics.chat?.humanMessages || 0;
-		if (human >= 30 && mem.conversationMoments72h === 0) {
-			add("high", "memory", "Conversations are happening but no new memories were formed in 72h", `${human} messages in the last 24h; extraction may be failing`);
+		// Judge extraction on what it PROPOSED, not what it wrote. Writes hit zero
+		// from 09-20 and no rule fired — the old one needed 30+ messages a day —
+		// yet the model was answering; the duplicate check was eating everything.
+		const ex = mem.extraction72h;
+		if (ex?.available) {
+			const proposed = ex.proposedFacts + ex.proposedMoments;
+			const written = ex.writtenFacts + ex.writtenMoments;
+			if (ex.runs >= THRESHOLDS.extractionMinRuns && ex.days >= THRESHOLDS.extractionQuietDays && proposed === 0) {
+				add("high", "memory", `Memory extraction proposed nothing in ${ex.runs} runs over ${ex.days} days`, `${ex.humanLines} lines from people were read in 72h and not one fact or moment came back — check the extract prompt and model output`);
+			} else if (proposed >= THRESHOLDS.extractionMinProposals && written === 0) {
+				add(
+					"medium",
+					"memory",
+					`${proposed} memory proposals in 72h, none written`,
+					`dropped: ${ex.duplicate} already known, ${ex.lowConfidence} low confidence, ${ex.locked} locked slots, ${ex.malformed} malformed, ${ex.overCap} over cap`
+				);
+			} else if (ex.proposedFacts >= THRESHOLDS.extractionMinProposals && ex.duplicate / ex.proposedFacts >= THRESHOLDS.extractionDuplicateShare) {
+				add("low", "memory", `${ex.duplicate} of ${ex.proposedFacts} proposed facts were already known`, "the extractor is re-stating what the prompt told it; harmless, but it hides real zeros");
+			}
+		} else {
+			const human = metrics.chat?.humanMessages || 0;
+			if (human >= 30 && mem.conversationMoments72h === 0) {
+				add("high", "memory", "Conversations are happening but no new memories were formed in 72h", `${human} messages in the last 24h; extraction may be failing`);
+			}
 		}
 	} else if (mem) {
 		add("medium", "memory", "Memory metrics unavailable", mem.reason);
+	}
+
+	// News: judged on whether the sources are being READ, not on what the
+	// nightly catch-up found — with the watcher down it finds nothing and
+	// looks fine, which is how a week of no news went unreported from 09-21.
+	const news = metrics.news;
+	if (news?.available && news.worldSources > 0 && news.overdue.length) {
+		const hosts = news.overdue
+			.map((s) => `${s.host} (last polled ${s.lastCheckedAt ? new Date(s.lastCheckedAt).toISOString().slice(0, 10) : "never"})`)
+			.join(", ");
+		if (news.overdue.length === news.worldSources) {
+			add("high", "news", `News watcher has stopped: none of ${news.worldSources} world source(s) polled on schedule`, `${hosts}; ${news.items24h} headlines stored in 24h — check that the athena-news Cloud Run job and its scheduler trigger exist and are running`);
+		} else {
+			add("medium", "news", `${news.overdue.length} of ${news.worldSources} world news source(s) overdue`, hosts);
+		}
+	} else if (news && !news.available) {
+		add("medium", "news", "News metrics unavailable", news.reason);
+	}
+
+	// A maintenance step that failed is work, not a footnote in the JSON dump
+	// at the bottom of the report.
+	for (const [name, r] of Object.entries(maintenance || {})) {
+		if (!r || r.ok !== false) continue;
+		// The news rule above already says the watcher is down, with more detail.
+		if (name === "news" && out.some((f) => f.area === "news" && f.severity === "high")) continue;
+		add("high", "maintenance", `Nightly step "${name}" failed`, r.error || "no error recorded");
+	}
+	if (maintenance?.extraction?.failed > 0) {
+		add("medium", "memory", `${maintenance.extraction.failed} session(s) failed memory extraction overnight`, "their messages stay unextracted until a later run succeeds");
 	}
 
 	// Initiative: is she earning the right to interrupt?
@@ -442,6 +499,12 @@ function renderMarkdown({ date, metrics, evals, findings, plan, maintenance }) {
 			const mm = metrics.memory;
 			L.push(`- New episodes: ${Object.entries(mm.newEventsByKind).map(([k, n]) => `${k} ${n}`).join(", ") || "none"}; new AI facts: ${mm.newAiFacts}`);
 			L.push(`- Semantic coverage: ${pct(mm.embeddingCoverage)} of ${mm.totalEvents} episodes; recalled in 24h: ${mm.eventsRecalled24h}`);
+			const ex = mm.extraction72h;
+			if (ex?.available) {
+				L.push(
+					`- Extraction (72h): ${ex.runs} runs over ${ex.humanLines} lines from people; proposed ${ex.proposedFacts} facts / ${ex.proposedMoments} moments, wrote ${ex.writtenFacts} / ${ex.writtenMoments}; dropped ${ex.duplicate} already known, ${ex.lowConfidence} low confidence, ${ex.locked} locked, ${ex.malformed} malformed, ${ex.overCap} over cap`
+				);
+			} else if (ex) L.push(`- Extraction (72h): _unavailable — ${ex.reason}_`);
 		}
 		L.push("");
 	}

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * Nearby emergencies: read the county dispatch board, tell people about new
- * calls near their places.
+ * Nearby emergencies: read the weather service for everyone's watched places,
+ * tell people about new alerts, and retire phone-reported 911 calls whose
+ * clock has run out.
  *
  *   node src/jobs/incidents.js              one tick: reads only if due
  *   node src/jobs/incidents.js --force      read now, whatever the rhythm
@@ -11,14 +12,14 @@
  *
  * Scheduled every 5 minutes. The RHYTHM is decided in services/pulsepoint/
  * watch.js, not by cron: every 15 minutes when quiet, every 5 for an hour
- * once something comes up nearby, every few hours while PulsePoint is
- * blocking automated readers. A tick that is not due reads nothing. One
- * PulsePoint request per read, however many people are watching; safe to
- * overlap with itself (the nudge unique key means a racing pass writes
- * nothing twice).
+ * once something comes up nearby. A tick that is not due reads nothing.
  *
- * Exits 0 for a skipped tick and for a block — both are known states. Only
- * an unexpected failure exits 1.
+ * 911 calls are NOT polled here. PulsePoint blocks automated readers, and the
+ * owner removed the web-board poller on 2026-09-26: calls arrive from the
+ * PulsePoint app's own notifications on the phone (POST
+ * /dashboard/incidents/phone-alert).
+ *
+ * Exits 0 for a skipped tick. Only an unexpected failure exits 1.
  *
  * See services/pulsepoint/watch.js and docs/capabilities/nearby-incidents.md.
  */
@@ -40,33 +41,22 @@ const log = (...m) => console.log(`[incidents ${new Date().toISOString().slice(1
 const minutes = (ms) => `${Math.round((ms || 0) / 60000)} min`;
 
 async function status() {
-	const health = await watch.sourcesHealth();
-	for (const [label, h] of [["911 board", health.calls], ["weather", health.weather]]) {
-		const due = watch.isDue(h);
-		log(
-			`${label}: every ${minutes(due.everyMs)} (${due.why}); ` +
-				(due.due ? "due now" : `next in ${minutes(due.nextInMs)}`) +
-				`; last ok ${h.lastOkAt ? new Date(h.lastOkAt).toISOString() : "never"}` +
-				(h.blocked ? `; BLOCKED since ${new Date(h.blockedAt).toISOString()}` : "") +
-				(h.lastError ? `; last error: ${h.lastError}` : "")
-		);
-	}
+	const { weather: h } = await watch.sourcesHealth();
+	const due = watch.isDue(h);
+	log(
+		`weather: every ${minutes(due.everyMs)} (${due.why}); ` +
+			(due.due ? "due now" : `next in ${minutes(due.nextInMs)}`) +
+			`; last ok ${h.lastOkAt ? new Date(h.lastOkAt).toISOString() : "never"}` +
+			(h.lastError ? `; last error: ${h.lastError}` : "")
+	);
 }
 
 async function pass() {
 	if (args.status) return status();
 	const out = await watch.runOnce({ dryRun: args.dryRun, force: args.force });
-	const { agency, active, results } = out;
+	const { results } = out;
 	if (out.skipped) return log(`not due (every ${minutes(out.everyMs)}, ${out.why}); next in ${minutes(out.nextInMs)}`);
-	const sources = [];
-	if (out.blocked) sources.push(`${agency} BLOCKED (backing off; the weather service is unaffected)`);
-	else if (out.read?.calls) sources.push(`${agency}: ${active} active county-wide`);
-	else sources.push(`${agency}: not read this tick`);
-	sources.push(out.read?.weather ? "weather: read" : "weather: not read this tick");
-	const next = out.next
-		? `next: 911 board in ${minutes(out.next.calls.everyMs)}, weather in ${minutes(out.next.weather.everyMs)}`
-		: `next read in ${minutes(out.everyMs)}`;
-	log(`${sources.join("; ")}; ${next} (${out.why})`);
+	log(`weather: read; next read in ${minutes(out.everyMs)} (${out.why})`);
 	for (const r of results) {
 		if (r.error) log(`profile ${r.profileId}: FAILED ${r.error}`);
 		else if (!r.told && !r.cleared)

@@ -231,7 +231,7 @@ describe("extraction safety", () => {
 			{ facts: [], moments: [{ title: "Iceland trip", summary: "Planning Iceland in March", importance: 7 }], forget: ["old job"] },
 			{ audience: "adult", occurredAt: "2026-09-10 12:00:00" }
 		);
-		expect(r).toEqual({ facts: 0, moments: 1, forgotten: 1 });
+		expect(r).toMatchObject({ facts: 0, moments: 1, forgotten: 1, proposed: { facts: 0, moments: 1 } });
 		expect(memory.forgetFactsByKey).toHaveBeenCalledWith(42, ["old job"]);
 		const insert = pool.query.mock.calls.find(([sql]) => sql.includes("INTO memory_event"));
 		expect(insert[1]).toEqual(expect.arrayContaining(["conversation", "Iceland trip", "Planning Iceland in March"]));
@@ -314,13 +314,82 @@ describe("extraction safety", () => {
 
 	test("missing arrays are treated as empty, not crashes", async () => {
 		const r = await extract.applyExtraction(session, {}, { audience: "adult" });
-		expect(r).toEqual({ facts: 0, moments: 0, forgotten: 0 });
+		expect(r).toMatchObject({ facts: 0, moments: 0, forgotten: 0, proposed: { facts: 0, moments: 0 } });
 	});
 
 	test("the child prompt forbids personal details", () => {
 		const p = extract.buildPrompt({ lines: ["[person] hi"], knownFacts: [], audience: "child" });
 		expect(p).toMatch(/THIS IS A CHILD/);
 		expect(p).toMatch(/NEVER store: other people's names, addresses/);
+	});
+
+	test("the prompt asks for only new or changed facts", () => {
+		const p = extract.buildPrompt({ lines: ["[person] hi"], knownFacts: [{ category: "pet", key: "dog", value: "Biscuit" }], audience: "adult" });
+		expect(p).toMatch(/Never repeat a known fact whose value hasn't changed/);
+	});
+
+	// "0 facts" once hid a week of the model re-stating known facts. Every
+	// proposal that isn't written is counted under the reason it wasn't.
+	test("every dropped proposal is counted under its reason", async () => {
+		memory.getFactSlot.mockImplementation(async (_p, _c, key) =>
+			({ same: { source: "ai", memory_value: "v" }, curated: { source: "parent", memory_value: "Rex" } })[key] || null
+		);
+		const r = await extract.applyExtraction(
+			session,
+			{
+				facts: [
+					{ category: "pet", key: "same", value: "v", confidence: 90 },
+					{ category: "pet", key: "curated", value: "Max", confidence: 99 },
+					{ category: "work", key: "job", value: "maybe?", confidence: 20 },
+					{ category: "pet", key: "  ", value: "x", confidence: 90 },
+					{ category: "family", key: "new", value: "n", confidence: 90 },
+				],
+				moments: [
+					{ title: "a", summary: "one", importance: 5 },
+					{ title: "b", summary: "  ", importance: 5 },
+					{ title: "c", summary: "three", importance: 5 },
+				],
+				forget: [],
+			},
+			{ audience: "adult" }
+		);
+		expect(r).toMatchObject({
+			facts: 1,
+			moments: 1,
+			proposed: { facts: 5, moments: 3 },
+			dropped: { duplicate: 1, locked: 1, lowConfidence: 1, malformed: 2, overCap: 1 },
+		});
+	});
+
+	test("facts past the write cap are counted as over cap", async () => {
+		const facts = Array.from({ length: 12 }, (_, i) => ({ category: "family", key: `new-${i}`, value: `v${i}`, confidence: 90 }));
+		const r = await extract.applyExtraction(session, { facts, moments: [], forget: [] }, { audience: "adult" });
+		expect(r.dropped.overCap).toBe(4);
+	});
+
+	test("a dry run decides everything and writes nothing", async () => {
+		memory.getFactSlot.mockImplementation(async (_p, _c, key) => (key === "dog" ? { source: "ai", memory_value: "Biscuit" } : null));
+		const r = await extract.applyExtraction(
+			session,
+			{
+				facts: [
+					{ category: "pet", key: "dog", value: "Biscuit", confidence: 100 },
+					{ category: "family", key: "sister", value: "Emma", confidence: 90 },
+				],
+				moments: [{ title: "Trip", summary: "Planning a trip", importance: 6 }],
+				forget: ["old job"],
+			},
+			{ audience: "adult", dryRun: true }
+		);
+		expect(memory.upsertMemoryForProfile).not.toHaveBeenCalled();
+		expect(memory.forgetFactsByKey).not.toHaveBeenCalled();
+		expect(pool.query.mock.calls.find(([sql]) => sql.includes("INTO memory_event"))).toBeUndefined();
+		expect(r.decisions.map((d) => `${d.kind}:${d.key}:${d.outcome}`)).toEqual([
+			"fact:dog:duplicate",
+			"fact:sister:new",
+			"moment:Trip:new",
+			"forget:old job:forget",
+		]);
 	});
 });
 
@@ -385,11 +454,40 @@ describe("extraction sweep and cursor", () => {
 		expect(llm.generateJson.mock.calls[0][0].contents).toContain("new thing");
 	});
 
+	test("each extraction logs its counts, and which path ran it", async () => {
+		fakeDb();
+		messageService.getMessagesSince.mockResolvedValue([msg("hi", true, "2026-09-16 10:00:00"), msg("hello", false, "2026-09-16 10:00:05")]);
+		llm.generateJson.mockResolvedValue({
+			data: { facts: [{ category: "pet", key: "dog", value: "Biscuit", confidence: 90 }], moments: [], forget: [] },
+			endpointId: "test",
+			tier: "frontier",
+		});
+		memory.getFactSlot.mockResolvedValue({ source: "ai", memory_value: "Biscuit" });
+
+		await extract.extractSession({ id: 7, profile_id: 42 }, { audience: "adult", source: "nightly" });
+
+		const log = pool.query.mock.calls.find(([sql]) => sql.includes("INTO memory_extraction_log"));
+		// session, profile, source, human lines, proposed f/m, written f/m, forgotten, dup, low, locked, malformed, over cap
+		expect(log[1]).toEqual([7, 42, "nightly", 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0]);
+	});
+
+	test("a missing extraction log table never breaks extraction", async () => {
+		fakeDb();
+		pool.query.mockImplementation(async (sql) => {
+			if (sql.includes("INTO memory_extraction_log")) throw Object.assign(new Error("no table"), { code: "ER_NO_SUCH_TABLE" });
+			return [[]];
+		});
+		messageService.getMessagesSince.mockResolvedValue([msg("hi", true, "2026-09-16 10:00:00")]);
+		const r = await extract.extractSession({ id: 7, profile_id: 42 }, { audience: "adult" });
+		expect(r).toMatchObject({ facts: 0, moments: 0 });
+		expect(cursorWrites()).toHaveLength(1);
+	});
+
 	test("a window with no human messages costs nothing", async () => {
 		fakeDb();
 		messageService.getMessagesSince.mockResolvedValue([msg("just me talking", false, "2026-09-16 10:00:00")]);
 		const r = await extract.extractSession({ id: 7, profile_id: 42 }, { audience: "adult" });
-		expect(r).toEqual({ facts: 0, moments: 0, forgotten: 0 });
+		expect(r).toMatchObject({ facts: 0, moments: 0, forgotten: 0 });
 		expect(llm.generateJson).not.toHaveBeenCalled();
 		expect(cursorWrites()).toHaveLength(0);
 	});
@@ -448,7 +546,7 @@ describe("extraction sweep and cursor", () => {
 
 		const totals = await extract.extractPendingSessions({ audienceFor: async () => "adult" });
 
-		expect(totals).toEqual({ sessions: 2, facts: 2, moments: 2, forgotten: 2, failed: 0 });
+		expect(totals).toMatchObject({ sessions: 2, facts: 2, moments: 2, forgotten: 2, failed: 0, proposed: { facts: 2, moments: 2 } });
 	});
 });
 

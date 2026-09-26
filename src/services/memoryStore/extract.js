@@ -98,6 +98,7 @@ ${known}
 
 Rules:
 - facts: durable things THE PERSON said about themselves or their life — people, pets, places, work/school, interests, preferences, goals, routines, important dates. Use a short stable key ("dog's name", "favorite team", "sister") and put the detail in value. If a known fact changed, reuse its exact category and key with the new value. confidence 0-100.
+- Never repeat a known fact whose value hasn't changed — it is already remembered. Only NEW facts and CHANGED values belong in facts.
 - Only what the person stated or clearly confirmed. Never facts about Athena, never guesses, never things only Athena said.
 - moments: at most 2 genuinely notable things that happened or were discussed — a plan made, a story told, a feeling shared, a decision, a milestone. Skip small talk and games. importance 1-10 (10 = life event).
 - forget: exact keys of known facts the person explicitly asked you to forget or said were wrong.
@@ -122,7 +123,7 @@ function afterTurn(session, userText, { audience, memoryEnabled }) {
     EXPLICIT_CUE.test(userText || "") || PERSONAL_CUE.test(userText || "");
   if (cue || count >= TURNS_BEFORE_EXTRACT) {
     pendingTurns.set(session.id, 0);
-    extractSession(session, { audience }).catch((err) =>
+    extractSession(session, { audience, source: "turn" }).catch((err) =>
       console.warn("[memory] extraction failed:", err.message),
     );
   }
@@ -148,8 +149,11 @@ async function setCursor(sessionId, createdAt) {
  * Extract memories from a session's not-yet-processed messages.
  * Returns { facts, moments, forgotten } counts (all zero when nothing new).
  */
-async function extractSession(session, { audience = "child" } = {}) {
-  const empty = { facts: 0, moments: 0, forgotten: 0 };
+async function extractSession(
+  session,
+  { audience = "child", source = "turn" } = {},
+) {
+  const empty = emptyResult();
   if (!session?.profile_id || inFlight.has(session.id)) return empty;
   inFlight.add(session.id);
   try {
@@ -208,51 +212,126 @@ async function extractSession(session, { audience = "child" } = {}) {
     // Advance past everything read, not just everything extracted from, or
     // another participant's turns are reconsidered on every pass.
     await setCursor(session.id, all[all.length - 1].created_at);
+    await logExtraction(
+      session,
+      source,
+      messages.filter((m) => m.is_human).length,
+      result,
+    );
     return result;
   } finally {
     inFlight.delete(session.id);
   }
 }
 
-async function applyExtraction(session, data, { audience, occurredAt }) {
+/** Every reason a proposal can fail to become a memory, all zero. */
+function emptyDropped() {
+  return { duplicate: 0, lowConfidence: 0, locked: 0, malformed: 0, overCap: 0 };
+}
+
+/** What an extraction produced — and, as importantly, what it threw away. */
+function emptyResult() {
+  return {
+    facts: 0,
+    moments: 0,
+    forgotten: 0,
+    proposed: { facts: 0, moments: 0 },
+    dropped: emptyDropped(),
+  };
+}
+
+/**
+ * Write what the model proposed, and account for everything that wasn't
+ * written. "0 facts" alone can't tell "nothing new was said" from "the
+ * extractor is broken" — the 2026-09 stall looked like the second and was
+ * the model re-stating known facts that the duplicate check then skipped.
+ *
+ * `dryRun` decides everything the same way but writes nothing, and returns
+ * a `decisions` list so a replay can show why each proposal landed where it did.
+ */
+async function applyExtraction(
+  session,
+  data,
+  { audience, occurredAt, dryRun = false },
+) {
   const profileId = session.profile_id;
   const familyId = session.family_id || null;
-  let facts = 0;
-  let moments = 0;
+  const result = emptyResult();
+  const decisions = [];
+  const decide = (kind, item, outcome) => {
+    if (dryRun) decisions.push({ kind, category: item?.category, key: item?.key ?? item?.title, outcome });
+  };
+
+  const proposedFacts = Array.isArray(data.facts) ? data.facts : [];
+  const proposedMoments = Array.isArray(data.moments) ? data.moments : [];
+  result.proposed = { facts: proposedFacts.length, moments: proposedMoments.length };
 
   // Cap WRITES, not candidates. The model re-states facts it was already told
   // about in the prompt, so capping the candidate list let those duplicates
   // eat the budget and silently drop genuinely new facts off the end.
-  for (const f of (data.facts || []).slice(0, MAX_FACT_CANDIDATES)) {
-    if (facts >= MAX_FACT_WRITES) break;
+  const candidates = proposedFacts.slice(0, MAX_FACT_CANDIDATES);
+  result.dropped.overCap += proposedFacts.length - candidates.length;
+  for (let i = 0; i < candidates.length; i++) {
+    const f = candidates[i];
+    if (result.facts >= MAX_FACT_WRITES) {
+      result.dropped.overCap += candidates.length - i;
+      break;
+    }
     if (
       !f ||
       typeof f.key !== "string" ||
       !f.key.trim() ||
       typeof f.value !== "string"
-    )
+    ) {
+      result.dropped.malformed += 1;
+      decide("fact", f, "malformed");
       continue;
+    }
     const confidence = Math.max(0, Math.min(100, Number(f.confidence) || 60));
-    if (confidence < 50) continue;
+    if (confidence < 50) {
+      result.dropped.lowConfidence += 1;
+      decide("fact", f, "lowConfidence");
+      continue;
+    }
     const existing = await memory.getFactSlot(profileId, f.category, f.key);
     if (existing && !existing.deleted_at) {
-      if (existing.source === "parent") continue; // parent-curated: never overwritten by AI
-      if (existing.source === "user" && confidence < 80) continue;
-      if ((existing.memory_value || "") === f.value) continue;
+      // parent-curated: never overwritten by AI; user-entered: only by a
+      // high-confidence restatement
+      if (existing.source === "parent" || (existing.source === "user" && confidence < 80)) {
+        result.dropped.locked += 1;
+        decide("fact", f, "locked");
+        continue;
+      }
+      if ((existing.memory_value || "") === f.value) {
+        result.dropped.duplicate += 1;
+        decide("fact", f, "duplicate");
+        continue;
+      }
     }
-    await memory.upsertMemoryForProfile(profileId, familyId, {
-      category: f.category,
-      key: f.key,
-      value: f.value,
-      source: "ai",
-      confidence,
-      visibility: "private",
-    });
-    facts += 1;
+    decide("fact", f, existing && !existing.deleted_at ? "update" : "new");
+    if (!dryRun) {
+      await memory.upsertMemoryForProfile(profileId, familyId, {
+        category: f.category,
+        key: f.key,
+        value: f.value,
+        source: "ai",
+        confidence,
+        visibility: "private",
+      });
+    }
+    result.facts += 1;
   }
 
-  for (const m of (data.moments || []).slice(0, 2)) {
-    if (!m || typeof m.summary !== "string" || !m.summary.trim()) continue;
+  result.dropped.overCap += Math.max(0, proposedMoments.length - 2);
+  for (const m of proposedMoments.slice(0, 2)) {
+    if (!m || typeof m.summary !== "string" || !m.summary.trim()) {
+      result.dropped.malformed += 1;
+      decide("moment", m, "malformed");
+      continue;
+    }
+    decide("moment", m, "new");
+    result.moments += 1;
+    if (dryRun) continue;
     await createEvent({
       profileId,
       familyId,
@@ -266,14 +345,54 @@ async function applyExtraction(session, data, { audience, occurredAt }) {
       sessionId: session.id,
       metadata: { audience },
     });
-    moments += 1;
   }
 
-  const forgotten = await memory.forgetFactsByKey(
-    profileId,
-    (data.forget || []).slice(0, 10),
-  );
-  return { facts, moments, forgotten };
+  const forget = (Array.isArray(data.forget) ? data.forget : []).slice(0, 10);
+  if (dryRun) {
+    for (const key of forget) decisions.push({ kind: "forget", key, outcome: "forget" });
+    return { ...result, decisions };
+  }
+  result.forgotten = await memory.forgetFactsByKey(profileId, forget);
+  return result;
+}
+
+/**
+ * One row per extraction, counts only — never content, so it is safe for
+ * child profiles too. The self-review reads it to tell a quiet extractor from
+ * a broken one. Best-effort: until migration 0045 is applied the insert fails
+ * and extraction carries on exactly as before.
+ */
+let extractionLogEnabled = true;
+async function logExtraction(session, source, humanLines, r) {
+  if (!extractionLogEnabled) return;
+  try {
+    await pool.query(
+      `INSERT INTO memory_extraction_log
+         (session_id, profile_id, source, human_lines, proposed_facts, proposed_moments,
+          written_facts, written_moments, forgotten, dropped_duplicate, dropped_low_confidence,
+          dropped_locked, dropped_malformed, dropped_over_cap)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+      [
+        session.id,
+        session.profile_id,
+        source,
+        humanLines,
+        r.proposed.facts,
+        r.proposed.moments,
+        r.facts,
+        r.moments,
+        r.forgotten,
+        r.dropped.duplicate,
+        r.dropped.lowConfidence,
+        r.dropped.locked,
+        r.dropped.malformed,
+        r.dropped.overCap,
+      ],
+    );
+  } catch (err) {
+    if (err?.code === "ER_NO_SUCH_TABLE") extractionLogEnabled = false;
+    else console.warn("[memory] extraction log write failed:", err.message);
+  }
 }
 
 /** Nightly sweep: extract any session with unprocessed messages from the last 2 days. */
@@ -290,7 +409,15 @@ async function extractPendingSessions({ limit = 200, audienceFor } = {}) {
      LIMIT ?;`,
     [limit],
   );
-  const totals = { sessions: 0, facts: 0, moments: 0, forgotten: 0, failed: 0 };
+  const totals = {
+    sessions: 0,
+    facts: 0,
+    moments: 0,
+    forgotten: 0,
+    failed: 0,
+    proposed: { facts: 0, moments: 0 },
+    dropped: emptyDropped(),
+  };
   for (const s of sessions) {
     try {
       const audience = audienceFor ? await audienceFor(s.profile_id) : "child";
@@ -299,11 +426,14 @@ async function extractPendingSessions({ limit = 200, audienceFor } = {}) {
         !(await audienceFor.memoryEnabled(s.profile_id))
       )
         continue;
-      const r = await extractSession(s, { audience });
+      const r = await extractSession(s, { audience, source: "nightly" });
       totals.sessions += 1;
       totals.facts += r.facts;
       totals.moments += r.moments;
       totals.forgotten += r.forgotten;
+      totals.proposed.facts += r.proposed?.facts || 0;
+      totals.proposed.moments += r.proposed?.moments || 0;
+      for (const k of Object.keys(totals.dropped)) totals.dropped[k] += r.dropped?.[k] || 0;
     } catch (err) {
       totals.failed += 1;
       console.warn(

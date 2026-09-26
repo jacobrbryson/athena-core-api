@@ -57,8 +57,6 @@
  */
 const { randomUUID, createHash } = require("node:crypto");
 const pool = require("../../helpers/db");
-const { fetchIncidents } = require("./fetch");
-const normalise = require("./normalise");
 const nws = require("./nws");
 const phoneAlerts = require("./phoneAlerts");
 const geo = require("./geo");
@@ -68,8 +66,6 @@ const AGENCY = process.env.PULSEPOINT_AGENCY || "EMS1681";
 const DEFAULT_RADIUS_MILES = Number(process.env.PULSEPOINT_RADIUS_MILES) || 3;
 /** A phone position older than this is where you were, not where you are. */
 const LOCATION_FRESH_MS = 45 * 60 * 1000;
-/** Fetch at most this often, however many callers ask. */
-const CACHE_MS = 60 * 1000;
 /** How far back "already told them about this one" is remembered. */
 const SEEN_WINDOW_HOURS = 24;
 /** An incident nudge stays worth reading for this long. */
@@ -78,25 +74,6 @@ const NUDGE_TTL_S = 3 * 60 * 60;
 /** Codes that are real dispatches but never news to a neighbour. */
 const QUIET_CODES = new Set(["LA", "PS", "IFT", "CPR", "ME", "MCI"]);
 const QUIET_CATEGORIES = new Set(["Medical"]);
-
-let cache = { at: 0, list: null, pending: null };
-
-/** The county board, decoded and normalised, shared for CACHE_MS. */
-async function board() {
-	if (cache.list && Date.now() - cache.at < CACHE_MS) return cache.list;
-	if (!cache.pending) {
-		cache.pending = fetchIncidents(AGENCY)
-			.then((payload) => {
-				cache = { at: Date.now(), list: normalise.incidents(payload), pending: null };
-				return cache.list;
-			})
-			.catch((error) => {
-				cache.pending = null;
-				throw error;
-			});
-	}
-	return cache.pending;
-}
 
 const bad = (message) => Object.assign(new Error(message), { status: 400 });
 
@@ -196,11 +173,15 @@ function worthTelling(incident) {
 	return true;
 }
 
-/** Active incidents near this person's places, nearest first, with the match. */
-async function nearbyFor(profileId, { list = null, places = null } = {}) {
+/**
+ * Active incidents from `list` near this person's places, nearest first, with
+ * the match. The PulsePoint web board is no longer read (it blocks automated
+ * readers; owner removed the poller 2026-09-26), so the list is always given.
+ */
+async function nearbyFor(profileId, { list = [], places = null } = {}) {
 	const watched = places || (await placesFor(profileId));
 	if (!watched.length) return [];
-	const incidents = list || (await board());
+	const incidents = list || [];
 	const out = [];
 	for (const incident of incidents) {
 		if (incident.status !== "active" || !worthTelling(incident)) continue;
@@ -314,8 +295,8 @@ function sheet(hits, countyActive, weather = []) {
 }
 
 const PROMPT = (facts, floor) =>
-	"You are Athena, looking after the person you live with. Below is what the county 911 " +
-	"dispatch board and the National Weather Service say is happening near their home and the " +
+	"You are Athena, looking after the person you live with. Below is what 911 calls reported by " +
+	"PulsePoint and the National Weather Service say is happening near their home and the " +
 	"places they asked you to watch, " +
 	"right now.\n\n" +
 	JSON.stringify(facts, null, 1) +
@@ -453,6 +434,27 @@ async function getSituation(profileId) {
 	};
 }
 
+/**
+ * The banner's "Got it", held in the database so it survives across devices
+ * and cache clears. One key per person: whatever they last acknowledged. A new
+ * development carries a new key, so it is never silenced by an old "Got it".
+ */
+async function acknowledgedKey(profileId) {
+	const [rows] = await pool.query("SELECT alert_key FROM athena_alert_ack WHERE profile_id = ?", [profileId]);
+	return rows[0]?.alert_key || null;
+}
+
+async function acknowledge(profileId, key) {
+	const alertKey = typeof key === "string" ? key.trim().slice(0, 255) : "";
+	if (!alertKey) throw bad("Nothing to acknowledge.");
+	await pool.query(
+		`INSERT INTO athena_alert_ack (profile_id, alert_key) VALUES (?, ?)
+		 ON DUPLICATE KEY UPDATE alert_key = VALUES(alert_key), acknowledged_at = NOW()`,
+		[profileId, alertKey]
+	);
+	return { acknowledgedKey: alertKey };
+}
+
 /** The nearby calls as the clients see them. Street names, never raw codes. */
 function publicIncidents(hits) {
 	return (hits || []).map(({ incident, nearest }) => ({
@@ -583,10 +585,10 @@ const keyOf = (ids) => createHash("sha1").update(ids.join(",")).digest("hex");
  *
  * ## "Could not read" is not "nothing is happening"
  *
- * `list` is null when PulsePoint was not read this tick — not due, or blocked.
- * The calls already known are then carried forward untouched: declaring an
+ * `weather` is null when the weather service was not read this tick. The
+ * alerts already known are then carried forward untouched: declaring an
  * all-clear because a source went dark would be the worst lie this thing
- * could tell. Only a source we actually read can clear its own half.
+ * could tell. Phone-reported calls clear only on their own expiry clock.
  *
  * `dryRun` computes everything and writes/sends nothing.
  */
@@ -597,13 +599,13 @@ async function checkProfile(
 	const places = await placesFor(profileId);
 	const previous = await getSituation(profileId);
 
-	// Calls: read now, or carried forward in the shape they were stored in.
-	// Anything the PHONE told us about is kept across a feed read and expires
-	// on its own clock — the feed will never mention it, and nothing will ever
-	// say it is over. See phoneAlerts.js.
+	// Calls: only what the PHONE told us about (recordPhoneAlert), carried
+	// forward until each expires on its own clock — nothing will ever say it is
+	// over. See phoneAlerts.js. A `list` is only ever passed by tests now; any
+	// call left from the old web-board reader has no clock and is dropped.
 	const kept = (previous.incidents || []).filter((i) => i.via === "phone" && !phoneAlerts.expired(i));
 	const hits = list ? await nearbyFor(profileId, { list, places }) : null;
-	const calls = hits ? [...publicIncidents(hits), ...kept] : (previous.incidents || []).filter((i) => !phoneAlerts.expired(i));
+	const calls = hits ? [...publicIncidents(hits), ...kept] : kept;
 	// Weather: same rule.
 	const alerts = weather ?? previous.weather ?? [];
 
@@ -785,17 +787,18 @@ const MINUTE_MS = 60_000;
 const CALM_EVERY_MS = 15 * MINUTE_MS;
 const HOT_EVERY_MS = 5 * MINUTE_MS;
 const HOT_FOR_MS = 60 * MINUTE_MS;
-/** A source that has shut automated readers out is asked again this rarely. */
-const BLOCKED_EVERY_MS = 6 * 60 * MINUTE_MS;
 /** Scheduler ticks drift by seconds; a poll due in under this is due now. */
 const TICK_SLACK_MS = 45_000;
 
 /** Two misses in a row is half an hour blind at the calm rhythm — say so. */
 const OUTAGE_AFTER_FAILURES = 2;
 
-/** The two sources behind "what is happening near me". */
-const SOURCES = { calls: "pulsepoint", weather: "nws" };
-const SOURCE_LABEL = { pulsepoint: "the county 911 dispatch board", nws: "the weather service" };
+/**
+ * The one polled source. 911 calls arrive by push from the phone
+ * (recordPhoneAlert), never by polling PulsePoint.
+ */
+const SOURCES = { weather: "nws" };
+const SOURCE_LABEL = { nws: "the weather service" };
 
 /**
  * How fast the situation is moving, which both sources share.
@@ -841,29 +844,13 @@ async function sourceHealth(source, hotValue = undefined) {
 	};
 }
 
-/** The 911 board's health — what the banner, the prompt and --status read. */
-async function feedHealth() {
-	return sourceHealth(SOURCES.calls);
-}
-
-/** Every source, for the banner: one being blocked says nothing about the other. */
+/** The weather feed's health — what the prompt and --status read. */
 async function sourcesHealth() {
-	const hot = await hotUntil();
-	const [calls, weather] = await Promise.all([
-		sourceHealth(SOURCES.calls, hot),
-		sourceHealth(SOURCES.weather, hot),
-	]);
-	return { calls, weather };
+	return { weather: await sourceHealth(SOURCES.weather) };
 }
 
 /** How often to read right now, and why — the answer `--status` prints. */
 function rhythmFor(health, now = Date.now()) {
-	if (health.blocked) {
-		return {
-			everyMs: BLOCKED_EVERY_MS,
-			why: `${SOURCE_LABEL[health.source] || "the source"} is blocking automated readers`,
-		};
-	}
 	if (health.hotInSeconds > 0) return { everyMs: HOT_EVERY_MS, why: "something is happening nearby" };
 	return { everyMs: CALM_EVERY_MS, why: "all quiet" };
 }
@@ -903,132 +890,79 @@ async function recordFeedOk(source) {
 	);
 }
 
-/**
- * Record a miss; once it is an outage, tell every watched person — once per
- * outage. A block is an outage on the first miss: it is a decision on their
- * side, not a blip that the next read might clear.
- */
+/** Record a miss; once it is an outage, tell every watched person — once per outage. */
 async function recordFeedFailure(source, error) {
 	await pool.query(
-		`INSERT INTO athena_incident_source (source, consecutive_failures, last_error, blocked_at) VALUES (?, 1, ?, ?)
-		 ON DUPLICATE KEY UPDATE consecutive_failures = consecutive_failures + 1, last_error = VALUES(last_error),
-		   blocked_at = IF(VALUES(blocked_at) IS NULL, blocked_at, COALESCE(blocked_at, VALUES(blocked_at)))`,
-		[source, String(error?.message || error).slice(0, 500), error?.blocked ? new Date() : null]
+		`INSERT INTO athena_incident_source (source, consecutive_failures, last_error) VALUES (?, 1, ?)
+		 ON DUPLICATE KEY UPDATE consecutive_failures = consecutive_failures + 1, last_error = VALUES(last_error)`,
+		[source, String(error?.message || error).slice(0, 500)]
 	);
 	const health = await sourceHealth(source);
 	if (!health.down || health.outageNotifiedAt) return health;
 	await pool.query("UPDATE athena_incident_source SET outage_notified_at = NOW() WHERE source = ?", [source]);
 	const what = SOURCE_LABEL[source] || source;
-	const text = health.blocked
-		? `Heads up: ${what} has started blocking automated readers, so I can't see it or warn you about what it covers. I'll check again every few hours. The PulsePoint Respond app can still notify you directly.`
-		: `Heads up: I can't read ${what} right now, so I can't warn you about what it covers until it's back. I'll keep trying.`;
+	const text = `Heads up: I can't read ${what} right now, so I can't warn you about what it covers until it's back. I'll keep trying.`;
 	for (const profileId of await watchedProfiles()) {
 		await tell(profileId, {
 			dedupeKey: `pp-outage:${Date.now()}`,
 			text,
 			urgent: false,
-			facts: { agency: AGENCY, source, outage: true, blocked: health.blocked, error: health.lastError },
+			facts: { source, outage: true, error: health.lastError },
 		}).catch(() => undefined);
 	}
 	return health;
 }
 
 /**
- * One scheduler tick. Reads only when the rhythm says it is due (or `force`),
- * then passes over everyone. Never throws for one profile's failure; a block
- * is recorded and reported as `blocked`, not thrown, because it is a known
- * state and not a crash.
+ * One scheduler tick: the weather service, read only when the rhythm says it
+ * is due (or `force`), then a pass over everyone. The same pass also retires
+ * phone-reported calls whose clock has run out. Never throws for one
+ * profile's failure.
  */
 async function runOnce({ dryRun = false, generate, force = false } = {}) {
-	const hot = await hotUntil();
-	const health = { calls: await sourceHealth(SOURCES.calls, hot), weather: await sourceHealth(SOURCES.weather, hot) };
-	const due = { calls: isDue(health.calls), weather: isDue(health.weather) };
-	const read = {
-		calls: force || dryRun || due.calls.due,
-		weather: force || dryRun || due.weather.due,
-	};
-	if (!read.calls && !read.weather) {
-		const soonest = due.calls.nextInMs <= due.weather.nextInMs ? due.calls : due.weather;
-		return { agency: AGENCY, skipped: true, why: soonest.why, everyMs: soonest.everyMs, nextInMs: soonest.nextInMs, results: [] };
+	const health = await sourceHealth(SOURCES.weather);
+	const due = isDue(health);
+	if (!(force || dryRun || due.due)) {
+		return { skipped: true, why: due.why, everyMs: due.everyMs, nextInMs: due.nextInMs, results: [] };
 	}
-
-	// The 911 board. A block is a state, not a crash: recorded, reported, and
-	// the pass carries on — the weather half still works.
-	let list = null;
-	let blocked = false;
-	if (read.calls) {
-		if (!dryRun) await recordAttempt(SOURCES.calls);
-		try {
-			list = await board();
-			if (!dryRun) await recordFeedOk(SOURCES.calls).catch(() => undefined);
-		} catch (error) {
-			if (!dryRun) await recordFeedFailure(SOURCES.calls, error).catch(() => undefined);
-			if (!error?.blocked) console.warn("[pulsepoint] could not read the board:", error.message);
-			blocked = !!error?.blocked;
-		}
-	}
-	const countyActive = list ? list.filter((i) => i.status === "active").length : null;
 
 	// The weather service, per profile, because alerts are per point.
 	let weatherOk = null;
-	if (read.weather && !dryRun) await recordAttempt(SOURCES.weather);
+	if (!dryRun) await recordAttempt(SOURCES.weather);
 
 	const results = [];
 	for (const profileId of await watchedProfiles()) {
 		let weather = null;
-		if (read.weather) {
-			try {
-				weather = await nws.alertsForPlaces(await placesFor(profileId));
-				weatherOk = weatherOk !== false;
-			} catch (error) {
-				weatherOk = false;
-				console.warn("[nws] could not read alerts:", error.message);
-			}
+		try {
+			weather = await nws.alertsForPlaces(await placesFor(profileId));
+			weatherOk = weatherOk !== false;
+		} catch (error) {
+			weatherOk = false;
+			console.warn("[nws] could not read alerts:", error.message);
 		}
 		try {
-			results.push(await checkProfile(profileId, { dryRun, list, countyActive, generate, weather }));
+			results.push(await checkProfile(profileId, { dryRun, generate, weather }));
 		} catch (error) {
 			results.push({ profileId, error: error.message });
 		}
 	}
-	if (read.weather && !dryRun && weatherOk !== null) {
+	if (!dryRun && weatherOk !== null) {
 		if (weatherOk) await recordFeedOk(SOURCES.weather).catch(() => undefined);
 		else await recordFeedFailure(SOURCES.weather, new Error("The weather service could not be read.")).catch(() => undefined);
 	}
 
 	// Anything new — or a situation escalating — is "something came up".
 	if (!dryRun && results.some((r) => r.told > 0 || r.escalated)) await heatUp().catch(() => undefined);
-	// Each source has its own next read: a blocked 911 board says nothing about
-	// when the weather is next looked at.
-	const fresh = dryRun ? health : { calls: await sourceHealth(SOURCES.calls), weather: await sourceHealth(SOURCES.weather) };
-	const next = { calls: rhythmFor(fresh.calls), weather: rhythmFor(fresh.weather) };
-	return {
-		agency: AGENCY,
-		active: countyActive,
-		blocked,
-		read,
-		results,
-		next,
-		everyMs: Math.min(next.calls.everyMs, next.weather.everyMs),
-		why: next.calls.everyMs <= next.weather.everyMs ? next.calls.why : next.weather.why,
-	};
+	const next = rhythmFor(dryRun ? health : await sourceHealth(SOURCES.weather));
+	return { results, everyMs: next.everyMs, why: next.why };
 }
 
-/** For the in-app banner: the situation plus whether the feed can be trusted. */
+/** For the in-app banner: the situation and the places it is measured from. */
 async function alertFor(profileId) {
-	const [situation, health, places] = await Promise.all([
-		getSituation(profileId),
-		sourcesHealth().catch(() => null),
-		placesFor(profileId).catch(() => []),
-	]);
-	const status = (h) =>
-		h
-			? { ok: !h.down, blocked: h.blocked, lastOkAt: h.lastOkAt, error: h.down ? h.lastError : null }
-			: { ok: false, blocked: false, lastOkAt: null, error: "unknown" };
+	const [situation, places] = await Promise.all([getSituation(profileId), placesFor(profileId).catch(() => [])]);
 	return {
 		places: publicPlaces(places),
 		weather: situation.weather || [],
-		sources: { calls: status(health?.calls), weather: status(health?.weather) },
 		level: situation.level,
 		headline: situation.headline,
 		body: situation.body,
@@ -1037,8 +971,7 @@ async function alertFor(profileId) {
 		startedAt: situation.startedAt || null,
 		updatedAt: situation.updatedAt || null,
 		assessedBy: situation.assessedBy || null,
-		// Kept for any client that predates `sources`: the 911 board's status.
-		feed: status(health?.calls),
+		acknowledgedKey: await acknowledgedKey(profileId).catch(() => null),
 	};
 }
 
@@ -1051,26 +984,12 @@ async function alertFor(profileId) {
 async function promptBlock(profileId) {
 	if (!profileId) return null;
 	const [situation, sources] = await Promise.all([getSituation(profileId), sourcesHealth().catch(() => null)]);
-	const health = sources?.calls;
 	const lines = [];
 	if (sources?.weather?.down) {
 		lines.push(
 			"# You cannot see weather alerts right now",
 			"",
 			"The National Weather Service feed has been failing, so you cannot warn them about storms.",
-			""
-		);
-	}
-	if (health?.down) {
-		lines.push(
-			"# You cannot see the county 911 dispatch board right now",
-			"",
-			health.blocked
-				? "PulsePoint has started blocking automated readers, so you cannot see 911 calls near them. " +
-					"You will not try to get around that. If they ask about sirens or anything nearby, say so " +
-					"plainly, and mention the PulsePoint Respond app can notify them directly."
-				: "Your emergency feed has been failing, so you cannot currently warn them about emergencies " +
-					"nearby. If they ask about sirens or anything happening near home, say so plainly.",
 			""
 		);
 	}
@@ -1104,7 +1023,7 @@ async function promptBlock(profileId) {
 			"- Be specific and calm: what, where, how close, one practical suggestion.",
 			"- Only what is listed below. Do not invent injuries, causes or closures.",
 			"",
-			"Live from the county dispatch board (PulsePoint, Iredell County):",
+			"From PulsePoint notifications on their phone:",
 			...list,
 			...(weatherLines.length ? ["", "From the National Weather Service, for their area:", ...weatherLines] : [])
 		);
@@ -1112,7 +1031,7 @@ async function promptBlock(profileId) {
 		lines.push(
 			"# An emergency call near them",
 			"",
-			"From the county 911 dispatch board and the National Weather Service. If they have not",
+			"From PulsePoint notifications on their phone and the National Weather Service. If they have not",
 			"heard about it, mention it briefly; if they ask about sirens, the weather or anything",
 			"nearby, this is what you know. Do not speculate.",
 			"",
@@ -1135,10 +1054,8 @@ module.exports = {
 	floorLevel,
 	alertFor,
 	getSituation,
-	feedHealth,
+	acknowledge,
 	sourcesHealth,
-	isDue,
-	rhythmFor,
 	isDue,
 	rhythmFor,
 	promptBlock,
@@ -1148,7 +1065,4 @@ module.exports = {
 	removePlace,
 	wording,
 	worthTelling,
-	_resetCache: () => {
-		cache = { at: 0, list: null, pending: null };
-	},
 };

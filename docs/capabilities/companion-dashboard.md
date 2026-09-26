@@ -1,12 +1,12 @@
 ---
 id: companion-dashboard
 title: Companion dashboard
-summary: I offer a daily dashboard for your calendar, health, family, work, projects, memories and approvals, ordered by what I think matters most today.
+summary: I offer a daily dashboard for your calendar, health, family, work, projects, memories and approvals, with Health & Performance first.
 where: Companion → Dashboard; Chat → Daily briefing for the compact view
 status: partial
 surfaces: [companion]
 audiences: [adult]
-triggers: [dashboard, briefing, today, home screen, navigation, priority, order]
+triggers: [dashboard, briefing, today, home screen, navigation, order]
 ---
 
 ## What I can do
@@ -25,8 +25,8 @@ page is mine to work out, not yours to set; news watching has its own
 description. A page I could not read last time says so on the card. The
 dashboard reads data; it never connects accounts or approves actions by itself.
 
-I give you a responsive home screen with Calendar, Health & Performance,
-Family, Work, News & Updates, Projects, and Notifications. Calendar and health
+I give you a responsive home screen with Health & Performance, Calendar,
+Family, Mail, Work, News & Updates, Projects, and Notifications. Calendar and health
 cards check whether your apps are connected. Topic shortcuts open our chat
 with an editable question; you choose when to send it. Notifications shows what
 is waiting for your approval and opens the approval panel; its count also
@@ -36,12 +36,10 @@ labeled as memories. Memories, photos, and connected apps have direct shortcuts
 too. My controls provide hover, press, and keyboard-focus feedback. I respect
 your device's reduced-motion preference by disabling interaction movement.
 
-I also decide the order the cards appear in. I read the counts and timings
-behind each card — how soon your next event starts, how many approvals are
-open, whether a source is connected at all — and rank them, with a one-line
-reason shown on whichever card I put first. I never add or remove a card by
-doing this; if I cannot rank them, they stay in their usual order and I say
-nothing about it.
+The cards are always in the same order, with Health & Performance first. I
+don't re-sort them — you asked me not to. What I do read is the counts and
+timings behind each card, to decide whether anything deserves the alert
+banner across the top of the screen; most days nothing does.
 
 There is no refresh button, because there is nothing to refresh by hand: the
 dashboard updates itself when the server tells it something moved.
@@ -66,8 +64,7 @@ in the sidebar; if it cannot be loaded, I show your initial instead.
 
 If I cannot check your connected apps, open Connected apps from your menu and
 reconnect the provider there. A topic shortcut only fills the chat input; press
-Send when you want my answer. If my card ordering is unavailable, the cards
-appear in their standard order — nothing is hidden. Existing sign-in and access
+Send when you want my answer. Existing sign-in and access
 requirements still apply.
 
 ## Limits
@@ -80,16 +77,14 @@ from earlier days; a missing score is displayed as unknown, never zero.
 
 The landscape is decorative, not local weather. I never present sample personal
 data as yours. Opening a card does not send a message or approve an action, and
-ordering the cards never changes what is in them. My ranking is a reading order,
-not advice, and it is refreshed periodically rather than on every glance, so it
-can lag a change you just made. Live updates only reach a dashboard whose
+I can't reorder the cards. Live updates only reach a dashboard whose
 connection is healthy; when the socket is down it falls back to re-reading
 quietly in the background, which is slower but never wrong.
 
 Connected-provider reads may reuse results for up to 30 seconds, and my browser
 can reuse dashboard reads for another 15 seconds. External changes appear on
-the next refresh; background polling runs every five minutes. I reuse a card
-ordering only when its input signals match, for at most ten minutes. These
+the next refresh; background polling runs every five minutes. I reuse an alert
+judgement only when its input signals match, for at most ten minutes. These
 caches do not reuse our chat replies or approve anything. Browser copies stay
 in memory and are cleared on sign-in, sign-out, access errors, and updates.
 
@@ -113,7 +108,9 @@ in memory and are cleared on sign-in, sign-out, access errors, and updates.
 - Shell and preserved chat: `../../../companion/src/pages/CompanionConsole.tsx`
 - Styling: `../../../companion/src/dashboard.css`
 - Sidebar profile avatar: `../../../companion/src/components/ProfileAvatar.tsx`.
-- Card ordering: `../../src/services/dashboardPriority.js` via `GET /api/v1/dashboard/priority`.
+- Card order (fixed, health first — owner removed the model ranking 2026-09-26)
+  and the model's dashboard alert: `../../src/services/dashboardPriority.js` via
+  `GET /api/v1/dashboard/priority`.
 - Live updates: `rpc: "dashboardUpdated"` from `../../src/websocket/wsServer.js`.
 - Connection status: existing `GET /api/v1/integrations` through the shared client.
 - The supplied sprite sheet is rendered with CSS background positions.

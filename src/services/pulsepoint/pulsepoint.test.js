@@ -98,86 +98,6 @@ describe("calltypes", () => {
 	});
 });
 
-describe("normalise", () => {
-	const normalise = require("./normalise");
-
-	// Shaped exactly like a live EMS1681 response, including the string
-	// coordinates and the 0,0 redaction on the medical call.
-	const payload = {
-		incidents: {
-			alerts: [],
-			active: [
-				{
-					ID: "a1",
-					AgencyID: "EMS1681",
-					PulsePointIncidentCallType: "VF",
-					Latitude: "35.5826600000",
-					Longitude: "-80.8101000000",
-					FullDisplayAddress: "N CHURCH ST & E MOORE AVE, MOORESVILLE, NC",
-					CallReceivedDateTime: "2026-09-19T22:11:08Z",
-					AddressTruncated: "0",
-					Unit: [{}, {}],
-				},
-				{
-					ID: "a2",
-					AgencyID: "EMS1681",
-					PulsePointIncidentCallType: "ME",
-					Latitude: "0.0000000000",
-					Longitude: "0.0000000000",
-					FullDisplayAddress: "BERACAH RD, MOORESVILLE, NC",
-					CallReceivedDateTime: "2026-09-19T22:04:04Z",
-					AddressTruncated: "1",
-					Unit: [{}],
-				},
-			],
-			recent: [
-				{
-					ID: "a1",
-					PulsePointIncidentCallType: "VF",
-					Latitude: "35.58",
-					Longitude: "-80.81",
-				},
-			],
-		},
-	};
-
-	test("parses string coordinates into numbers", () => {
-		const [fire] = normalise.incidents(payload);
-		expect(fire.latitude).toBeCloseTo(35.58266, 4);
-		expect(fire.longitude).toBeCloseTo(-80.8101, 4);
-		expect(fire.locatable).toBe(true);
-	});
-
-	test("treats a redacted 0,0 medical call as unlocatable, not as the Atlantic", () => {
-		const medical = normalise.incidents(payload).find((i) => i.id === "a2");
-		expect(medical.latitude).toBeNull();
-		expect(medical.locatable).toBe(false);
-		expect(medical.addressTruncated).toBe(true);
-		// still kept, still named
-		expect(medical.what).toBe("Medical Emergency");
-	});
-
-	test("names the call and carries PulsePoint's alertable judgement", () => {
-		const [fire] = normalise.incidents(payload);
-		expect(fire.what).toBe("Vehicle Fire");
-		expect(fire.category).toBe("Fire");
-		expect(fire.alertable).toBe(true);
-		expect(fire.units).toBe(2);
-	});
-
-	test("an id in two buckets is kept once, as active", () => {
-		const list = normalise.incidents(payload);
-		expect(list.filter((i) => i.id === "a1")).toHaveLength(1);
-		expect(list.find((i) => i.id === "a1").status).toBe("active");
-	});
-
-	test("a redacted incident never matches a radius", () => {
-		const medical = normalise.incidents(payload).find((i) => i.id === "a2");
-		const home = { name: "Home", latitude: 35.5826, longitude: -80.8101 };
-		expect(geo.placesNear(medical, [home])).toEqual([]);
-	});
-});
-
 describe("watch", () => {
 	jest.mock("../../helpers/db", () => ({ query: jest.fn() }));
 	const watch = require("./watch");
@@ -313,7 +233,7 @@ describe("cadence", () => {
 	const { isDue, rhythmFor } = require("./watch");
 	// The database measures both of these, so the tests speak in seconds-ago
 	// and seconds-from-now rather than in timestamps — see hotUntil().
-	const health = (over = {}) => ({ blocked: false, hotInSeconds: null, sinceAttemptSeconds: null, ...over });
+	const health = (over = {}) => ({ hotInSeconds: null, sinceAttemptSeconds: null, ...over });
 
 	test("quiet: every 15 minutes", () => {
 		expect(rhythmFor(health()).everyMs).toBe(15 * 60000);
@@ -331,12 +251,6 @@ describe("cadence", () => {
 
 	test("a scheduler tick a few seconds early still counts", () => {
 		expect(isDue(health({ sinceAttemptSeconds: 15 * 60 - 20 })).due).toBe(true);
-	});
-
-	test("blocked: back right off, whatever else is going on", () => {
-		const blocked = health({ blocked: true, hotInSeconds: 30 * 60, sinceAttemptSeconds: 20 * 60 });
-		expect(rhythmFor(blocked).everyMs).toBe(6 * 60 * 60000);
-		expect(isDue(blocked).due).toBe(false);
 	});
 
 	test("never read: due immediately", () => {

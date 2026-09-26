@@ -151,7 +151,33 @@ async function memoryMetrics(space) {
 			embeddingCoverage: total ? +(Number(coverage.embedded) / total).toFixed(3) : 1,
 			eventsRecalled24h: Number(recalled.n),
 			conversationMoments72h: Number(quietDays.n),
+			extraction72h: await extractionMetrics(72),
 		};
+	});
+}
+
+/**
+ * What extraction proposed versus wrote, from both the chat path and the
+ * nightly sweep. Writes alone can't separate "nothing new was said" from "the
+ * extractor is broken": from 09-20 the model kept re-stating known facts, the
+ * duplicate check skipped every one, and the report only ever saw zeros.
+ * Its own section so a missing table (0045 not applied) doesn't take the rest
+ * of the memory metrics down with it.
+ */
+async function extractionMetrics(hours) {
+	return section(async () => {
+		const [[r]] = await pool.query(
+			`SELECT COUNT(*) AS runs, COUNT(DISTINCT DATE(created_at)) AS days,
+				COALESCE(SUM(human_lines), 0) AS humanLines,
+				COALESCE(SUM(proposed_facts), 0) AS proposedFacts, COALESCE(SUM(proposed_moments), 0) AS proposedMoments,
+				COALESCE(SUM(written_facts), 0) AS writtenFacts, COALESCE(SUM(written_moments), 0) AS writtenMoments,
+				COALESCE(SUM(dropped_duplicate), 0) AS duplicate, COALESCE(SUM(dropped_low_confidence), 0) AS lowConfidence,
+				COALESCE(SUM(dropped_locked), 0) AS locked, COALESCE(SUM(dropped_malformed), 0) AS malformed,
+				COALESCE(SUM(dropped_over_cap), 0) AS overCap
+			 FROM memory_extraction_log WHERE created_at >= NOW() - INTERVAL ? HOUR;`,
+			[hours]
+		);
+		return Object.fromEntries(Object.entries(r).map(([k, v]) => [k, Number(v)]));
 	});
 }
 
@@ -247,15 +273,31 @@ async function initiativeMetrics() {
 	});
 }
 
+/**
+ * Is anything reading the news? The nightly step only catches up memories for
+ * headlines the athena-news job already stored, so with that job down it finds
+ * nothing and looks healthy. Asked of the sources themselves instead.
+ */
+async function newsMetrics() {
+	return section(async () => {
+		const health = await require("../news/store").worldPollHealth();
+		const [[items]] = await pool.query(
+			`SELECT COUNT(*) AS n FROM news_item WHERE first_seen_at >= NOW() - INTERVAL 24 HOUR;`
+		);
+		return { ...health, items24h: Number(items.n) };
+	});
+}
+
 async function collectMetrics({ embeddingSpace }) {
-	const [last24h, baseline7d, chat, memory, initiative] = await Promise.all([
+	const [last24h, baseline7d, chat, memory, initiative, news] = await Promise.all([
 		modelMetrics(24, 0),
 		modelMetrics(24 * 8, 24),
 		chatMetrics(),
 		memoryMetrics(embeddingSpace),
 		initiativeMetrics(),
+		newsMetrics(),
 	]);
-	return { models: { last24h, baseline7d }, chat, memory, initiative };
+	return { models: { last24h, baseline7d }, chat, memory, initiative, news };
 }
 
 module.exports = { collectMetrics, summarizeCalls, percentile };

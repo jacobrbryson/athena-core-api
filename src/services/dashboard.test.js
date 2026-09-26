@@ -8,6 +8,7 @@ jest.mock('./familyChores', () => ({ getChoresToday: jest.fn() }));
 jest.mock('./connectors/work', () => ({ jira: jest.fn(), slack: jest.fn() }));
 jest.mock('./connectors/context', () => ({ technicalDetail: () => null }));
 jest.mock('./emailTriage', () => ({ summary: jest.fn() }));
+jest.mock('./familyHealth', () => ({ activeFor: jest.fn().mockResolvedValue([]) }));
 const credentials = require('./credentials');
 const consent = require('./consent');
 const calendar = require('./connectors/googleCalendar');
@@ -16,12 +17,14 @@ const work = require('./connectors/work');
 const integration = require('./integration');
 const chores = require('./familyChores');
 const emailTriage = require('./emailTriage');
+const familyHealth = require('./familyHealth');
 const { getDashboard } = require('./dashboard');
 beforeEach(() => {
   jest.resetAllMocks();
   credentials.list.mockResolvedValue([]);
   consent.hasConsentForProfile.mockResolvedValue(false);
   integration.getStatus.mockResolvedValue({ connected: false });
+  familyHealth.activeFor.mockResolvedValue([]);
 });
 test('unlinked sources remain explicit and make no provider calls', async () => {
   const result = await getDashboard(42, { googleId: 'caller' });

@@ -5,7 +5,7 @@ const geocode = require('../services/pulsepoint/geocode');
 /**
  * Look again right away when the places change, so a newly added home with
  * something already happening near it is told now rather than at the next
- * scheduled pass. Fire-and-forget: saving a place never waits on PulsePoint.
+ * scheduled pass. Fire-and-forget: saving a place never waits on it.
  */
 function recheck(profileId) {
   watch.checkProfile(profileId).catch((err) => console.warn('[nearby-incidents] recheck failed:', err.message));
@@ -60,27 +60,18 @@ async function removePlace(req, res) {
   }
 }
 
-/** What is active near their places right now, nearest first. */
+/**
+ * What is active near their places right now, nearest first: the stored
+ * situation's calls, which now come only from the phone's PulsePoint
+ * notifications. The web board is no longer read.
+ */
 async function nearby(req, res) {
   res.set('Cache-Control', 'no-store');
   const actor = await requireAdultActor(req, res);
   if (!actor) return;
   try {
-    const hits = await watch.nearbyFor(actor.profileId);
-    return res.json({
-      incidents: hits.map(({ incident, nearest }) => ({
-        id: incident.id,
-        code: incident.code,
-        what: incident.what,
-        category: incident.category,
-        address: incident.address,
-        units: incident.units,
-        receivedAt: incident.receivedAt,
-        serious: incident.alertable,
-        miles: Math.round(nearest.miles * 10) / 10,
-        place: nearest.place.live ? 'you' : nearest.place.name,
-      })),
-    });
+    const situation = await watch.getSituation(actor.profileId);
+    return res.json({ incidents: [...(situation.incidents || [])].sort((x, y) => x.miles - y.miles) });
   } catch (err) {
     return fail(res, err);
   }
@@ -88,8 +79,8 @@ async function nearby(req, res) {
 
 /**
  * The in-app banner: the stored situation (model-assessed, rules-floored) and
- * whether the feed behind it is alive. Cheap — two indexed reads, no fetch and
- * no model — because the companion polls it every minute.
+ * what this person last acknowledged. Cheap — indexed reads, no fetch and no
+ * model — because the companion polls it every minute.
  */
 async function alert(req, res) {
   res.set('Cache-Control', 'no-store');
@@ -97,6 +88,18 @@ async function alert(req, res) {
   if (!actor) return;
   try {
     return res.json(await watch.alertFor(actor.profileId));
+  } catch (err) {
+    return fail(res, err);
+  }
+}
+
+/** "Got it" on the banner: {key}. Held until a new development changes the key. */
+async function acknowledgeAlert(req, res) {
+  res.set('Cache-Control', 'no-store');
+  const actor = await requireAdultActor(req, res);
+  if (!actor) return;
+  try {
+    return res.json(await watch.acknowledge(actor.profileId, req.body?.key));
   } catch (err) {
     return fail(res, err);
   }
@@ -155,4 +158,4 @@ async function phoneAlert(req, res) {
   }
 }
 
-module.exports = { listPlaces, savePlace, removePlace, nearby, alert, lookupAddress, phoneAlert };
+module.exports = { listPlaces, savePlace, removePlace, nearby, alert, acknowledgeAlert, lookupAddress, phoneAlert };

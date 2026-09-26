@@ -1,18 +1,18 @@
 /**
- * What deserves the person's attention first.
+ * The dashboard's card order, and whether anything deserves the alert banner.
  *
- * The dashboard's cards are always the same seven; which one they should read
- * first is not. This hands the model a small, structured description of every
- * card — counts, the next thing on the clock, whether a source is even
- * connected — and asks for the same list back in priority order, each with a
- * one-line reason.
+ * The order is FIXED. It used to be a model ranking; the owner removed that on
+ * 2026-09-26 — "keep my health and performance first, remove the logic that
+ * lets the LLM auto-sort". Do not reintroduce a model ordering.
+ *
+ * What is still asked of the model is only the alert: given a small,
+ * structured description of every card (counts, the next thing on the clock,
+ * whether a source is connected), is anything serious enough to put across
+ * the top of the screen? The emergency situation floors that answer.
  *
  * Deliberately conservative:
- *   - It never invents or drops a card. The model's answer is treated as an
- *     ordering hint over a fixed set; unknown ids are discarded and missing
- *     ids are appended in the default order.
  *   - It never throws. A dashboard that fails to load because the model was
- *     down would be a worse dashboard than one in its default order.
+ *     down would be worse than one without an alert.
  *   - It runs on the local-first `json` task and is cached per profile, because
  *     this fires on every dashboard open and must not become an expensive habit.
  */
@@ -21,11 +21,11 @@ const dashboard = require("./dashboard");
 const actions = require("./actions");
 const readCache = require('./readCache');
 
-// The card set, in the order the dashboard falls back to. Changing these ids
-// means changing components/Dashboard.tsx in the companion app with them.
+// The card set, in the one order the dashboard uses. Changing these ids means
+// changing components/Dashboard.tsx in the companion app with them.
 const CARDS = [
-	{ id: "calendar", title: "Calendar" },
 	{ id: "health", title: "Health & Performance" },
+	{ id: "calendar", title: "Calendar" },
 	{ id: "family", title: "Family" },
 	{ id: "mail", title: "Mail" },
 	{ id: "work", title: "Work" },
@@ -33,7 +33,6 @@ const CARDS = [
 	{ id: "projects", title: "Projects" },
 	{ id: "notifications", title: "Notifications" },
 ];
-const CARD_IDS = new Set(CARDS.map((c) => c.id));
 const DEFAULT_ORDER = CARDS.map((c) => ({ id: c.id, why: null }));
 
 const CACHE_TTL_MS = 10 * 60 * 1000;
@@ -49,7 +48,7 @@ function minutesUntil(start) {
 }
 
 /**
- * The signal sheet the model ranks on: counts and the few facts that actually
+ * The signal sheet the model reads for the alert: counts and the few facts that actually
  * change an ordering, never the raw provider payloads. Keeping it this small
  * is what makes the call cheap enough to run on every dashboard open.
  */
@@ -165,29 +164,28 @@ function describe(summary, pendingCount) {
 
 const PROMPT = (cards, emergencies = null) =>
 	`These are the cards on someone's personal dashboard right now, with the live ` +
-	`signals behind each one:\n\n${JSON.stringify(cards, null, 1)}\n\n` +
+	`signals behind each one:
+
+${JSON.stringify(cards, null, 1)}
+
+` +
 	(emergencies
-		? `Emergency calls on the county 911 dispatch board near their home right now:\n` +
-			`${JSON.stringify(emergencies, null, 1)}\n\n`
+		? `Emergency calls near their home right now:
+` +
+			`${JSON.stringify(emergencies, null, 1)}
+
+`
 		: "") +
-	`Put them in the order this person should look at them, most important first.\n\n` +
-	`Weigh it the way a thoughtful assistant would:\n` +
-	`- A card marked "empty": true has nothing behind it right now. It cannot ` +
-	`be urgent, whatever its title suggests, and belongs below every card that ` +
-	`has something in it.\n` +
-	`- Something starting very soon, or already under way, beats everything.\n` +
-	`- A decision only they can make outranks information — when there is one ` +
-	`actually waiting.\n` +
-	`- A source that is not connected, or has nothing in it, sinks.\n` +
-	`- Low recovery next to a heavy day is worth raising; a good night is not.\n` +
-	`- Background reading comes last unless nothing else needs them.\n\n` +
-	`\nThen decide whether anything here is serious enough to put a big alert across ` +
+	`Decide whether anything here is serious enough to put a big alert across ` +
 	`the top of their screen the moment they open it — something they would be upset ` +
-	`to find out about later. Ongoing emergencies near their home always are. Most ` +
-	`days nothing is: use null.\n\n` +
-	`Return every id exactly once, no others, as JSON:\n` +
-	`{"order":[{"id":"...","why":"under 12 words, addressed to them"}],` +
-	`"alert":null or {"level":"watch" or "urgent","headline":"at most 8 words","body":"at most 40 words, addressed to them"}}`;
+	`to find out about later. Ongoing emergencies near their home always are. A card ` +
+	`marked "empty": true has nothing behind it and cannot be the reason. Most ` +
+	`days nothing is: use null.
+
+` +
+	`Answer as JSON:
+` +
+	`{"alert":null or {"level":"watch" or "urgent","headline":"at most 8 words","body":"at most 40 words, addressed to them"}}`;
 
 /**
  * The alert the model raised, floored by the emergency situation.
@@ -218,52 +216,8 @@ function mergeAlert(raw, situation) {
 }
 
 /**
- * An empty card may not outrank one with something in it.
- *
- * The prompt asks for this, but asking is not enough: "Notifications" reads as
- * urgent on its name alone, and an empty bell was ranking above a calendar
- * with the day's meetings in it. Emptiness is knowable here without a model,
- * so it is decided here — and the order the model chose survives intact within
- * each group.
- *
- * `empty: null` (News, whose feeds this sheet cannot see) never sinks.
- *
- * A card that falls only because it is empty also loses its reason: whatever
- * the model wrote to justify raising it described content that is not there,
- * and "2 approvals need you" under an empty card is worse than no line at all.
- */
-function applyEmptyFloor(order, empty) {
-	const filled = order.filter((e) => empty.get(e.id) !== true);
-	const blank = order.filter((e) => empty.get(e.id) === true);
-	if (!filled.length || !blank.length) return order;
-
-	const wasAt = new Map(order.map((e, i) => [e.id, i]));
-	return [...filled, ...blank].map((entry, i) =>
-		empty.get(entry.id) === true && i !== wasAt.get(entry.id)
-			? { ...entry, why: null }
-			: entry
-	);
-}
-
-/** Coerce a model answer into a complete, duplicate-free ordering of CARDS. */
-function normalize(raw) {
-	const seen = new Set();
-	const order = [];
-	for (const entry of Array.isArray(raw) ? raw : []) {
-		const id = typeof entry === "string" ? entry : entry?.id;
-		if (!CARD_IDS.has(id) || seen.has(id)) continue;
-		seen.add(id);
-		const why = typeof entry?.why === "string" ? entry.why.trim().slice(0, 120) : null;
-		order.push({ id, why: why || null });
-	}
-	for (const card of CARDS) if (!seen.has(card.id)) order.push({ id: card.id, why: null });
-	return order;
-}
-
-/**
- * The card order for this profile. Always resolves, always complete.
- * `reason` says where the order came from so the client can stay quiet about
- * an ordering nobody chose.
+ * The fixed card order and the alert for this profile. Always resolves.
+ * `source` says where the alert judgement came from.
  */
 async function getPriority(profileId, user) {
 	// The emergency situation first: it is the floor under the alert, and it
@@ -295,15 +249,12 @@ async function getPriority(profileId, user) {
 	}
 	const pending = await actions.listPending(profileId).catch(() => []);
 	const cards = describe(summary, pending.length);
-	const empty = new Map(cards.map((c) => [c.id, c.empty]));
 	// Reuse only an identical signal sheet and prompt, not merely a profile.
-	const inputKey = readCache.hash(['dashboard-order-v3', PROMPT(cards, emergencies)]);
+	const inputKey = readCache.hash(['dashboard-alert-v1', PROMPT(cards, emergencies)]);
 
 	// Nothing on the page has anything in it. Usually this is a snapshot taken
-	// before the providers answered, and there is no "more important" to find —
-	// so leave the order alone rather than spend a model call shuffling empties
-	// and then cache the result for ten minutes. Not when there are emergencies:
-	// then there is something to say regardless of the cards.
+	// before the providers answered — no model call, and nothing cached. Not
+	// when there are emergencies: then there is something to say regardless.
 	if (cards.every((c) => c.empty !== false) && !emergencies) {
 		return fallback();
 	}
@@ -313,15 +264,11 @@ async function getPriority(profileId, user) {
 			const { data, model } = await llm.generateJson({
 				task: "json",
 				contents: [{ role: "user", parts: [{ text: PROMPT(cards, emergencies) }] }],
-				check: (parsed) => {
-					const ids = (Array.isArray(parsed?.order) ? parsed.order : [])
-						.map((e) => (typeof e === "string" ? e : e?.id))
-						.filter((id) => CARD_IDS.has(id));
-					return new Set(ids).size === CARDS.length ? true : "order must list every card id exactly once";
-				},
+				check: (parsed) =>
+					parsed && typeof parsed === "object" && "alert" in parsed ? true : 'answer must be {"alert": ...}',
 			});
 			return {
-				order: applyEmptyFloor(normalize(data?.order), empty),
+				order: DEFAULT_ORDER,
 				alert: data?.alert ?? null,
 				source: "athena",
 				model: model || null,
@@ -330,13 +277,13 @@ async function getPriority(profileId, user) {
 		});
 		return { ...value, alert: mergeAlert(value.alert, situation) };
 	} catch (err) {
-		console.warn("[dashboard] prioritisation unavailable:", err.message);
-		// Not cached: the next open should get a real ordering if the model is back.
+		console.warn("[dashboard] alert assessment unavailable:", err.message);
+		// Not cached: the next open should get a real judgement if the model is back.
 		return fallback();
 	}
 }
 
-/** Drop the memoised order so the next read re-ranks (used when the data moves). */
+/** Drop the memoised judgement so the next read re-assesses (used when the data moves). */
 function invalidate(profileId) {
 	return readCache.invalidate(profileId, 'dashboard-order');
 }

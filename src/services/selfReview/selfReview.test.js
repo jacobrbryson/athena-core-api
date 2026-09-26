@@ -170,6 +170,97 @@ describe("ruleFindings", () => {
 		expect(f.find((x) => x.area === "memory").title).toMatch(/no new memories/);
 	});
 
+	describe("news and maintenance", () => {
+		const run = ({ news, maintenance = null }) =>
+			ruleFindings({ metrics: { models: { last24h: healthyModels }, news }, evals: {}, config: { orcwoodCount: 1 }, maintenance });
+		const newsMetrics = (overdue, worldSources = 2) => ({ available: true, worldSources, overdue, items24h: 0 });
+
+		// 09-21 to 09-27: NPR and BBC never polled, nightly step "ok", no finding.
+		test("every world source overdue means the watcher is down", () => {
+			const [f] = run({ news: newsMetrics([{ host: "feeds.npr.org", lastCheckedAt: null }, { host: "feeds.bbci.co.uk", lastCheckedAt: null }]) });
+			expect(f).toMatchObject({ severity: "high", area: "news" });
+			expect(f.title).toMatch(/News watcher has stopped/);
+			expect(f.evidence).toMatch(/feeds.npr.org \(last polled never\).*athena-news/);
+		});
+
+		test("some overdue sources are a medium finding", () => {
+			const [f] = run({ news: newsMetrics([{ host: "feeds.npr.org", lastCheckedAt: "2026-09-20T00:00:00Z" }]) });
+			expect(f).toMatchObject({ severity: "medium", title: "1 of 2 world news source(s) overdue" });
+			expect(f.evidence).toMatch(/last polled 2026-09-20/);
+		});
+
+		test("sources polled on schedule produce nothing", () => {
+			expect(run({ news: newsMetrics([]) })).toEqual([]);
+		});
+
+		test("a failed maintenance step becomes a finding", () => {
+			const f = run({ news: newsMetrics([]), maintenance: { consolidation: { ok: false, error: "lock wait timeout" }, reflections: { ok: true } } });
+			expect(f).toEqual([expect.objectContaining({ severity: "high", area: "maintenance", title: 'Nightly step "consolidation" failed', evidence: "lock wait timeout" })]);
+		});
+
+		test("a failed news step isn't reported twice when the watcher rule already fired", () => {
+			const f = run({
+				news: newsMetrics([{ host: "a", lastCheckedAt: null }], 1),
+				maintenance: { news: { ok: false, error: "news watcher isn't polling" } },
+			});
+			expect(f.map((x) => x.area)).toEqual(["news"]);
+		});
+
+		test("sessions that failed extraction are flagged", () => {
+			const f = run({ news: newsMetrics([]), maintenance: { extraction: { ok: true, failed: 2 } } });
+			expect(f[0]).toMatchObject({ severity: "medium", area: "memory" });
+		});
+	});
+
+	// From 09-20 writes were zero for a week and no rule fired: the old rule
+	// needed 30+ messages a day. Extraction is judged on proposals instead.
+	describe("extraction", () => {
+		const ex = (over) => ({
+			available: true, runs: 0, days: 0, humanLines: 0, proposedFacts: 0, proposedMoments: 0, writtenFacts: 0, writtenMoments: 0,
+			duplicate: 0, lowConfidence: 0, locked: 0, malformed: 0, overCap: 0, ...over,
+		});
+		const findingsFor = (extraction72h, humanMessages = 2) =>
+			ruleFindings({
+				metrics: {
+					models: { last24h: healthyModels },
+					chat: { available: true, droppedReplies: 0, humanMessages },
+					memory: { available: true, embeddingCoverage: 1, conversationMoments72h: 0, extraction72h },
+				},
+				evals: {},
+				config: { orcwoodCount: 1 },
+			}).filter((x) => x.area === "memory");
+
+		test("nothing proposed across three days is broken, however quiet the chat", () => {
+			const [f] = findingsFor(ex({ runs: 4, days: 3, humanLines: 9 }));
+			expect(f).toMatchObject({ severity: "high" });
+			expect(f.title).toMatch(/proposed nothing in 4 runs over 3 days/);
+		});
+
+		test("one quiet day is not a failure", () => {
+			expect(findingsFor(ex({ runs: 4, days: 1, humanLines: 9 }))).toEqual([]);
+		});
+
+		test("proposals that all get dropped say why", () => {
+			const [f] = findingsFor(ex({ runs: 5, days: 2, proposedFacts: 12, duplicate: 11, lowConfidence: 1 }));
+			expect(f).toMatchObject({ severity: "medium", title: "12 memory proposals in 72h, none written" });
+			expect(f.evidence).toMatch(/11 already known, 1 low confidence/);
+		});
+
+		test("mostly re-stated facts is context, not work", () => {
+			const [f] = findingsFor(ex({ runs: 5, days: 2, proposedFacts: 10, duplicate: 9, writtenFacts: 1 }));
+			expect(f.severity).toBe("low");
+		});
+
+		test("with the log in place, the old volume rule stands down", () => {
+			expect(findingsFor(ex({ runs: 2, days: 1, proposedFacts: 1, writtenFacts: 1 }), 50)).toEqual([]);
+		});
+
+		test("without the log, the old volume rule still covers it", () => {
+			const f = findingsFor({ available: false, reason: "table missing — apply migrations" }, 50);
+			expect(f[0].title).toMatch(/no new memories/);
+		});
+	});
+
 	// 09-22: 6 nudges appraised, 6 ignored, 0 engaged — acceptance was null
 	// (nobody engaged or dismissed), so no rule fired and the plan called
 	// initiative "improved".
@@ -337,6 +428,24 @@ describe("report", () => {
 			maintenance: {},
 		});
 		expect(md).toMatch(/3 smoke-test calls excluded/);
+	});
+
+	test("extraction proposals and drop reasons are in the memory section", () => {
+		const md = renderMarkdown({
+			date: "2026-09-27",
+			metrics: {
+				models: { last24h: { available: true, byTask: {} } },
+				memory: {
+					available: true, newEventsByKind: {}, newAiFacts: 0, embeddingCoverage: 1, totalEvents: 296, eventsRecalled24h: 0,
+					extraction72h: { available: true, runs: 5, humanLines: 20, proposedFacts: 12, proposedMoments: 1, writtenFacts: 0, writtenMoments: 1, duplicate: 11, lowConfidence: 1, locked: 0, malformed: 0, overCap: 0 },
+				},
+			},
+			evals: {},
+			findings: [],
+			plan: fallbackPlan([]),
+			maintenance: {},
+		});
+		expect(md).toMatch(/Extraction \(72h\): 5 runs .* proposed 12 facts \/ 1 moments, wrote 0 \/ 1; dropped 11 already known, 1 low confidence/);
 	});
 
 	test("the rules-only plan never turns a context finding into work", () => {

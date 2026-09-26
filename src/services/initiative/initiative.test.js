@@ -17,6 +17,12 @@ jest.mock("../connectors/googleCalendar", () => ({
 	displayTimeZone: jest.fn(() => "America/New_York"),
 }));
 jest.mock("../connectors/whoop", () => ({ listRecovery: jest.fn() }));
+// family_illness_precaution pulls in services/family.js and services/familyHealth.js,
+// which (like most services) generate ids via the `uuid` package. Its installed
+// version is ESM-only in a way jest-runtime can't require() yet (Node itself
+// handles it fine — see db/migrate.js et al.), so it's mocked here rather than
+// left to fail the whole suite on an id generator none of these tests inspect.
+jest.mock("uuid", () => ({ v4: () => "00000000-0000-0000-0000-000000000000" }));
 // Mocked so the tests can assert on WHEN a push happens. The quiet-hours
 // behaviour is the whole point of the change: written but not pushed.
 jest.mock("../push", () => ({ deliverNudge: jest.fn() }));
