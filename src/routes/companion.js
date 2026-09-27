@@ -40,6 +40,8 @@ router.get('/dashboard/incidents/places', requireAuth, require('../controllers/n
 router.put('/dashboard/incidents/places', requireAuth, express.json({ limit: '4kb' }), require('../controllers/nearbyIncidents').savePlace);
 router.delete('/dashboard/incidents/places/:uuid', requireAuth, require('../controllers/nearbyIncidents').removePlace);
 router.get('/dashboard/incidents/geocode', requireAuth, require('../controllers/nearbyIncidents').lookupAddress);
+// Test PulsePoint / weather alert: a made-up call at their own place, pushed.
+router.post('/dashboard/incidents/test', requireAuth, express.json({ limit: '1kb' }), require('../controllers/nearbyIncidents').testAlert);
 // The phone forwarding PulsePoint's own notifications — device-authenticated,
 // because a handset speaks for itself (same rule as location samples).
 router.post('/dashboard/incidents/phone-alert', requireAuthOrDevice, express.json({ limit: '8kb' }), require('../controllers/nearbyIncidents').phoneAlert);

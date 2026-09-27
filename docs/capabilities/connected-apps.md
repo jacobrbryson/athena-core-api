@@ -13,8 +13,13 @@ triggers: [connect, connected, connection, link, linked, unlink, disconnect, int
 
 I can link to accounts you already have and read from them during our
 conversation — so "what's on tomorrow?" gets a real answer instead of a guess.
-Right now that's **Google Calendar**, **Strava** and **Whoop**. Family Chores
-links differently (from the Family Chores side).
+Right now that's **Google** (Gmail, Calendar and Contacts), **Strava**,
+**Whoop**, **Jira** and **Slack**. Family Chores links differently (from the
+Family Chores side).
+
+Signing in with Google also asks, on one Google screen, for Gmail, Calendar
+and Contacts — so those links are renewed every time you sign in. Anything
+you untick there can be turned on later from the Google card.
 
 Three things are always true of a connected app:
 
@@ -30,7 +35,10 @@ Your credentials are encrypted at rest and never appear in our conversation.
 
 The **⋯ menu in the top right corner** → **Connected apps**. Each app has its
 own row showing whether it's connected, with a **Connect** or **Disconnect**
-button.
+button. Gmail, Calendar and Contacts sit together on one **Google** card:
+**Connect all** asks for all three at once, each service's own row connects
+(or turns off) just that one, and **Disconnect all** withdraws Google's
+approval entirely.
 
 Connecting sends you to that company's own sign-in page to approve it — I never
 see or ask for your password. Strava and Whoop are health data, so the first
@@ -55,9 +63,13 @@ reach your calendar.
 
 ## Limits
 
-- Read-only. I can't add an event, start an activity, or change a setting.
-- One account per app.
-- Only the three apps above, plus Family Chores. Anything else isn't built yet.
+- Read-only, except what you approve one proposal at a time in the Actions
+  panel (adding a calendar event, labelling mail).
+- One account per app. Gmail may be a different Google account from the one
+  you sign in with; signing in never switches it.
+- Only the apps above, plus Family Chores. Anything else isn't built yet.
+- On the Android app, signing in doesn't ask for the Google services — connect
+  them from this panel.
 - This panel is the Companion app only — the Guardians console has no
   connected apps.
 
@@ -70,6 +82,18 @@ reach your calendar.
   not a code path — **and a capability file here; the test enforces it.**
 - Generic OAuth dance: `src/services/connectors/oauth.js`. Credential storage
   and encryption: `src/services/credentials.js`.
+- Provider groups (`GROUPS` in the registry): `google` = gmail +
+  google_calendar + google_contacts. One consent (`beginGroup`), one code
+  exchange, one credential per granted member (`completeGroup`); a member
+  whose live link is on another account is kept, not swapped. A single member's
+  disconnect skips the upstream revoke while a sibling is linked (Google's
+  revoke kills the whole grant). Its redirect URI,
+  `<PUBLIC_API_BASE_URL>/integrations/google/callback`, must be registered on
+  the Google OAuth client.
+- Sign-in hand-off: `../../../companion/src/auth/AuthContext.tsx` starts the
+  `google` group flow after a web sign-in (not Android), returning with
+  `?from=signin`; the console only opens this panel if something was declined
+  or kept.
 - Per-turn grounding and failure reporting:
   `src/services/connectors/context.js` (keyword gate → snapshot → prompt
   block). Adults get the provider's real error text; children get "I can't see

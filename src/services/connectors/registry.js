@@ -32,6 +32,28 @@ const env = (name, fallback) => {
 	return typeof raw === "string" && raw.trim() ? raw.trim() : fallback;
 };
 
+/**
+ * Google's token response carries an id_token when `openid` was requested. Its
+ * unverified payload is fine here — it came straight from the token endpoint
+ * over TLS and is only used as a display label and account key.
+ */
+function googleIdentity(tokens) {
+	if (typeof tokens?.id_token !== "string") return null;
+	const part = tokens.id_token.split(".")[1];
+	if (!part) return null;
+	try {
+		const claims = JSON.parse(Buffer.from(part, "base64").toString("utf8"));
+		if (!claims.sub) return null;
+		return {
+			externalAccountId: String(claims.sub),
+			displayName: claims.email || claims.name || null,
+			email: claims.email ? String(claims.email).toLowerCase() : null,
+		};
+	} catch {
+		return null;
+	}
+}
+
 /** Providers whose token response already identifies the account. */
 function identityFromField(field, idKey, nameKeys) {
 	return (tokens) => {
@@ -133,24 +155,45 @@ const PROVIDERS = {
 		consentType: null,
 		rotatesRefreshToken: false,
 		apiBase: env("GOOGLE_CALENDAR_API_BASE", "https://www.googleapis.com/calendar/v3"),
-		identify: (tokens) => {
-			// Google returns an id_token; its unverified payload is fine here —
-			// it came straight from the token endpoint over TLS and is only
-			// used as a display label and account key.
-			if (typeof tokens.id_token !== "string") return null;
-			const part = tokens.id_token.split(".")[1];
-			if (!part) return null;
-			try {
-				const claims = JSON.parse(Buffer.from(part, "base64").toString("utf8"));
-				if (!claims.sub) return null;
-				return {
-					externalAccountId: String(claims.sub),
-					displayName: claims.email || claims.name || null,
-				};
-			} catch {
-				return null;
-			}
+		identify: googleIdentity,
+	},
+
+	// -----------------------------------------------------------------
+	// Google Contacts (People API) — read-only
+	// -----------------------------------------------------------------
+	google_contacts: {
+		id: "google_contacts",
+		label: "Google Contacts",
+		authorizeUrl: env(
+			"GOOGLE_OAUTH_AUTHORIZE_URL",
+			"https://accounts.google.com/o/oauth2/v2/auth"
+		),
+		tokenUrl: env("GOOGLE_OAUTH_TOKEN_URL", "https://oauth2.googleapis.com/token"),
+		revokeUrl: env("GOOGLE_OAUTH_REVOKE_URL", "https://oauth2.googleapis.com/revoke"),
+		revokeMethod: "POST",
+		revokeBody: (token) => ({ token }),
+		// contacts.readonly only: names, phones, emails, relations, photos,
+		// birthdays and addresses of the person's own contacts. Nothing here can
+		// write a contact, and there is no action that would want to.
+		scopes: [
+			"https://www.googleapis.com/auth/contacts.readonly",
+			"openid",
+			"email",
+		],
+		scopeSeparator: " ",
+		clientIdSecret: "GOOGLE_OAUTH_CLIENT_ID",
+		clientSecretSecret: "GOOGLE_OAUTH_CLIENT_SECRET",
+		pkce: true,
+		authorizeParams: {
+			access_type: "offline",
+			prompt: "consent",
+			include_granted_scopes: "true",
 		},
+		tokenAuth: "body",
+		consentType: null,
+		rotatesRefreshToken: false,
+		apiBase: env("GOOGLE_PEOPLE_API_BASE", "https://people.googleapis.com/v1"),
+		identify: googleIdentity,
 	},
 
 	// -----------------------------------------------------------------
@@ -242,6 +285,56 @@ const PROVIDERS = {
 /** Every provider this build can link. */
 const PROVIDER_IDS = Object.freeze(Object.keys(PROVIDERS));
 
+/**
+ * Providers that share one upstream grant and are linked together.
+ *
+ * Gmail, Calendar and Contacts are one Google OAuth client, and with
+ * include_granted_scopes one person's grant to it is a single thing: revoking
+ * any token revokes all of it. So they are consented to on one screen (the
+ * one sign-in opens), each member stored as its own credential so every
+ * connector keeps asking for exactly the provider it reads, and a member the
+ * person unticked on Google's screen is simply not linked — they can elevate
+ * it later from its own row in Connected apps.
+ *
+ * `accountKey` says which identity a member's existing links are keyed by:
+ * Gmail's rows predate this and hold the address; the others hold `sub`.
+ */
+const GROUPS = {
+	google: {
+		id: "google",
+		label: "Google",
+		members: ["gmail", "google_calendar", "google_contacts"],
+		// Always asked, whatever the members are: the id_token is how the
+		// callback learns which Google account consented.
+		identityScopes: ["openid", "email", "profile"],
+		accountKey: { gmail: "email", google_calendar: "sub", google_contacts: "sub" },
+	},
+};
+
+const GROUP_IDS = Object.freeze(Object.keys(GROUPS));
+
+function isGroup(id) {
+	return Object.prototype.hasOwnProperty.call(GROUPS, id);
+}
+
+function getGroup(id) {
+	if (!isGroup(id)) {
+		throw Object.assign(new Error(`Unknown integration group: ${id}`), { status: 404 });
+	}
+	return GROUPS[id];
+}
+
+/** The group a provider belongs to, or null. */
+function groupOf(providerId) {
+	return GROUP_IDS.find((g) => GROUPS[g].members.includes(providerId)) || null;
+}
+
+/** Scopes a member needs beyond identity — what "granted" is judged on. */
+function dataScopes(providerId) {
+	const identity = new Set(["openid", "email", "profile"]);
+	return getProvider(providerId).scopes.filter((s) => !identity.has(s));
+}
+
 function getProvider(id) {
 	const provider = PROVIDERS[id];
 	if (!provider) {
@@ -264,7 +357,21 @@ function describe(id) {
 		label: p.label,
 		scopes: p.scopes,
 		requires_consent: p.consentType || null,
+		group: groupOf(p.id),
 	};
 }
 
-module.exports = { PROVIDERS, PROVIDER_IDS, getProvider, isProvider, describe };
+module.exports = {
+	PROVIDERS,
+	PROVIDER_IDS,
+	GROUPS,
+	GROUP_IDS,
+	getProvider,
+	isProvider,
+	getGroup,
+	isGroup,
+	groupOf,
+	dataScopes,
+	describe,
+	googleIdentity,
+};

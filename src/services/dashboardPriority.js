@@ -22,16 +22,20 @@ const actions = require("./actions");
 const readCache = require('./readCache');
 
 // The card set, in the one order the dashboard uses. Changing these ids means
-// changing components/Dashboard.tsx in the companion app with them.
+// changing components/Dashboard.tsx in the companion app with them. The first
+// three are the owner's hierarchy (2026-09-27): take care of yourself, so you
+// can take care of your family, so they can take care of the community.
+// Notifications is no longer a card — approvals live on the bell in the top
+// bar — but pending approvals stay in the alert's signal sheet below.
 const CARDS = [
 	{ id: "health", title: "Health & Performance" },
-	{ id: "calendar", title: "Calendar" },
 	{ id: "family", title: "Family" },
+	{ id: "community", title: "Community" },
+	{ id: "calendar", title: "Calendar" },
 	{ id: "mail", title: "Mail" },
 	{ id: "work", title: "Work" },
 	{ id: "news", title: "News & Updates" },
 	{ id: "projects", title: "Projects" },
-	{ id: "notifications", title: "Notifications" },
 ];
 const DEFAULT_ORDER = CARDS.map((c) => ({ id: c.id, why: null }));
 

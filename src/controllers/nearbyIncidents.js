@@ -147,6 +147,15 @@ async function phoneAlert(req, res) {
   if (body.package && body.package !== watch.PULSEPOINT_PACKAGE) {
     return res.json({ ignored: 'not a PulsePoint notification' });
   }
+  // "Test PulsePoint alert" in the Android app: proves the phone -> Athena leg
+  // (device token, network) and then runs the same test as the button below.
+  if (body.test === true) {
+    try {
+      return res.json(await watch.testAlert(req.user.profileId, { kind: 'pulsepoint', via: 'phone' }));
+    } catch (err) {
+      return fail(res, err);
+    }
+  }
   try {
     return res.json(await watch.recordPhoneAlert(req.user.profileId, {
       title: body.title,
@@ -158,4 +167,21 @@ async function phoneAlert(req, res) {
   }
 }
 
-module.exports = { listPlaces, savePlace, removePlace, nearby, alert, acknowledgeAlert, lookupAddress, phoneAlert };
+/**
+ * "Test PulsePoint alert" / "Test weather alert": {kind: "pulsepoint"|"weather"}.
+ * A made-up call at their own place, through the real parse/place/ring steps,
+ * then pushed — see watch.testAlert. Writes no nudge and no situation.
+ */
+async function testAlert(req, res) {
+  res.set('Cache-Control', 'no-store');
+  const actor = await requireAdultActor(req, res);
+  if (!actor) return;
+  const kind = req.body?.kind === 'weather' ? 'weather' : 'pulsepoint';
+  try {
+    return res.json(await watch.testAlert(actor.profileId, { kind }));
+  } catch (err) {
+    return fail(res, err);
+  }
+}
+
+module.exports = { listPlaces, savePlace, removePlace, nearby, alert, acknowledgeAlert, lookupAddress, phoneAlert, testAlert };

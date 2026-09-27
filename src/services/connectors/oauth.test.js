@@ -517,3 +517,124 @@ describe("status", () => {
 		expect(all.map((p) => p.provider).sort()).toEqual([...PROVIDER_IDS].sort());
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Google group: one consent screen, one credential per granted member
+// ---------------------------------------------------------------------------
+
+/** An unsigned id_token carrying just what the callback reads. */
+function idToken(claims) {
+	const part = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+	return `${part({ alg: "none" })}.${part(claims)}.sig`;
+}
+
+const GMAIL_SCOPES = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.modify";
+const CAL_SCOPES = "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events";
+const CONTACTS_SCOPE = "https://www.googleapis.com/auth/contacts.readonly";
+
+describe("google group", () => {
+	it("asks for every member's scopes on one screen, hinted to the signed-in account", async () => {
+		const { authorize_url, provider } = await oauth.beginGroup(ACTOR, "google", {
+			redirectTo: "https://app.athena.test/?from=signin",
+			loginHint: "ross@example.com",
+		});
+		const url = new URL(authorize_url);
+		expect(provider).toBe("google");
+		expect(url.searchParams.get("redirect_uri")).toBe("https://api.athena.test/api/v1/integrations/google/callback");
+		const scopes = url.searchParams.get("scope").split(" ");
+		expect(scopes).toEqual(expect.arrayContaining(["openid", "email", "profile", ...GMAIL_SCOPES.split(" "), ...CAL_SCOPES.split(" "), CONTACTS_SCOPE]));
+		expect(new Set(scopes).size).toBe(scopes.length);
+		expect(url.searchParams.get("login_hint")).toBe("ross@example.com");
+		expect(url.searchParams.get("access_type")).toBe("offline");
+		expect(url.searchParams.get("include_granted_scopes")).toBe("true");
+		expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+		expect(stateRows[0]).toMatchObject({ provider: "google", profile_id: 42, redirect_to: "https://app.athena.test/?from=signin" });
+	});
+
+	it("drops a login hint that isn't an address", async () => {
+		const { authorize_url } = await oauth.beginGroup(ACTOR, "google", { loginHint: "x&prompt=none" });
+		expect(new URL(authorize_url).searchParams.get("login_hint")).toBeNull();
+	});
+
+	it("links what was granted, skips what was unticked, and never swaps another account's link", async () => {
+		const { authorize_url } = await oauth.beginGroup(ACTOR, "google");
+		mockCredentials.status.mockImplementation(async (_pid, provider) =>
+			provider === "gmail" ? { status: "active", external_account_id: "work@company.com" } : null
+		);
+		global.fetch.mockResolvedValue(
+			tokenResponse({
+				access_token: "at",
+				refresh_token: "rt",
+				expires_in: 3599,
+				scope: `openid email ${GMAIL_SCOPES} ${CONTACTS_SCOPE}`,
+				id_token: idToken({ sub: "g-1", email: "Ross@Example.com" }),
+			})
+		);
+
+		const result = await oauth.completeGroup("google", { code: "c", state: stateFrom(authorize_url) });
+		expect(result.linked).toEqual(["google_contacts"]);
+		expect(result.kept).toEqual(["gmail"]);
+		expect(result.declined).toEqual(["google_calendar"]);
+		expect(mockCredentials.put).toHaveBeenCalledTimes(1);
+		expect(mockCredentials.put.mock.calls[0][0]).toMatchObject({
+			profileId: 42,
+			provider: "google_contacts",
+			externalAccountId: "g-1",
+			refreshToken: "rt",
+		});
+		// One code exchange for the whole group, on the group's redirect URI.
+		expect(global.fetch).toHaveBeenCalledTimes(1);
+		expect(new URLSearchParams(global.fetch.mock.calls[0][1].body).get("redirect_uri")).toBe(
+			"https://api.athena.test/api/v1/integrations/google/callback"
+		);
+	});
+
+	it("re-links Gmail on the same account, keyed by its address", async () => {
+		const { authorize_url } = await oauth.beginGroup(ACTOR, "google");
+		mockCredentials.status.mockImplementation(async (_pid, provider) =>
+			provider === "gmail" ? { status: "active", external_account_id: "ross@example.com" } : null
+		);
+		global.fetch.mockResolvedValue(
+			tokenResponse({ access_token: "at", scope: `openid ${GMAIL_SCOPES}`, id_token: idToken({ sub: "g-1", email: "Ross@Example.com" }) })
+		);
+		const result = await oauth.completeGroup("google", { code: "c", state: stateFrom(authorize_url) });
+		expect(result.linked).toEqual(["gmail"]);
+		expect(mockCredentials.put.mock.calls[0][0]).toMatchObject({ provider: "gmail", externalAccountId: "ross@example.com" });
+	});
+
+	it("refuses a grant it can't attribute to an account", async () => {
+		const { authorize_url } = await oauth.beginGroup(ACTOR, "google", { redirectTo: "https://app.athena.test" });
+		global.fetch.mockResolvedValue(tokenResponse({ access_token: "at", scope: CONTACTS_SCOPE }));
+		await expect(oauth.completeGroup("google", { code: "c", state: stateFrom(authorize_url) })).rejects.toMatchObject({
+			code: "identity_missing",
+			redirectTo: "https://app.athena.test",
+		});
+		expect(mockCredentials.put).not.toHaveBeenCalled();
+	});
+
+	it("a state issued for one provider can't finish the group flow", async () => {
+		const { authorize_url } = await oauth.begin(ACTOR, "google_calendar");
+		consumeAffected = 0; // the UPDATE is scoped to provider = 'google'
+		await expect(oauth.completeGroup("google", { code: "c", state: stateFrom(authorize_url) })).rejects.toMatchObject({ code: "state_invalid" });
+	});
+
+	it("disconnecting one member while a sibling is linked leaves Google's grant alone", async () => {
+		mockCredentials.status.mockImplementation(async (_pid, provider) => (provider === "gmail" ? { status: "active" } : null));
+		mockCredentials.get.mockResolvedValue({ uuid: "c", accessToken: "at" });
+		mockCredentials.revoke.mockResolvedValue({ provider: "google_contacts", revoked: true });
+		const result = await oauth.disconnect(ACTOR, "google_contacts");
+		expect(global.fetch).not.toHaveBeenCalled();
+		expect(result).toMatchObject({ revoked: true, revoked_upstream: false, kept_upstream_for_siblings: true });
+	});
+
+	it("disconnecting the group revokes upstream and clears every linked member", async () => {
+		mockCredentials.status.mockImplementation(async (_pid, provider) => (provider === "gmail" || provider === "google_calendar" ? { status: "active" } : null));
+		mockCredentials.get.mockResolvedValue({ uuid: "c", accessToken: "at" });
+		mockCredentials.revoke.mockImplementation(async (_pid, provider) => ({ provider, revoked: true }));
+		global.fetch.mockResolvedValue(tokenResponse({}));
+		const result = await oauth.disconnectGroup(ACTOR, "google");
+		expect(result).toMatchObject({ disconnected: ["gmail", "google_calendar"], revoked_upstream: true });
+		expect(global.fetch.mock.calls[0][0]).toBe("https://oauth2.googleapis.com/revoke");
+		expect(mockCredentials.revoke).toHaveBeenCalledTimes(2);
+	});
+});

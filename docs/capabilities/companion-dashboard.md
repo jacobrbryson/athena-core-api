@@ -1,12 +1,12 @@
 ---
 id: companion-dashboard
 title: Companion dashboard
-summary: I offer a daily dashboard for your calendar, health, family, work, projects, memories and approvals, with Health & Performance first.
+summary: I offer a daily dashboard for your health, family, community, calendar, work, projects and memories — Health & Performance, then Family, then Community.
 where: Companion → Dashboard; Chat → Daily briefing for the compact view
 status: partial
 surfaces: [companion]
 audiences: [adult]
-triggers: [dashboard, briefing, today, home screen, navigation, order]
+triggers: [dashboard, briefing, today, home screen, navigation, order, community, neighborhood, nearby]
 ---
 
 ## What I can do
@@ -25,19 +25,27 @@ page is mine to work out, not yours to set; news watching has its own
 description. A page I could not read last time says so on the card. The
 dashboard reads data; it never connects accounts or approves actions by itself.
 
-I give you a responsive home screen with Health & Performance, Calendar,
-Family, Mail, Work, News & Updates, Projects, and Notifications. Calendar and health
+I give you a responsive home screen with Health & Performance, Family,
+Community, Calendar, Mail, Work, News & Updates, and Projects. The first three
+follow your own hierarchy: take care of yourself, so you can take care of your
+family, so your family can take care of the community. Calendar and health
 cards check whether your apps are connected. Topic shortcuts open our chat
-with an editable question; you choose when to send it. Notifications shows what
-is waiting for your approval and opens the approval panel; its count also
-appears on a bell in the top bar, so you can see it from any screen. Family and
+with an editable question; you choose when to send it. What is waiting for
+your approval lives on the bell in the top bar, visible from any screen —
+there is no separate Notifications card any more.
+
+The Community card and page show what is happening around the places you
+watch for emergencies — nearby 911 calls and National Weather Service alerts,
+including the quiet ones that never became a banner — and the places you've
+told me about, like a school or a church. "Watched places" on the page opens
+the list where you add them. Family and
 Work show up to three saved memories about people, pets, or work, explicitly
 labeled as memories. Memories, photos, and connected apps have direct shortcuts
 too. My controls provide hover, press, and keyboard-focus feedback. I respect
 your device's reduced-motion preference by disabling interaction movement.
 
-The cards are always in the same order, with Health & Performance first. I
-don't re-sort them — you asked me not to. What I do read is the counts and
+The cards are always in the same order: Health & Performance, Family,
+Community, then the rest. I don't re-sort them — you asked me not to. What I do read is the counts and
 timings behind each card, to decide whether anything deserves the alert
 banner across the top of the screen; most days nothing does.
 
@@ -104,11 +112,13 @@ in memory and are cleared on sign-in, sign-out, access errors, and updates.
   legacy news source list, now read once to adopt it) and
   `../../db/migrations/0032_news_watch.up.sql`.
 - Work connectors: `../../src/services/connectors/work.js`.
-- Frontend: `../../../companion/src/components/Dashboard.tsx`
+- Frontend: `../../../companion/src/components/Dashboard.tsx` (Community reads
+  `GET /api/v1/dashboard/alert`, the incident watcher's stored situation)
 - Shell and preserved chat: `../../../companion/src/pages/CompanionConsole.tsx`
 - Styling: `../../../companion/src/dashboard.css`
 - Sidebar profile avatar: `../../../companion/src/components/ProfileAvatar.tsx`.
-- Card order (fixed, health first — owner removed the model ranking 2026-09-26)
+- Card order (fixed: health, family, community — owner removed the model
+  ranking 2026-09-26 and set the hierarchy 2026-09-27)
   and the model's dashboard alert: `../../src/services/dashboardPriority.js` via
   `GET /api/v1/dashboard/priority`.
 - Live updates: `rpc: "dashboardUpdated"` from `../../src/websocket/wsServer.js`.

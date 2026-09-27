@@ -2,7 +2,7 @@
 id: google-calendar
 title: Google Calendar
 summary: Once you connect it, I can see what's on your calendar and when you're free — read-only.
-where: the ⋯ menu (top right) → Connected apps → Google Calendar → Connect
+where: approve it when you sign in with Google, or the ⋯ menu (top right) → Connected apps → Google → Calendar → Connect
 status: live
 surfaces: [companion]
 audiences: [adult]
@@ -20,13 +20,17 @@ I only look when what you said is plausibly about your schedule.
 
 ## Where to find it
 
-The **⋯ menu in the top right corner** → **Connected apps** → the **Google
-Calendar** row → **Connect**. Google's own sign-in page opens and asks you to
-approve read access to your calendar. Approve it and you land back here
-connected — no consent step beyond Google's own.
+Signing in with Google asks for Calendar along with Gmail and Contacts on one
+Google screen — leave it ticked and it's connected, renewed each sign-in.
 
-To turn it off, the same row has **Disconnect**. That deletes the stored token
-and tells Google to revoke it.
+Otherwise: the **⋯ menu in the top right corner** → **Connected apps** → the
+**Google** card → the **Calendar** row → **Connect**. Google's own page opens
+and asks you to approve access to your calendar. Approve it and you land back
+here connected — no consent step beyond Google's own.
+
+To turn it off, the same row has **Off**. That deletes the stored token; Google
+is told to revoke its approval once no other Google service is on (or use
+**Disconnect all** on the card).
 
 ## When it doesn't work
 

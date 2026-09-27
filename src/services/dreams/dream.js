@@ -26,10 +26,12 @@ const mind = require("./mind");
 const questions = require("./questions");
 const { redactStep } = require("./redact");
 const image = require("./image");
+const googleContacts = require("../connectors/googleContacts");
 
 const DEFAULT_ROUNDS = Number(process.env.ATHENA_DREAM_ROUNDS) || 6;
 const MAX_STEPS_PER_ROUND = 30;
 const FOCUS_FACTS = 150;
+const FOCUS_CONTACTS = 120;
 const AUDIT_DAYS = 30;
 
 const STEP_SCHEMA = {
@@ -221,6 +223,43 @@ async function adultProfiles() {
 	return adults;
 }
 
+/**
+ * Adults who linked Google Contacts. Linking it is the consent: nobody's
+ * address book is read unless they connected Contacts themselves, and a
+ * child's never is (same audience check as the facts).
+ */
+async function contactProfiles() {
+	const [rows] = await pool.query(
+		`SELECT DISTINCT profile_id FROM user_credential WHERE provider = ? AND status <> 'revoked'`,
+		[googleContacts.PROVIDER]
+	);
+	const adults = [];
+	for (const r of rows) {
+		if ((await audienceForProfile(r.profile_id).catch(() => "child")) === "adult") adults.push(Number(r.profile_id));
+	}
+	return adults;
+}
+
+/**
+ * Tonight's contacts, per person. A person whose read failed goes in `keep`
+ * so their mirror stands (see mind.refreshMirror); `null` from the connector
+ * means the link is gone, and their mirror empties.
+ */
+async function loadContacts(profileIds, record) {
+	const byProfile = new Map();
+	const keep = [];
+	for (const profileId of profileIds) {
+		try {
+			const list = await googleContacts.listContacts(profileId, { actor: "dream" });
+			if (list) byProfile.set(profileId, list);
+		} catch (err) {
+			keep.push(profileId);
+			await record("note", { why: `couldn't read p${profileId}'s contacts tonight; keeping last night's: ${String(err.message).slice(0, 200)}`, ok: false });
+		}
+	}
+	return { byProfile, keep };
+}
+
 async function loadFacts(profileIds) {
 	if (!profileIds.length) return [];
 	const [rows] = await pool.query(
@@ -285,6 +324,25 @@ function renderFacts(facts) {
 		.join("\n");
 }
 
+function renderContacts(contacts) {
+	const list = (xs, pick) => (Array.isArray(xs) ? xs.map(pick).filter(Boolean).join(", ") : "");
+	return contacts
+		.map((c) => {
+			const parts = [
+				c.nicknames?.length ? `aka ${c.nicknames.join(", ")}` : "",
+				list(c.relations, (r) => r.person && `${r.type || "related"}: ${r.person}`),
+				list(c.emails, (e) => e.value),
+				list(c.phones, (p) => p.value),
+				c.birthday ? `born ${c.birthday}` : "",
+				c.organization || "",
+				list(c.addresses, (a) => a.value),
+				c.photoUrl ? "has photo" : "",
+			].filter(Boolean);
+			return `c:${c.contactId} p${c.profileId} ${c.name || "(no name)"}${parts.length ? ` — ${parts.join(" · ")}` : ""}`.slice(0, 400);
+		})
+		.join("\n");
+}
+
 function renderResults(history) {
 	if (!history.length) return "(this is the first round)";
 	return history
@@ -297,17 +355,18 @@ function renderResults(history) {
 		.slice(-12000);
 }
 
-function buildPrompt({ round, maxRounds, people, schema, focus, factCounts, offered, waiting, last, history }) {
+function buildPrompt({ round, maxRounds, people, schema, focus, factCounts, contactFocus = [], contactCounts = { total: 0, unlinked: 0 }, offered, waiting, last, history }) {
 	return `You are Athena, and it is night: you are dreaming. Dreaming is when you take what you've remembered loosely during the day and give it structure, so that tomorrow you can answer "who do I know in Denver?" or "list the people I've told you about" from a table instead of a pile of notes.
 
 You have your own MySQL 8 database, athena_mind, and full control of it: CREATE / ALTER / DROP tables and views, INSERT / UPDATE / DELETE, and SELECT to look around. Design it the way a thoughtful data architect would: entities in their own tables (people, places, organizations, pets…), relationships in join tables, aliases so "my sister" and "Emma" resolve to one person, views that make common questions one query. Evolve it: when a structure turns out wrong, migrate it. Prefer a few well-shaped tables over many thin ones.
 
 ## Rules the code enforces (breaking them only costs you work)
-1. Every TABLE you create must have \`_profile_id BIGINT NOT NULL\` (whose memory this row came from) and \`_sources JSON NOT NULL\` (array like ["f:123","q:4"] — the facts or answered questions the row was built from). After every dream, rows whose sources no longer exist for that same _profile_id are deleted (that is how "forget that" reaches you) and tables missing either column are dropped.
+1. Every TABLE you create must have \`_profile_id BIGINT NOT NULL\` (whose memory this row came from) and \`_sources JSON NOT NULL\` (array like ["f:123","q:4","c:98765"] — the facts, answered questions or contacts the row was built from). After every dream, rows whose sources no longer exist for that same _profile_id are deleted (that is how "forget that" reaches you) and tables missing either column are dropped.
 2. Never mix people's memories in a row: every source in a row must belong to that row's _profile_id. Joins across tables must match on _profile_id.
 3. Tables starting with _ belong to the code. Read them, never write them:
    - _fact(fact_id, profile_id, category, fact_key, fact_value, updated_at) — every current fact, the source of truth.
    - _clarification(question_id, profile_id, question, answer, answered_at) — answers people gave to your questions.
+   - _contact(profile_id, contact_id, name, given_name, family_name, nicknames, emails, phones, relations, addresses, organization, birthday, photo_url, contact_groups, updated_at) — the person's own Google Contacts, when they linked them; JSON columns are arrays of {value,type} (relations: {person,type}). Cite a contact as "c:<contact_id>".
    - _catalog — written only through the "describe" op.
 4. Views are welcome. Give views a _profile_id column too, or the chat can't read them.
 5. One SQL statement per "sql" step, no trailing semicolons chains. Stored procedures, triggers and events are not permitted.
@@ -329,6 +388,10 @@ ${schema}
 
 ## Facts to organize tonight (${focus.length} of ${factCounts.total}; ${factCounts.unorganized} not yet in any table, ${factCounts.changed} changed since your last dream)
 ${renderFacts(focus) || "(nothing new — use tonight to improve the structure, or finish early)"}
+
+## Contacts to link (${contactFocus.length} of ${contactCounts.total}; ${contactCounts.unlinked} not yet in any table)
+A contact is the person's address-book entry for someone. Link it to the people, family and community you already hold: when a contact is clearly someone the facts describe (same name, a relation like "spouse: Jane" matching a fact, a matching email), give that person's row the contact's phones, emails, birthday and photo_url and cite both sources (["f:12","c:98765"]). Prefer a link table or view over copying values that can change — _contact is refreshed every night. A contact nobody has mentioned can still become a people row sourced from "c:" alone. If a match is plausible but not certain, ASK. Photos are URLs in _contact.photo_url; never invent one.
+${renderContacts(contactFocus) || "(none — Contacts isn't linked, or every contact is already linked)"}
 
 ## Questions you asked — what was said since
 ${
@@ -378,7 +441,7 @@ async function runStep(step, ctx) {
 		case "question": {
 			const pid = Number(step.profile_id);
 			if (!ctx.adults.includes(pid)) throw new Error(`p${step.profile_id} is not someone whose memories you hold`);
-			const about = (step.about || []).filter((s) => /^[fq]:\d+$/.test(s)).slice(0, 20);
+			const about = (step.about || []).filter((s) => /^[fqc]:\d+$/.test(s)).slice(0, 20);
 			const q = await questions.create({ profileId: pid, dreamId: ctx.dreamId, question: step.question, context: { about } });
 			ctx.questionsAsked += 1;
 			return q;
@@ -444,13 +507,17 @@ async function dream({ rounds = DEFAULT_ROUNDS, log = () => undefined } = {}) {
 		await mind.ensureSystemTables(conn);
 
 		// 1. Mirror the facts in.
-		const adults = await adultProfiles();
+		const memoryAdults = await adultProfiles();
+		const withContacts = await contactProfiles();
+		const adults = [...new Set([...memoryAdults, ...withContacts])];
 		const facts = await loadFacts(adults);
 		const answered = await questions.answeredFor(adults);
 		const started = Date.now();
-		const mirrored = await mind.refreshMirror(conn, { facts, clarifications: answered });
-		await record("mirror", { statement: `_fact <- ${mirrored.facts} facts; _clarification <- ${mirrored.clarifications} answers`, why: "facts are the source of truth", ms: Date.now() - started, affectedRows: mirrored.facts });
+		const contacts = await loadContacts(withContacts, record);
+		const mirrored = await mind.refreshMirror(conn, { facts, clarifications: answered, contacts });
+		await record("mirror", { statement: `_fact <- ${mirrored.facts} facts; _clarification <- ${mirrored.clarifications} answers; _contact <- ${mirrored.contacts} contacts`, why: "facts are the source of truth; contacts mirror the linked address books", ms: Date.now() - started, affectedRows: mirrored.facts });
 		stats.facts = facts.length;
+		stats.contacts = mirrored.contacts;
 
 		// 2. Forget first, so tonight never builds on something already let go.
 		for (const p of await mind.purge(conn)) {
@@ -467,6 +534,9 @@ async function dream({ rounds = DEFAULT_ROUNDS, log = () => undefined } = {}) {
 		const changed = facts.filter((f) => referenced.has(`f:${f.id}`) && since && f.updated_at && new Date(f.updated_at) > since);
 		const focus = [...changed, ...unorganized].slice(0, FOCUS_FACTS);
 		stats.focus = focus.length;
+		const allContacts = [...contacts.byProfile].flatMap(([profileId, list]) => list.map((c) => ({ ...c, profileId })));
+		const unlinkedContacts = allContacts.filter((c) => !referenced.has(`c:${c.contactId}`));
+		const contactFocus = unlinkedContacts.slice(0, FOCUS_CONTACTS);
 
 		const names = await profileNames(adults);
 		const ctx = {
@@ -475,6 +545,9 @@ async function dream({ rounds = DEFAULT_ROUNDS, log = () => undefined } = {}) {
 			adults,
 			factOwner: new Map(facts.map((f) => [f.id, f.profile_id])),
 			clarificationOwner: new Map(answered.map((a) => [Number(a.id), Number(a.profile_id)])),
+			// Read back from the mirror, so a kept (unreadable tonight) address
+			// book still validates its c: sources.
+			contactOwner: await mind.contactKeys(conn),
 			offered: await questions.offeredWithTranscripts(),
 			questionsAsked: 0,
 			questionsResolved: 0,
@@ -492,6 +565,8 @@ async function dream({ rounds = DEFAULT_ROUNDS, log = () => undefined } = {}) {
 				schema: renderSchema(await mind.describe(conn), catalog),
 				focus,
 				factCounts: { total: facts.length, unorganized: unorganized.length, changed: changed.length },
+				contactFocus,
+				contactCounts: { total: allContacts.length, unlinked: unlinkedContacts.length },
 				offered: ctx.offered,
 				waiting,
 				last,

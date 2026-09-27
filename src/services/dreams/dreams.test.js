@@ -30,8 +30,8 @@ const ADULT = 7;
 const CHILD = 9;
 
 /** A fake athena_mind connection with a scriptable schema. */
-function fakeConn({ tables = [], columns = {} } = {}) {
-	const state = { tables: [...tables], columns: { ...columns }, statements: [] };
+function fakeConn({ tables = [], columns = {}, contacts = [] } = {}) {
+	const state = { tables: [...tables], columns: { ...columns }, statements: [], contacts: [...contacts] };
 	const conn = {
 		state,
 		beginTransaction: jest.fn(async () => undefined),
@@ -62,6 +62,7 @@ function fakeConn({ tables = [], columns = {} } = {}) {
 				return [{ affectedRows: 0 }];
 			}
 			if (/^SELECT object_name/.test(sql)) return [[]];
+			if (/^SELECT profile_id, contact_id FROM _contact/.test(sql)) return [state.contacts];
 			if (/^INSERT INTO `people`/.test(sql)) return [{ affectedRows: 1 }];
 			return [{ affectedRows: 0 }];
 		}),
@@ -149,6 +150,48 @@ describe("rowProblem", () => {
 		expect(mind.rowProblem({ _profile_id: ADULT, _sources: ["f:999"] }, owners)).toMatch(/unknown/);
 		expect(mind.rowProblem({ _profile_id: ADULT, _sources: ["f:1; DROP"] }, owners)).toMatch(/bad source/);
 		expect(mind.rowProblem({ _sources: ["f:1"] }, owners)).toMatch(/_profile_id/);
+	});
+
+	test("a contact source must be this person's own contact", () => {
+		// 20 digits: larger than a safe integer, so ids must stay strings.
+		const big = "12345678901234567890";
+		const withContacts = { ...owners, contactOwner: new Set([`${ADULT}:${big}`, `8:555`]) };
+		expect(mind.rowProblem({ _profile_id: ADULT, _sources: ["f:1", `c:${big}`] }, withContacts)).toBeNull();
+		expect(mind.rowProblem({ _profile_id: ADULT, _sources: ["c:555"] }, withContacts)).toMatch(/not one of this person's contacts/);
+		expect(mind.rowProblem({ _profile_id: ADULT, _sources: [`c:${big}`] }, owners)).toMatch(/not one of this person's contacts/);
+	});
+});
+
+describe("contacts mirror", () => {
+	const contact = { contactId: "42", name: "Jane Doe", phones: [{ value: "+15551234567", type: "mobile" }], relations: [{ person: "Ross", type: "spouse" }], photoUrl: "https://lh3.googleusercontent.com/x" };
+
+	test("rewrites _contact from the linked address books, keeping a profile that couldn't be read", async () => {
+		const conn = fakeConn();
+		const out = await mind.refreshMirror(conn, {
+			facts: [],
+			clarifications: [],
+			contacts: { byProfile: new Map([[ADULT, [contact, { contactId: "people/c1" }]]]), keep: [8] },
+		});
+		expect(out.contacts).toBe(1); // the malformed id is dropped
+		const del = conn.query.mock.calls.find((c) => String(c[0]).startsWith("DELETE FROM _contact"));
+		expect(del[0]).toContain("NOT IN");
+		expect(del[1]).toEqual([[8]]);
+		const [, [rows]] = conn.query.mock.calls.find((c) => String(c[0]).startsWith("INSERT INTO _contact"));
+		expect(rows[0].slice(0, 3)).toEqual([ADULT, "42", "Jane Doe"]);
+		expect(JSON.parse(rows[0][8])).toEqual([{ person: "Ross", type: "spouse" }]);
+	});
+
+	test("with nobody to keep, the whole mirror empties", async () => {
+		const conn = fakeConn();
+		await mind.refreshMirror(conn, { facts: [], clarifications: [] });
+		expect(conn.state.statements).toContain("DELETE FROM _contact");
+	});
+
+	test("the purge holds c: sources to the same person's mirrored contacts", async () => {
+		const conn = fakeConn({ tables: [{ name: "people" }], columns: { people: ["name", "_profile_id", "_sources"] } });
+		await mind.purge(conn);
+		const purge = conn.state.statements.find((s) => s.startsWith("DELETE t FROM `people`"));
+		expect(purge).toMatch(/FROM _contact k WHERE k\.contact_id = SUBSTRING\(j\.s, 3\) AND k\.profile_id = t\._profile_id/);
 	});
 });
 
@@ -265,6 +308,42 @@ describe("dream", () => {
 		const kinds = steps.map((c) => c[1][3]);
 		expect(kinds).toEqual(expect.arrayContaining(["mirror", "note", "sql", "upsert", "question"]));
 		expect(steps.some((c) => c[1][3] === "question" && c[1][6] === 0)).toBe(true);
+	});
+
+	test("reads Google Contacts only for adults who linked them, and offers them for linking", async () => {
+		const conn = fakeConn({ contacts: [{ profile_id: ADULT, contact_id: "42" }] });
+		mysql.createConnection.mockResolvedValue(conn);
+		mainDb({ facts: FACTS });
+		const base = pool.query.getMockImplementation();
+		pool.query.mockImplementation(async (sql, params) => {
+			if (sql.includes("FROM user_credential WHERE provider")) return [[{ profile_id: ADULT }, { profile_id: CHILD }]];
+			return base(sql, params);
+		});
+		const contacts = require("../connectors/googleContacts");
+		const read = jest.spyOn(contacts, "listContacts").mockResolvedValue([
+			{ contactId: "42", name: "Jane Doe", relations: [{ person: "Ross", type: "spouse" }], phones: [{ value: "+15551234567" }], photoUrl: "https://x" },
+		]);
+		llm.generateJson.mockResolvedValue({
+			endpointId: "test",
+			tier: "frontier",
+			data: {
+				done: true,
+				summary: "Linked a contact.",
+				steps: [
+					{ op: "sql", why: "people", statement: "CREATE TABLE people (id INT PRIMARY KEY, name TEXT, _profile_id BIGINT NOT NULL, _sources JSON NOT NULL)" },
+					{ op: "upsert", why: "link", table: "people", rows_json: JSON.stringify([{ _profile_id: ADULT, _sources: ["f:1", "c:42"], name: "Jane" }]) },
+				],
+			},
+		});
+
+		const out = await dream({ rounds: 1 });
+		expect(out.status).toBe("ok");
+		expect(read).toHaveBeenCalledTimes(1);
+		expect(read).toHaveBeenCalledWith(ADULT, { actor: "dream" });
+		const prompt = llm.generateJson.mock.calls[0][0].contents;
+		expect(prompt).toContain("c:42 p7 Jane Doe");
+		expect(prompt).toContain("spouse: Ross");
+		expect(out.stats.contacts).toBe(1);
 	});
 });
 

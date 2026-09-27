@@ -1,5 +1,29 @@
 # Capability ledger
 
+- 2026-09-27 — Google sign-in now asks, on one Google screen, for Gmail,
+  Calendar and the new read-only Google Contacts, so those links are renewed
+  every sign-in (web; not the Android app). Connected apps groups them on one
+  Google card with per-service Connect/Off to elevate anything unticked.
+  Contacts feed the nightly dream, which links numbers, emails, relationships,
+  birthdays and photos to the people Athena knows — `google-contacts.md`,
+  `connected-apps.md`, `gmail.md`, `google-calendar.md`, `dreaming.md`
+  (status: live)
+
+- 2026-09-27 — PulsePoint alerts fixed on Android: Watched places explains
+  Android's "Restricted setting" block on notification access, PulsePoint's own
+  notifications are cleared (including any already in the tray), calls can be
+  checked against where the phone is (location "all the time", opt-in), and
+  new Test PulsePoint alert / Test weather alert buttons push a made-up alert
+  through the real steps — `nearby-incidents.md` (status: live)
+
+- 2026-09-27 — Dashboard follows the owner's hierarchy: Health & Performance,
+  Family, then a new Community card and page (nearby 911 calls and weather
+  alerts around watched places, and places you've mentioned). The
+  Notifications card is gone — approvals stay on the top-bar bell. Right Now
+  only appears when the moment matters (in a meeting, one about to start, or a
+  time-bound suggestion) — `companion-dashboard.md`, `right-now.md`
+  (status: partial)
+
 - 2026-09-27 — The System page now shows OpenAI spend (month, today, last 7
   days, by model) and the Athena project's Google Cloud cost (after credits,
   by service and top line items, from the BigQuery billing export) beside

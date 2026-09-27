@@ -2,7 +2,7 @@
 id: gmail
 title: Gmail
 summary: I can read unread inbox message headers from the Gmail account you connect and show them in Work.
-where: Companion → Work → Connected apps → Gmail
+where: approve it when you sign in with Google, or ⋯ menu → Connected apps → Google → Gmail → Connect
 status: partial
 surfaces: [companion]
 audiences: [adult]
@@ -15,10 +15,16 @@ I show up to five unread inbox messages, including subject, sender, and date. I 
 
 ## Where to find it
 
-Open Connected apps from your Companion menu and choose Gmail. Complete
-the provider's authorization screen yourself. Once linked, the dashboard and
-Work page load the summary automatically. The server must have the provider's
-OAuth application configured before Connect can work.
+Signing in with Google asks for Gmail along with Calendar and Contacts on one
+Google screen; leave it ticked and it's linked to the account you signed in
+with. If Gmail is already linked to a different account (a work inbox, say),
+signing in leaves it on that account.
+
+To connect it separately — or to use a different account — open Connected
+apps from your Companion menu, find the Google card, and press Connect on the
+Gmail row, then choose the account on Google's screen. Once linked, the
+dashboard and Work page load the summary automatically. The server must have
+the provider's OAuth application configured before Connect can work.
 
 ## When it doesn't work
 

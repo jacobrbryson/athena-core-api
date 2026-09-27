@@ -1,5 +1,5 @@
 const oauth = require("../services/connectors/oauth");
-const { isProvider } = require("../services/connectors/registry");
+const { isProvider, isGroup } = require("../services/connectors/registry");
 const { resolveActingProfile } = require("../services/integration");
 
 /**
@@ -23,7 +23,7 @@ function sendError(res, err, fallback = "Integration request failed") {
 
 /** 404 before anything else touches an unknown provider name. */
 function requireKnownProvider(req, res, next) {
-	if (!isProvider(req.params.provider)) {
+	if (!isProvider(req.params.provider) && !isGroup(req.params.provider)) {
 		return res
 			.status(404)
 			.json({ success: false, message: `Unknown integration provider` });
@@ -43,6 +43,9 @@ async function listConnectors(req, res) {
 
 /** GET /integrations/:provider — one provider's link state. */
 async function getConnector(req, res) {
+	if (isGroup(req.params.provider)) {
+		return res.status(404).json({ success: false, message: "Ask for a group's members individually" });
+	}
 	try {
 		const actor = await actingUser(req);
 		return res.json({
@@ -64,9 +67,15 @@ async function getConnector(req, res) {
 async function startConnect(req, res) {
 	try {
 		const actor = await actingUser(req);
-		const result = await oauth.begin(actor, req.params.provider, {
-			redirectTo: req.body?.redirect_to,
-		});
+		const provider = req.params.provider;
+		const result = isGroup(provider)
+			? await oauth.beginGroup(actor, provider, {
+					redirectTo: req.body?.redirect_to,
+					// Only ever the caller's own verified address: a hint for some
+					// other account would just be a confusing chooser.
+					loginHint: req.user?.tokenPayload?.email_verified === true ? req.user.tokenPayload.email : null,
+				})
+			: await oauth.begin(actor, provider, { redirectTo: req.body?.redirect_to });
 		return res.json({ success: true, ...result });
 	} catch (err) {
 		return sendError(res, err, "Failed to start authorization");
@@ -83,12 +92,26 @@ async function startConnect(req, res) {
 async function handleCallback(req, res) {
 	const provider = req.params.provider;
 	try {
-		const result = await oauth.complete(provider, {
+		const callback = {
 			code: req.query.code,
 			state: req.query.state,
 			error: req.query.error,
 			errorDescription: req.query.error_description,
-		});
+		};
+		if (isGroup(provider)) {
+			const result = await oauth.completeGroup(provider, callback);
+			const outcome = {
+				integration: provider,
+				status: result.linked.length ? "connected" : "error",
+				...(result.linked.length ? {} : { reason: "nothing_granted" }),
+				linked: result.linked.join(","),
+				kept: result.kept.join(","),
+				declined: result.declined.join(","),
+			};
+			if (result.redirectTo) return res.redirect(302, appendParams(result.redirectTo, outcome));
+			return res.json({ success: true, ...outcome });
+		}
+		const result = await oauth.complete(provider, callback);
 		if (result.redirectTo) {
 			return res.redirect(
 				302,
@@ -124,7 +147,9 @@ async function handleCallback(req, res) {
 async function disconnectConnector(req, res) {
 	try {
 		const actor = await actingUser(req);
-		const result = await oauth.disconnect(actor, req.params.provider);
+		const result = isGroup(req.params.provider)
+			? await oauth.disconnectGroup(actor, req.params.provider)
+			: await oauth.disconnect(actor, req.params.provider);
 		// A disconnected source changes what every dashboard card can show.
 		// Best effort: a socket problem must not fail the disconnect itself.
 		try {

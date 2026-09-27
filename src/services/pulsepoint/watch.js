@@ -757,6 +757,85 @@ async function recordPhoneAlert(profileId, { title, text, postedAt, generate } =
 	return { told: told.written, level: situation.level, incident, pushed: told.pushed };
 }
 
+/**
+ * "Test PulsePoint alert" / "Test weather alert": a made-up call or warning at
+ * one of their own places, run through the same steps a real one takes —
+ * parse the notification text, geocode it, check it against the rings — and
+ * then pushed to every device, so a person can see the whole path work.
+ *
+ * Like push.sendTest it writes no nudge and no situation: a diagnostic is not
+ * an emergency, and it must never show up in the banner, the chat prompt or
+ * the nightly review as one. It is marked "Test" everywhere it appears.
+ *
+ * Returns each step with whether it worked, so a failure says WHERE it broke
+ * ("couldn't place the address", "no device registered") instead of a bare no.
+ */
+async function testAlert(profileId, { kind = "pulsepoint", via = "server" } = {}) {
+	const steps = [];
+	const step = (name, ok, detail = null) => {
+		steps.push({ step: name, ok, detail });
+		return ok;
+	};
+	const places = await placesFor(profileId);
+	if (!step("places", places.length > 0, places.length ? `${places.length} watched` : "no watched places")) {
+		return { ok: false, kind, steps };
+	}
+	const place = places.find((p) => !p.live) || places[0];
+	let text;
+	if (kind === "weather") {
+		// The shape nws.js produces, so the wording is the real wording.
+		const alert = {
+			event: "Tornado Warning",
+			instruction: "This is only a test — no action needed.",
+			place: place.live ? "you" : place.name,
+			serious: true,
+		};
+		step("alert", true, `${alert.event} for ${placeName(place)}`);
+		text = `Test — ${alert.event} for ${placeName(place)}. ${alert.instruction}`;
+	} else {
+		let hit;
+		if (place.address) {
+			// Dispatch-style text, as PulsePoint's notification would read.
+			const notification = { title: "PulsePoint", text: `Structure Fire - ${place.address}` };
+			const region = place.address.split(",").slice(-2).join(",").trim() || null;
+			const parsed = phoneAlerts.parse({ ...notification, region });
+			if (!step("parsed", parsed.ok, parsed.ok ? `${parsed.what} at ${parsed.address}` : parsed.why)) {
+				return { ok: false, kind, steps };
+			}
+			const point = await phoneAlerts.place(parsed.query);
+			if (!step("placed", !!point, point ? `${point.latitude.toFixed(4)}, ${point.longitude.toFixed(4)}` : "could not geocode the address")) {
+				return { ok: false, kind, steps };
+			}
+			const matches = geo.placesNear(point, places, DEFAULT_RADIUS_MILES);
+			if (!step("near", matches.length > 0, matches.length ? `${geo.describeDistance(matches[0].miles)} from ${placeName(matches[0].place)}` : "outside every ring")) {
+				return { ok: false, kind, steps };
+			}
+			hit = { incident: { what: parsed.what, address: parsed.address, units: 0 }, nearest: matches[0] };
+		} else {
+			// A place saved from "current location" has no address to geocode.
+			step("placed", true, "place has no street address; using its pin");
+			hit = { incident: { what: "Structure Fire", address: null, units: 0 }, nearest: { place, miles: 0 } };
+		}
+		text = `Test — ${wording([hit])}`;
+	}
+	const push = require("../push");
+	const pushed = await push
+		.sendToProfile(profileId, {
+			title: "Athena",
+			body: text.slice(0, 500),
+			data: { kind: "test", trigger: TRIGGER_ID },
+			// Its own key per kind: never replaces a real alert on the lock screen.
+			collapseKey: `athena-test-${kind}`,
+		})
+		.catch((error) => ({ sent: 0, failed: 1, error: error.message }));
+	step(
+		"push",
+		pushed.sent > 0,
+		pushed.skipped || pushed.error || `${pushed.sent} of ${pushed.devices} device${pushed.devices === 1 ? "" : "s"}`
+	);
+	return { ok: pushed.sent > 0, kind, via, text, steps, pushed };
+}
+
 /** Every profile with a saved place or a live phone position. */
 async function watchedProfiles() {
 	const ids = new Set();
@@ -1048,6 +1127,7 @@ module.exports = {
 	runOnce,
 	checkProfile,
 	recordPhoneAlert,
+	testAlert,
 	nearbyFor,
 	assess,
 	checkAnswer,

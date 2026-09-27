@@ -29,9 +29,9 @@ rank your own lists and tell you so.
 
 ## Where to find it
 
-It's the first block on your Dashboard, above the cards. The **Places &
-projects** button on it — also at the bottom of the dashboard — opens the two
-lists:
+It's the first block on your Dashboard, above the cards, when there's
+something worth it. The **Places & projects** button on it — always at the
+bottom of the dashboard — opens the two lists:
 
 - **Places**: paste the address of a park, a pool, a trailhead, say what it's
   for ("mountain biking") and roughly how far it is. I read the page once
@@ -49,9 +49,13 @@ lists:
   one that says open. Press "check now" in the Places list; if it keeps
   happening the page probably hides its hours behind a script I can't read, and
   a different page on the same site may work better.
-- **Nothing is suggested at all.** Either both lists are empty, you're in the
-  middle of something on the calendar, or everything was ruled out — in which
-  case I say which thing and why, rather than going quiet.
+- **The block isn't there at all.** That's on purpose: I only show it when
+  the moment matters — you're in something on the calendar, something starts
+  within 15 minutes, or my suggestion is tied to right now (low recovery, a
+  place that's open now, the day your habit usually happens, something due
+  today or marked high priority). A goal worth mulling on a quiet afternoon
+  doesn't earn the top of your page, so I leave it off; ask me in chat and
+  I'll still tell you what I'd do with the time.
 - **I don't mention your habits.** I only know them if Strava is connected and
   health data is consented. Without that I still use the hours, the weather and
   your calendar.

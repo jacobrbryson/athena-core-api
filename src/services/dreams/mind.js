@@ -15,11 +15,16 @@
  *
  *   3. Forgetting reaches her tables. Every table of hers must carry
  *      `_profile_id` (whose memory a row came from) and `_sources` (a JSON
- *      array of "f:<fact id>" / "q:<question id>"). After each dream, any row
- *      whose sources no longer all exist for that same person is deleted, and
- *      any table without those two columns is dropped. So when someone says
- *      "forget that", the fact goes, and by the next morning so does every row
- *      built on it.
+ *      array of "f:<fact id>" / "q:<question id>" / "c:<contact id>"). After
+ *      each dream, any row whose sources no longer all exist for that same
+ *      person is deleted, and any table without those two columns is dropped.
+ *      So when someone says "forget that", the fact goes, and by the next
+ *      morning so does every row built on it.
+ *
+ *      `_contact` mirrors the person's Google Contacts (when they linked
+ *      Contacts, owner-approved 2026-09-27). It is written by code from the
+ *      People API, never by her, and follows the same rule: delete a contact
+ *      or disconnect Contacts and the rows built on it go the next night.
  *
  * Tables whose names start with `_` belong to the code. She reads them; the
  * code recreates them if she drops them and drops any `_` table it didn't make.
@@ -29,7 +34,7 @@ const mysql = require("mysql2/promise");
 
 const MIND_DB = process.env.ATHENA_MIND_DB_NAME || "athena_mind";
 const IDENT = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
-const SOURCE = /^[fq]:\d{1,19}$/;
+const SOURCE = /^(?:[fq]:\d{1,19}|c:\d{1,20})$/;
 
 const SYSTEM_TABLES = {
 	_fact: `CREATE TABLE IF NOT EXISTS _fact (
@@ -50,6 +55,26 @@ const SYSTEM_TABLES = {
     answered_at DATETIME        NULL,
     PRIMARY KEY (question_id),
     KEY idx_clarification_profile (profile_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+	// The person's Google Contacts, keyed per person: contact ids are only
+	// unique within one Google account.
+	_contact: `CREATE TABLE IF NOT EXISTS _contact (
+    profile_id     BIGINT        NOT NULL,
+    contact_id     VARCHAR(20)   NOT NULL,
+    name           VARCHAR(200)  NULL,
+    given_name     VARCHAR(120)  NULL,
+    family_name    VARCHAR(120)  NULL,
+    nicknames      JSON          NULL,
+    emails         JSON          NULL,
+    phones         JSON          NULL,
+    relations      JSON          NULL,
+    addresses      JSON          NULL,
+    organization   VARCHAR(255)  NULL,
+    birthday       VARCHAR(40)   NULL,
+    photo_url      VARCHAR(1024) NULL,
+    contact_groups JSON          NULL,
+    updated_at     DATETIME      NULL,
+    PRIMARY KEY (profile_id, contact_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 	// Her own notes on what each table/view is for. The chat path reads this
 	// to decide which of her tables a message is about.
@@ -152,12 +177,49 @@ function isCompliant(entry) {
 	return hasColumn(entry, "_profile_id") && hasColumn(entry, "_sources");
 }
 
+const json = (v) => (v == null ? null : JSON.stringify(v));
+
+/** People API update times are RFC3339; DATETIME wants 'YYYY-MM-DD HH:MM:SS'. */
+function sqlTime(value) {
+	if (!value) return null;
+	const d = new Date(value);
+	return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 19).replace("T", " ");
+}
+
+function contactRow(profileId, c) {
+	const cut = (v, n) => (v == null ? null : String(v).slice(0, n));
+	return [
+		profileId,
+		c.contactId,
+		cut(c.name, 200),
+		cut(c.givenName, 120),
+		cut(c.familyName, 120),
+		json(c.nicknames),
+		json(c.emails),
+		json(c.phones),
+		json(c.relations),
+		json(c.addresses),
+		cut(c.organization, 255),
+		cut(c.birthday, 40),
+		cut(c.photoUrl, 1024),
+		json(c.groups),
+		sqlTime(c.updatedAt),
+	];
+}
+
 /**
  * Rewrite the mirror from the main database. `facts` and `clarifications`
  * come from the caller (read through the main connection); this function
  * only ever writes into athena_mind.
+ *
+ * `contacts` is { byProfile: Map<profileId, contact[]>, keep: profileIds }.
+ * A profile in `keep` couldn't be read tonight (Google hiccup, not a
+ * disconnect), so last night's rows stand rather than letting one bad fetch
+ * purge every link built on them. Everyone else not in `byProfile` has no
+ * Contacts link, and their mirror empties.
  */
-async function refreshMirror(conn, { facts, clarifications }) {
+async function refreshMirror(conn, { facts, clarifications, contacts = { byProfile: new Map(), keep: [] } }) {
+	let contactCount = 0;
 	await conn.beginTransaction();
 	try {
 		await conn.query("DELETE FROM _fact");
@@ -175,12 +237,33 @@ async function refreshMirror(conn, { facts, clarifications }) {
 				[clarifications.map((c) => [c.id, c.profile_id, c.question, c.answer, c.answered_at])]
 			);
 		}
+		const keep = [...new Set((contacts.keep || []).map(Number))];
+		if (keep.length) await conn.query("DELETE FROM _contact WHERE profile_id NOT IN (?)", [keep]);
+		else await conn.query("DELETE FROM _contact");
+		for (const [profileId, list] of contacts.byProfile || new Map()) {
+			const rows = (list || []).filter((c) => /^\d{1,20}$/.test(String(c?.contactId || ""))).map((c) => contactRow(Number(profileId), c));
+			for (let i = 0; i < rows.length; i += 500) {
+				await conn.query(
+					`INSERT INTO _contact (profile_id, contact_id, name, given_name, family_name, nicknames, emails, phones,
+             relations, addresses, organization, birthday, photo_url, contact_groups, updated_at) VALUES ?
+           ON DUPLICATE KEY UPDATE name = VALUES(name)`,
+					[rows.slice(i, i + 500)]
+				);
+			}
+			contactCount += rows.length;
+		}
 		await conn.commit();
 	} catch (err) {
 		await conn.rollback().catch(() => undefined);
 		throw err;
 	}
-	return { facts: facts.length, clarifications: clarifications.length };
+	return { facts: facts.length, clarifications: clarifications.length, contacts: contactCount };
+}
+
+/** Every mirrored contact as "profileId:contactId", for checking row sources. */
+async function contactKeys(conn) {
+	const [rows] = await conn.query("SELECT profile_id, contact_id FROM _contact");
+	return new Set(rows.map((r) => `${Number(r.profile_id)}:${r.contact_id}`));
 }
 
 /**
@@ -229,6 +312,8 @@ WHERE t._profile_id IS NULL OR t._sources IS NULL OR JSON_TYPE(t._sources) <> 'A
        (j.s REGEXP '^f:[0-9]+$' AND EXISTS (SELECT 1 FROM _fact f WHERE f.fact_id = CAST(SUBSTRING(j.s, 3) AS UNSIGNED) AND f.profile_id = t._profile_id))
        OR
        (j.s REGEXP '^q:[0-9]+$' AND EXISTS (SELECT 1 FROM _clarification c WHERE c.question_id = CAST(SUBSTRING(j.s, 3) AS UNSIGNED) AND c.profile_id = t._profile_id))
+       OR
+       (j.s REGEXP '^c:[0-9]+$' AND EXISTS (SELECT 1 FROM _contact k WHERE k.contact_id = SUBSTRING(j.s, 3) AND k.profile_id = t._profile_id))
      )
    )`;
 		try {
@@ -287,13 +372,13 @@ async function runStatement(conn, statement) {
  * Insert-or-update rows she extracted from facts. Code builds the SQL so
  * values are parameters, and checks every row's sources belong to its person.
  */
-async function upsertRows(conn, table, rows, { factOwner, clarificationOwner }) {
+async function upsertRows(conn, table, rows, { factOwner, clarificationOwner, contactOwner }) {
 	if (!IDENT.test(String(table || "")) || table.startsWith("_")) throw new Error(`bad table name: ${table}`);
 	if (!Array.isArray(rows) || !rows.length) throw new Error("no rows");
 	const accepted = [];
 	const rejected = [];
 	for (const row of rows.slice(0, 500)) {
-		const problem = rowProblem(row, { factOwner, clarificationOwner });
+		const problem = rowProblem(row, { factOwner, clarificationOwner, contactOwner });
 		if (problem) rejected.push(problem);
 		else accepted.push(row);
 	}
@@ -316,7 +401,7 @@ async function upsertRows(conn, table, rows, { factOwner, clarificationOwner }) 
 	return { affectedRows: res.affectedRows, inserted: accepted.length, rejected };
 }
 
-function rowProblem(row, { factOwner, clarificationOwner }) {
+function rowProblem(row, { factOwner, clarificationOwner, contactOwner }) {
 	if (!row || typeof row !== "object" || Array.isArray(row)) return "row is not an object";
 	const pid = Number(row._profile_id);
 	if (!Number.isInteger(pid)) return "row has no _profile_id";
@@ -324,6 +409,12 @@ function rowProblem(row, { factOwner, clarificationOwner }) {
 	if (!Array.isArray(sources) || !sources.length) return "row has no _sources";
 	for (const s of sources) {
 		if (!SOURCE.test(String(s))) return `bad source ${s}`;
+		if (String(s)[0] === "c") {
+			// Contact ids can exceed a safe integer, so they stay strings; and
+			// they are only unique per Google account, so ownership is the pair.
+			if (!contactOwner || !contactOwner.has(`${pid}:${String(s).slice(2)}`)) return `source ${s} is not one of this person's contacts`;
+			continue;
+		}
 		const id = Number(String(s).slice(2));
 		const owner = String(s)[0] === "f" ? factOwner.get(id) : clarificationOwner.get(id);
 		if (owner === undefined) return `unknown source ${s}`;
@@ -369,6 +460,7 @@ module.exports = {
 	describe,
 	isCompliant,
 	refreshMirror,
+	contactKeys,
 	guard,
 	purge,
 	referencedSources,

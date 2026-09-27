@@ -18,6 +18,10 @@ change that design when it turns out wrong, and build views that make common
 questions easy. That's what lets me answer "who have I told you about?" or
 "who do I know in Denver?" from an organized list instead of a pile of notes.
 
+If you've connected Google Contacts, I bring your address book into the
+dream too, and link it to the family and people I already know — your
+sister's row gets her number, email, birthday and photo from her contact.
+
 When I can't settle something on my own — two Emmas, and I can't tell if
 they're the same person — I don't guess. I'll ask you: next time we're
 talking, at a natural moment ("Can I ask you something?"), and, if you've
@@ -58,8 +62,9 @@ down to every step I ran.
 
 ## Limits
 
-- My tables are built only from what you've told me and your answers to my
-  questions — never from guesses.
+- My tables are built only from what you've told me, your answers to my
+  questions, and your Google Contacts if you connected them — never from
+  guesses. Turn Contacts off and what I built from them is gone by morning.
 - They're per person: I only use your rows with you.
 - Children's conversations are never part of it.
 - A list can be incomplete: if you never told me about someone, they aren't in
@@ -80,7 +85,9 @@ down to every step I ran.
 - Nightly: `src/services/dreams/dream.js` (rounds, prompt, audit), run from
   `src/jobs/nightly.js` (`npm run dream` for just the dream).
 - Her database: `src/services/dreams/mind.js` — own MySQL user on
-  `athena_mind` only (`db/mind-setup.js`); `_fact` / `_clarification` mirror;
+  `athena_mind` only (`db/mind-setup.js`); `_fact` / `_clarification` /
+  `_contact` mirror (`_contact` from `src/services/connectors/googleContacts.js`,
+  adults with an active Contacts link only; sources cite `c:<contact_id>`);
   guard drops tables lacking `_profile_id` / `_sources`; purge deletes rows
   whose sources were forgotten.
 - Chat: `src/services/dreams/recall.js` (catalog-driven, code-built,

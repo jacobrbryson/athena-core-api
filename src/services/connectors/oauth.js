@@ -4,7 +4,15 @@ const config = require("../../config");
 const secrets = require("../secrets");
 const credentials = require("../credentials");
 const consent = require("../consent");
-const { getProvider, describe, PROVIDER_IDS } = require("./registry");
+const {
+	getProvider,
+	describe,
+	PROVIDER_IDS,
+	getGroup,
+	groupOf,
+	dataScopes,
+	googleIdentity,
+} = require("./registry");
 
 /**
  * Generic OAuth 2.0 authorization-code flow for outbound integrations.
@@ -348,6 +356,186 @@ async function complete(providerId, { code, state, error, errorDescription }) {
 }
 
 // ---------------------------------------------------------------------------
+// Groups: one consent screen, several credentials
+// ---------------------------------------------------------------------------
+
+/** A Google login_hint: an address, nothing else. */
+function cleanLoginHint(value) {
+	if (typeof value !== "string") return null;
+	const hint = value.trim().slice(0, 254);
+	return /^[^\s@]+@[^\s@]+$/.test(hint) ? hint : null;
+}
+
+/**
+ * Start a flow that asks for every member's scopes at once — what sign-in
+ * opens, and the "connect all" on the group's card. Google's granular consent
+ * lets the person untick any of them; complete() links only what came back.
+ *
+ * No consent gate: no member of a group carries a consentType, and
+ * assertGroupHasNoConsentType() below keeps it that way.
+ */
+async function beginGroup(actor, groupId, { redirectTo, loginHint } = {}) {
+	const group = getGroup(groupId);
+	if (!actor || !actor.profileId) throw httpError("Authentication required", 401);
+	assertGroupHasNoConsentType(group);
+
+	const lead = getProvider(group.members[0]);
+	const { clientId } = await clientCredentials(lead);
+	const pkce = pkcePair();
+	const state = await issueState(actor.profileId, group.id, {
+		codeVerifier: pkce.verifier,
+		redirectTo: resolveReturnTarget(redirectTo),
+	});
+
+	const scopes = [
+		...new Set([...group.identityScopes, ...group.members.flatMap((m) => getProvider(m).scopes)]),
+	];
+	const params = new URLSearchParams({
+		client_id: clientId,
+		redirect_uri: redirectUri(group.id),
+		response_type: "code",
+		scope: scopes.join(" "),
+		state,
+		...lead.authorizeParams,
+		code_challenge: pkce.challenge,
+		code_challenge_method: "S256",
+	});
+	const hint = cleanLoginHint(loginHint);
+	if (hint) params.set("login_hint", hint);
+
+	return {
+		provider: group.id,
+		authorize_url: `${lead.authorizeUrl}?${params.toString()}`,
+		expires_in: STATE_TTL_MINUTES * 60,
+	};
+}
+
+function assertGroupHasNoConsentType(group) {
+	const gated = group.members.find((m) => getProvider(m).consentType);
+	if (gated) {
+		// A health-data provider must never ride along on a bundled consent.
+		throw httpError(`${gated} needs its own consent and cannot be linked as part of ${group.label}`, 500);
+	}
+}
+
+/**
+ * Finish a group flow: one code exchange, then one credential per member the
+ * person actually granted.
+ *
+ * A member whose live link belongs to a DIFFERENT Google account is left
+ * alone — Gmail is commonly a work account while sign-in is personal, and a
+ * sign-in must never quietly swap which inbox Athena reads.
+ *
+ * @returns {Promise<{provider:string, linked:string[], kept:string[], declined:string[], redirectTo:string|null}>}
+ */
+async function completeGroup(groupId, { code, state, error, errorDescription }) {
+	const group = getGroup(groupId);
+	if (error) {
+		const record = await consumeState(state, group.id).catch(() => null);
+		throw Object.assign(
+			httpError(errorDescription || `Authorization was declined (${error})`, 400, error),
+			{ redirectTo: record ? record.redirect_to : null }
+		);
+	}
+	if (typeof code !== "string" || !code) {
+		throw httpError("Missing authorization code", 400, "code_missing");
+	}
+
+	const record = await consumeState(state, group.id);
+	const redirectTo = record.redirect_to || null;
+	const profileId = record.profile_id;
+
+	try {
+		const lead = getProvider(group.members[0]);
+		const { clientId, clientSecret } = await clientCredentials(lead);
+		const { params, headers } = tokenRequestParams(lead, clientId, clientSecret, {
+			grant_type: "authorization_code",
+			code,
+			redirect_uri: redirectUri(group.id),
+			...(record.code_verifier ? { code_verifier: record.code_verifier } : {}),
+		});
+		const { ok, body } = await postForm(lead.tokenUrl, params, { headers });
+		if (!ok || !body.access_token) {
+			throw httpError(
+				tokenErrorMessage(body, `${group.label} rejected the authorization`),
+				502,
+				"token_exchange_failed"
+			);
+		}
+
+		const tokens = normalizeTokens(body);
+		const identity = googleIdentity(body);
+		if (!identity) {
+			// Without the id_token there is no way to tell whose account this is,
+			// and so no way to keep it from overwriting someone else's link.
+			throw httpError(`${group.label} did not say which account was approved`, 502, "identity_missing");
+		}
+		const granted = new Set(tokens.scopes || []);
+
+		const linked = [];
+		const kept = [];
+		const declined = [];
+		for (const memberId of group.members) {
+			const memberScopes = dataScopes(memberId).filter((s) => granted.has(s));
+			if (!memberScopes.length) {
+				declined.push(memberId);
+				continue;
+			}
+			const accountId = group.accountKey[memberId] === "email" ? identity.email : identity.externalAccountId;
+			if (!accountId) {
+				declined.push(memberId);
+				continue;
+			}
+			const existing = await credentials.status(profileId, memberId);
+			if (
+				existing &&
+				existing.status !== credentials.STATUS_REVOKED &&
+				existing.external_account_id &&
+				String(existing.external_account_id).toLowerCase() !== String(accountId).toLowerCase()
+			) {
+				kept.push(memberId);
+				continue;
+			}
+			await credentials.put({
+				profileId,
+				provider: memberId,
+				kind: "oauth2",
+				externalAccountId: accountId,
+				displayName: identity.displayName || getProvider(memberId).label,
+				actor: `oauth-callback:${group.id}`,
+				...tokens,
+			});
+			linked.push(memberId);
+		}
+		return { provider: group.id, linked, kept, declined, redirectTo };
+	} catch (err) {
+		err.redirectTo = redirectTo;
+		throw err;
+	}
+}
+
+/**
+ * Disconnect every member of a group. One upstream revocation covers them
+ * all — for Google, revoking any token revokes the whole grant.
+ */
+async function disconnectGroup(actor, groupId, { actorLabel = "user" } = {}) {
+	const group = getGroup(groupId);
+	let revokedUpstream = false;
+	const revoked = [];
+	for (const memberId of group.members) {
+		const linked = await credentials.status(actor.profileId, memberId);
+		if (!linked) continue;
+		// Each member revokes its own token: a member kept on a different
+		// account (see completeGroup) holds a grant the others' revocation
+		// would not reach. Revoking an already-dead token is a harmless no-op.
+		const result = await disconnect(actor, memberId, { actorLabel, ignoreSiblings: true });
+		revokedUpstream = revokedUpstream || result.revoked_upstream;
+		revoked.push(memberId);
+	}
+	return { provider: group.id, disconnected: revoked, revoked_upstream: revokedUpstream };
+}
+
+// ---------------------------------------------------------------------------
 // accessToken (refresh on use)
 // ---------------------------------------------------------------------------
 
@@ -502,11 +690,26 @@ async function statusAll(actor) {
  * then clear our side regardless. Revocation upstream is best-effort — a
  * provider being down must not leave a credential we refuse to delete.
  */
-async function disconnect(actor, providerId, { actorLabel = "user" } = {}) {
+async function disconnect(actor, providerId, { actorLabel = "user", ignoreSiblings = false } = {}) {
 	const provider = getProvider(providerId);
 	let revokedUpstream = false;
 
-	if (provider.revokeUrl) {
+	// Revoking a Google token revokes the person's whole grant to the app, so
+	// disconnecting Contacts upstream would silently kill Gmail and Calendar
+	// too. While a sibling is still linked, only our side is cleared: Athena
+	// no longer holds a token for this service, and the upstream grant goes
+	// when the last member of the group is disconnected.
+	let siblingLinked = false;
+	const group = groupOf(provider.id);
+	if (group && !ignoreSiblings) {
+		for (const sibling of getGroup(group).members) {
+			if (sibling === provider.id) continue;
+			const other = await credentials.status(actor.profileId, sibling);
+			if (other && other.status !== credentials.STATUS_REVOKED) siblingLinked = true;
+		}
+	}
+
+	if (provider.revokeUrl && !siblingLinked) {
 		// A credential we cannot decrypt must not block disconnecting: clearing
 		// our side is the part the user actually asked for, and refusing to
 		// release a link because its token is unreadable is the worst answer.
@@ -539,12 +742,15 @@ async function disconnect(actor, providerId, { actorLabel = "user" } = {}) {
 	const result = await credentials.revoke(actor.profileId, provider.id, {
 		actor: actorLabel,
 	});
-	return { ...result, revoked_upstream: revokedUpstream };
+	return { ...result, revoked_upstream: revokedUpstream, ...(siblingLinked ? { kept_upstream_for_siblings: true } : {}) };
 }
 
 module.exports = {
 	begin,
 	complete,
+	beginGroup,
+	completeGroup,
+	disconnectGroup,
 	accessToken,
 	invalidate,
 	status,
