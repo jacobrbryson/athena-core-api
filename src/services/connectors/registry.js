@@ -307,6 +307,12 @@ const GROUPS = {
 		// Always asked, whatever the members are: the id_token is how the
 		// callback learns which Google account consented.
 		identityScopes: ["openid", "email", "profile"],
+		// The group returns through a member's callback, which is already a
+		// registered redirect URI on the Google OAuth client — a new
+		// /integrations/google/callback would be one more URI to keep in sync
+		// with the console, and a redirect_uri_mismatch when it isn't. The
+		// callback tells the two flows apart by the state's own provider.
+		callbackVia: "google_calendar",
 		accountKey: { gmail: "email", google_calendar: "sub", google_contacts: "sub" },
 	},
 };

@@ -1,5 +1,9 @@
 const oauth = require("../services/connectors/oauth");
-const { isProvider, isGroup } = require("../services/connectors/registry");
+const { isProvider, isGroup, GROUPS } = require("../services/connectors/registry");
+
+/** The group whose flow returns through this provider's callback, if any. */
+const groupCarriedBy = (providerId) =>
+	Object.values(GROUPS).find((g) => g.callbackVia === providerId)?.id || null;
 const { resolveActingProfile } = require("../services/integration");
 
 /**
@@ -90,7 +94,7 @@ async function startConnect(req, res) {
  * when an allowlisted return target is configured, or JSON in local dev.
  */
 async function handleCallback(req, res) {
-	const provider = req.params.provider;
+	let provider = req.params.provider;
 	try {
 		const callback = {
 			code: req.query.code,
@@ -98,6 +102,11 @@ async function handleCallback(req, res) {
 			error: req.query.error,
 			errorDescription: req.query.error_description,
 		};
+		// A group returns through a member's registered callback (see
+		// `callbackVia` in the registry). The state says which flow it was;
+		// completeGroup still consumes it scoped to the group.
+		const carried = groupCarriedBy(provider);
+		if (carried && (await oauth.stateProvider(callback.state)) === carried) provider = carried;
 		if (isGroup(provider)) {
 			const result = await oauth.completeGroup(provider, callback);
 			const outcome = {

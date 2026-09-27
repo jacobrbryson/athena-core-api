@@ -540,7 +540,7 @@ describe("google group", () => {
 		});
 		const url = new URL(authorize_url);
 		expect(provider).toBe("google");
-		expect(url.searchParams.get("redirect_uri")).toBe("https://api.athena.test/api/v1/integrations/google/callback");
+		expect(url.searchParams.get("redirect_uri")).toBe("https://api.athena.test/api/v1/integrations/google_calendar/callback");
 		const scopes = url.searchParams.get("scope").split(" ");
 		expect(scopes).toEqual(expect.arrayContaining(["openid", "email", "profile", ...GMAIL_SCOPES.split(" "), ...CAL_SCOPES.split(" "), CONTACTS_SCOPE]));
 		expect(new Set(scopes).size).toBe(scopes.length);
@@ -585,7 +585,7 @@ describe("google group", () => {
 		// One code exchange for the whole group, on the group's redirect URI.
 		expect(global.fetch).toHaveBeenCalledTimes(1);
 		expect(new URLSearchParams(global.fetch.mock.calls[0][1].body).get("redirect_uri")).toBe(
-			"https://api.athena.test/api/v1/integrations/google/callback"
+			"https://api.athena.test/api/v1/integrations/google_calendar/callback"
 		);
 	});
 
@@ -636,5 +636,16 @@ describe("google group", () => {
 		expect(result).toMatchObject({ disconnected: ["gmail", "google_calendar"], revoked_upstream: true });
 		expect(global.fetch.mock.calls[0][0]).toBe("https://oauth2.googleapis.com/revoke");
 		expect(mockCredentials.revoke).toHaveBeenCalledTimes(2);
+	});
+});
+
+describe("shared callback", () => {
+	it("tells a group's state apart from a single provider's without consuming it", async () => {
+		const group = await oauth.beginGroup(ACTOR, "google");
+		const single = await oauth.begin(ACTOR, "google_calendar");
+		expect(await oauth.stateProvider(stateFrom(group.authorize_url))).toBe("google");
+		expect(await oauth.stateProvider(stateFrom(single.authorize_url))).toBe("google_calendar");
+		expect(await oauth.stateProvider("")).toBeNull();
+		expect(mockQuery.mock.calls.some(([sql]) => /UPDATE oauth_state/.test(sql))).toBe(false);
 	});
 });

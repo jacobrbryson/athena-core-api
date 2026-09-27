@@ -133,6 +133,21 @@ async function consumeState(state, providerId) {
 	return rows[0];
 }
 
+/**
+ * Which flow a still-usable state belongs to, without consuming it. Only
+ * picks the handler for a shared callback path; the handler's consumeState
+ * is still what proves the state, scoped to the provider it names.
+ */
+async function stateProvider(state) {
+	if (typeof state !== "string" || !state) return null;
+	const [rows] = await pool.query(
+		`SELECT provider FROM oauth_state
+		 WHERE state_hash = ? AND consumed_at IS NULL AND expires_at > NOW() LIMIT 1`,
+		[sha256(state)]
+	);
+	return rows[0]?.provider || null;
+}
+
 /** Housekeeping: drop states that can no longer be used. */
 async function purgeExpiredStates() {
 	const [result] = await pool.query(
@@ -392,7 +407,7 @@ async function beginGroup(actor, groupId, { redirectTo, loginHint } = {}) {
 	];
 	const params = new URLSearchParams({
 		client_id: clientId,
-		redirect_uri: redirectUri(group.id),
+		redirect_uri: redirectUri(group.callbackVia || group.id),
 		response_type: "code",
 		scope: scopes.join(" "),
 		state,
@@ -451,7 +466,7 @@ async function completeGroup(groupId, { code, state, error, errorDescription }) 
 		const { params, headers } = tokenRequestParams(lead, clientId, clientSecret, {
 			grant_type: "authorization_code",
 			code,
-			redirect_uri: redirectUri(group.id),
+			redirect_uri: redirectUri(group.callbackVia || group.id),
 			...(record.code_verifier ? { code_verifier: record.code_verifier } : {}),
 		});
 		const { ok, body } = await postForm(lead.tokenUrl, params, { headers });
@@ -751,6 +766,7 @@ module.exports = {
 	beginGroup,
 	completeGroup,
 	disconnectGroup,
+	stateProvider,
 	accessToken,
 	invalidate,
 	status,

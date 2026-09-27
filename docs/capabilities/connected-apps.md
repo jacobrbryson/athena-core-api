@@ -87,9 +87,9 @@ reach your calendar.
   exchange, one credential per granted member (`completeGroup`); a member
   whose live link is on another account is kept, not swapped. A single member's
   disconnect skips the upstream revoke while a sibling is linked (Google's
-  revoke kills the whole grant). Its redirect URI,
-  `<PUBLIC_API_BASE_URL>/integrations/google/callback`, must be registered on
-  the Google OAuth client.
+  revoke kills the whole grant). It returns through the already-registered
+  `/integrations/google_calendar/callback` (`callbackVia`), which hands a
+  state issued for the group to `completeGroup` (`oauth.stateProvider`).
 - Sign-in hand-off: `../../../companion/src/auth/AuthContext.tsx` starts the
   `google` group flow after a web sign-in (not Android), returning with
   `?from=signin`; the console only opens this panel if something was declined
