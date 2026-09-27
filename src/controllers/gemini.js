@@ -312,10 +312,17 @@ async function processAiResponse(session, message, clients, ctx = {}) {
       };
     }
 
+    // A song: she says `response`, then sings `lyrics`. Stored as one message
+    // so the transcript (and her own history) keeps the song; broadcast
+    // split so the client can speak one part and sing the other.
+    const lyrics =
+      !fellBack && typeof parsedResponse.lyrics === "string"
+        ? parsedResponse.lyrics.trim()
+        : "";
     const aiChatUuid = await messageService.addMessage(
       session.id,
       false,
-      parsedResponse.response,
+      lyrics ? `${parsedResponse.response}\n\n${lyrics}` : parsedResponse.response,
       session.mode,
     );
 
@@ -451,10 +458,9 @@ async function processAiResponse(session, message, clients, ctx = {}) {
         is_human: false,
         text: parsedResponse.response,
         created_at: Date.now(),
-        // Tells the client to request sung rather than spoken audio. Live
-        // socket only: it isn't stored, so a reply fetched by polling is
-        // spoken.
-        ...(parsedResponse.sing === true && !fellBack ? { sung: true } : {}),
+        // Live socket only. A reply fetched by polling arrives as the stored
+        // combined text and is spoken, not sung.
+        ...(lyrics ? { lyrics } : {}),
       },
     });
 

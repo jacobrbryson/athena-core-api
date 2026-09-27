@@ -1,5 +1,10 @@
 # Capability ledger
 
+- 2026-09-26 — Singing now flows: Athena says a line of her own first (it
+  shows in chat), hums a short vocal warm-up while the song gets ready, then
+  sings, and the lyrics appear under what she said — `singing.md`
+  (status: partial)
+
 - 2026-09-26 — Athena sings: ask her for a song and she sings it in her own
   voice with a real melody, whether a public-domain song or a short original.
   Voice only, no backing music; the lyrics show at once, she says a quick warm-up line, and she starts singing about fifteen seconds later —

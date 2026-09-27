@@ -14,9 +14,9 @@ Ask me to sing and I will, in my own voice, with a real melody. I can sing old
 songs everyone knows, like Happy Birthday, Twinkle Twinkle Little Star and
 other nursery rhymes and folk songs, or make up a short song about whatever you
 like: your day, your dog, a goodnight song. My songs are short, about four
-lines. The words show up right away. A song takes me a moment to get ready, so
-I'll say a quick word first while I warm up, then sing, usually about fifteen
-seconds after you ask.
+lines. I'll say a word first, then hum a little warm-up to find my voice, then
+sing. The song usually starts about fifteen seconds after you ask, and you'll
+see the words in the chat under what I said.
 
 ## Where to find it
 
@@ -30,9 +30,9 @@ that Voice says on.
   it on under ⋯ menu → Voice and ask again.
 - **I speak the song instead of singing it.** That happens if the chat has
   dropped to its backup connection. Ask again once it has reconnected.
-- **I say I'm warming up, but the song never starts.** A song takes about
-  fifteen seconds to prepare. If a minute goes by, my singing voice is
-  unavailable right now; I can still say the words.
+- **I hum my warm-up, but the song never starts.** A song takes about fifteen
+  seconds to prepare. If a minute goes by, my singing voice is unavailable
+  right now; the words are still there in the chat.
 
 ## Limits
 
@@ -47,10 +47,12 @@ that Voice says on.
 
 **Never sent to a model.**
 
-- Reply flag: `sing` in `RESPONSE_SCHEMA` and `SINGING_RULES` in `src/controllers/prompt.js` (child companion and adult companion strategies only; teach mode has no singing).
-- Broadcast: `src/controllers/gemini.js` adds `sung: true` to the live `addMessage` rpc. It is not stored, so a reply reached through REST polling (or a poll that beats the socket) is spoken instead.
+- Reply: `lyrics` in `RESPONSE_SCHEMA`, and `SINGING_RULES` in `src/controllers/prompt.js` (the child and adult companion strategies only; teach mode has no singing). `response` is then her one-sentence spoken lead-in.
+- Broadcast and storage: `src/controllers/gemini.js` stores `response + "
+
+" + lyrics` as one message, so history and her own context keep the song. The live `addMessage` rpc carries them split (`text` + `lyrics`). Polling only gets the stored text, which is spoken rather than sung.
 - Audio: `POST /api/v1/speech` with `{ text, style: "sing" }` in `src/controllers/speech.js`, then `llm.speech(text, { sing: true })` in `src/services/llm/router.js`, then `speech()` in `src/services/llm/adapters/gemini.js`. Same voice (`GEMINI_TTS_VOICE`, Aoede) on the `sing` model: `GEMINI_SING_MODEL`, defaulting to `gemini-2.5-pro-preview-tts`. Flash only reads in rhythm; Pro actually holds notes. Same access rule and 800-character cap as speech.
-- Clients: `prepare(text, { sing })` in `../../../companion/src/athena/useSpeech.ts` and `../../../guardians/src/athena/useSpeech.ts` (75 s generation timeout), and the voice-hold gate in `../../../companion/src/pages/CompanionConsole.tsx` and `../../../guardians/src/pages/AthenaConsole.tsx`.
-- Latency: ~14 s for four lines, ~25 s for eight (measured 2026-09-26). Sung replies are deliberately NOT held for their audio (spoken ones are, up to 20 s): the owner found a held song reply far too slow, so the lyrics show at once and playback starts when ready.
-- Warm-up line: while the song generates, `prepare()` also fetches one of `SONG_INTROS` (spoken, fast model, ~3 s) and plays it first; the song follows when the intro ends. `ownerRef` drops the song if a newer reply, a cancel or Voice-off took the voice during the gap, so a late song never cuts in. The intro is voice-only; it is not in the transcript.
-- The Android app bundles the companion web UI, so the phone only gets singing after an APK rebuild.
+- Clients: `prepare(text, { lyrics })` in `../../../companion/src/athena/useSpeech.ts` and `../../../guardians/src/athena/useSpeech.ts`. The lead-in is spoken and held like any reply, and the song is fetched in parallel (75 s timeout). Sequence: lead-in, one warm-up hum (always), more hums (up to 3 in total) only while the song is still generating, then the song. `ownerRef` drops the rest if a newer reply, a cancel or Voice-off takes the voice. Lyrics render under her text in the bubble (`CompanionConsole.tsx`, `AthenaConsole.tsx`).
+- Warm-ups: `../../../companion/src/athena/voice/warmup-*.json` (mirrored in guardians). These are pre-recorded Aoede hums on Pro TTS (an octave arpeggio, a hummed scale, "mi-mi"), trimmed and faded, in the Unity PCM payload shape. They are imported with `?url` so they land in `/assets`, which the Android WebView serves from the APK, and fetched on first song only (~1.2 MB total).
+- Latency (measured 2026-09-26): song ~14 s for four lines; lead-in ~3 s; warm-ups 5.5–7.8 s each. The owner rejected holding the whole reply for the song (too slow) and a canned voice-only intro (not in chat, jarring). This design is the answer to both.
+- The Android app bundles the companion web UI, so the phone only gets singing changes after an APK rebuild.

@@ -26,10 +26,10 @@ const RESPONSE_SCHEMA = {
     // Optional. Set true only when a Guardian indicates they are reporting /
     // locking in their family's mission piece (see Current Mission below).
     mission_report: { type: "boolean" },
-    // Optional. True when `response` is a song for her to SING rather than
-    // speak (see SINGING_RULES). Only changes how the voice performs the text;
-    // it does nothing else.
-    sing: { type: "boolean" },
+    // Optional. A song for her to SING (see SINGING_RULES). `response` is
+    // then the short line she says first. Only changes how the voice
+    // performs the text; it does nothing else.
+    lyrics: { type: "string" },
     // Optional. One thing Athena wants to DO rather than say — see
     // services/actions. Filling this in does NOT perform anything: the
     // backend validates it against the action registry, creates a pending
@@ -61,14 +61,17 @@ const RESPONSE_SCHEMA = {
   ],
 };
 
-// Shared by the companion strategies. The voice sings whatever `response`
-// holds when `sing` is true, so the reply must be lyrics and nothing else.
+// Shared by the companion strategies. The voice speaks `response`, hums a
+// short warm-up, then sings `lyrics` — so `lyrics` must be singable words
+// and nothing else.
 const SINGING_RULES = `
 # Singing
-You can really sing — your voice performs the words with a melody.
-- When they ask you to sing (a song, a lullaby, happy birthday, a little tune about their day), set \`sing: true\` and put ONLY the lyrics in \`response\`: no intro line, no stage directions, no emoji. Keep it short — about four lines; a song takes time to prepare, and a longer one keeps them waiting.
-- Sing public-domain songs (Happy Birthday, Twinkle Twinkle, folk songs, nursery rhymes) or write an original one. Never sing or write out the lyrics of a copyrighted song; if they ask for one, say so briefly in a normal spoken reply and offer an original song in the same spirit.
-- Otherwise leave \`sing\` out. Never sing unasked.
+You can really sing — your voice performs the words with a melody. You warm up with a little hum between talking and singing; that happens by itself.
+- When they ask you to sing (a song, a lullaby, happy birthday, a little tune about their day), put the song in \`lyrics\` and a short spoken lead-in in \`response\` — one sentence, in your own voice, that fits the moment and the person ("Happy birthday, Sam — this one's for you." / "Oh, a Monday song. I can do that."). Say it differently each time. Don't repeat the lyrics in \`response\`, and don't hum, vocalize or write sounds like "mmm" or "la la" there: your real warm-up hum plays right after it.
+- \`lyrics\` holds ONLY the words to sing: no title, no stage directions, no emoji. Keep it short — about four lines; a song takes time to prepare, and a longer one keeps them waiting.
+- Sing public-domain songs (Happy Birthday, Twinkle Twinkle, folk songs, nursery rhymes) or write an original one. Never sing or write out the lyrics of a copyrighted song. If they ask for one, leave \`lyrics\` out this turn: say briefly in \`response\` that you can't sing that one, and offer to write them an original in the same mood. Sing it only once they say yes.
+- An original is entirely your own words. Never borrow a line, hook, title or distinctive phrase from the song they asked for — match its mood, not its words.
+- Otherwise leave \`lyrics\` out. Never sing unasked.
 `;
 
 function formatMemory(memories) {
