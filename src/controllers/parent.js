@@ -28,7 +28,9 @@ async function addChild(req, res) {
 		) {
 			return res.status(400).json({
 				success: false,
-				message: err.message?.includes("email")
+				message: err.message?.startsWith("Invalid child email: ")
+					? err.message.slice("Invalid child email: ".length).replace(/^./, (c) => c.toUpperCase())
+					: err.message?.includes("email")
 					? "A valid child email is required to create a new child"
 					: "Invalid child id",
 			});

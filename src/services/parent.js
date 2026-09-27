@@ -91,6 +91,17 @@ async function addChild(googleId, payload = {}) {
 			}
 		}
 
+		// The email lookup matches ANY profile, so a parent who enters their own
+		// email for a child who has none would link themselves as their own
+		// child and overwrite their own name/birthday with the child's (this is
+		// how a parent ended up classified as a child). Refuse both cases.
+		if (Number(childProfile.id) === Number(parentProfile.id)) {
+			throw new Error("Invalid child email: that is your own account");
+		}
+		if (childProfile.is_guardian) {
+			throw new Error("Invalid child email: that email belongs to an adult account");
+		}
+
 	const [existing] = await conn.query(
 		`SELECT id, deleted_at FROM profile_child WHERE parent_profile_id = ? AND child_profile_id = ? LIMIT 1;`,
 		[parentProfile.id, childProfile.id]

@@ -211,7 +211,7 @@ async function getChildProfile(childUuid, childGoogleId, conn = pool) {
 	}
 
 	const [rows] = await conn.query(
-		`SELECT id, uuid, google_id, full_name, email, birthday, created_at, updated_at
+		`SELECT id, uuid, google_id, full_name, email, birthday, is_guardian, created_at, updated_at
     FROM profile
     WHERE ${conditions.join(" OR ")}
     LIMIT 1;`,
