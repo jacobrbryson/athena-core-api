@@ -1,5 +1,11 @@
 # Capability ledger
 
+- 2026-09-27 — Athena's hologram avatar now blinks at natural random
+  intervals, with the odd double blink, and moves her lips in time with her
+  voice, closing them when she stops. Live on web; the Android app has it in
+  the rebuilt APK. The new capability file also covers the avatar itself
+  (look, wave, thinking/talking motion) — `avatar.md` (status: live)
+
 - 2026-09-27 — Google sign-in now asks, on one Google screen, for Gmail,
   Calendar and the new read-only Google Contacts, so those links are renewed
   every sign-in (web; not the Android app). Connected apps groups them on one
