@@ -7,6 +7,7 @@
  */
 const pool = require("../../helpers/db");
 const { SMOKE_PREFIX } = require("../llm/telemetry");
+const { isTimeout } = require("../llm/health");
 
 function percentile(sorted, p) {
 	if (!sorted.length) return null;
@@ -38,7 +39,11 @@ function summarizeCalls(rows) {
 			smokeCalls += 1;
 			continue;
 		}
-		const t = (byTask[r.task] ||= { calls: 0, ok: 0, errors: 0, invalid: 0, fallbackServed: 0, latencies: [], tiers: {} });
+		// A timeout is its own kind of error: the caller waited the full timeout
+		// before the next tier answered. "40% errors" hid that every one of
+		// orcwood-dev's failures on 09-27 was a 60s wait, some of them in chat.
+		const timedOut = r.outcome === "error" && isTimeout(r.error);
+		const t = (byTask[r.task] ||= { calls: 0, ok: 0, errors: 0, timeouts: 0, invalid: 0, fallbackServed: 0, latencies: [], tiers: {} });
 		t.calls += 1;
 		if (r.outcome === "ok") {
 			t.ok += 1;
@@ -47,10 +52,16 @@ function summarizeCalls(rows) {
 			if (Number(r.attempt) > 0) t.fallbackServed += 1;
 		} else if (r.outcome === "invalid") t.invalid += 1;
 		else t.errors += 1;
+		if (timedOut) t.timeouts += 1;
 
-		const e = (byEndpoint[r.endpoint_id] ||= { tier: r.tier, calls: 0, errors: 0, invalid: 0, latencies: [] });
+		const e = (byEndpoint[r.endpoint_id] ||= { tier: r.tier, calls: 0, errors: 0, timeouts: 0, timeoutWaitMs: 0, timeoutsByTask: {}, invalid: 0, latencies: [] });
 		e.calls += 1;
 		if (r.outcome === "error") e.errors += 1;
+		if (timedOut) {
+			e.timeouts += 1;
+			e.timeoutWaitMs += Number(r.latency_ms) || 0;
+			e.timeoutsByTask[r.task] = (e.timeoutsByTask[r.task] || 0) + 1;
+		}
 		if (r.outcome === "invalid") e.invalid += 1;
 		if (r.outcome === "ok") e.latencies.push(Number(r.latency_ms));
 	}
@@ -77,7 +88,7 @@ function summarizeCalls(rows) {
 async function modelMetrics(fromHoursAgo, toHoursAgo = 0) {
 	return section(async () => {
 		const [rows] = await pool.query(
-			`SELECT task, endpoint_id, tier, outcome, latency_ms, attempt FROM llm_call_log
+			`SELECT task, endpoint_id, tier, outcome, latency_ms, attempt, error FROM llm_call_log
        WHERE created_at >= NOW() - INTERVAL ? HOUR AND created_at < NOW() - INTERVAL ? HOUR;`,
 			[fromHoursAgo, toHoursAgo]
 		);
@@ -232,6 +243,14 @@ async function initiativeMetrics() {
 			`SELECT COALESCE(SUM(enabled), 0) AS enabled, COUNT(*) AS known
 			 FROM athena_initiative_pref;`
 		);
+		// "Got it" on the alert banner. The table keeps only each person's latest
+		// ack, so this is "has anyone acknowledged an alert this week", not a
+		// per-alert count — enough to show an alert was read without a reply.
+		// Optional: an unmigrated database must not take initiative down with it.
+		const alertAcks7d = await pool
+			.query(`SELECT COUNT(*) AS n FROM athena_alert_ack WHERE acknowledged_at >= NOW() - INTERVAL 7 DAY;`)
+			.then(([[r]]) => Number(r?.n) || 0)
+			.catch(() => null);
 		const mutedBy = Object.fromEntries(mutes.map((m) => [m.trigger_id, Number(m.n)]));
 		const learnedBy = Object.fromEntries(
 			learned.map((l) => [
@@ -268,6 +287,7 @@ async function initiativeMetrics() {
 		return {
 			sent7d: sent,
 			enabledProfiles: Number(people.enabled),
+			alertAcks7d,
 			byTrigger,
 		};
 	});

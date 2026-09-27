@@ -152,14 +152,19 @@ async function previousPlan() {
 	}
 }
 
-/** Recent nights' evals, so one night's failure can be read against its history. */
-async function recentEvals(before, nights = 7) {
+/**
+ * Recent nights' evals and plans, newest first — so one night's eval failure
+ * can be read against its history, and a plan item that keeps coming back
+ * unmoved is escalated instead of re-planned.
+ */
+async function recentReports(before, nights = 7) {
+	const parse = (v) => (typeof v === "string" ? JSON.parse(v) : v);
 	try {
 		const [rows] = await pool.query(
-			`SELECT report_date, evals FROM self_review_report WHERE report_date < ? ORDER BY report_date DESC LIMIT ?;`,
+			`SELECT report_date, evals, plan FROM self_review_report WHERE report_date < ? ORDER BY report_date DESC LIMIT ?;`,
 			[before, nights]
 		);
-		return rows.map((r) => ({ date: r.report_date, evals: typeof r.evals === "string" ? JSON.parse(r.evals) : r.evals }));
+		return rows.map((r) => ({ date: r.report_date, evals: parse(r.evals), plan: parse(r.plan) }));
 	} catch {
 		return [];
 	}
@@ -177,8 +182,15 @@ async function review({ dryRun, skipEvals, out }, maintenanceResults) {
 		evals = await runEvals().catch((err) => ({ error: err.message, endpoints: {} }));
 	}
 
-	const evalHistory = await recentEvals(date);
-	const findings = ruleFindings({ metrics, evals, evalHistory, maintenance: maintenanceResults, config: { orcwoodCount: status.orcwood.length } });
+	const evalHistory = await recentReports(date);
+	const findings = ruleFindings({
+		metrics,
+		evals,
+		evalHistory,
+		planHistory: evalHistory,
+		maintenance: maintenanceResults,
+		config: { orcwoodCount: status.orcwood.length },
+	});
 	const prior = await previousPlan();
 
 	log("writing plan");

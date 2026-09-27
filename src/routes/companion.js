@@ -13,6 +13,8 @@ const router = express.Router();
 router.get('/dashboard', requireAuth, require('../controllers/dashboard').summary);
 router.get('/dashboard/priority', requireAuth, require('../controllers/dashboard').priority);
 router.get('/system/twilio-billing', requireAuth, require('../controllers/system').twilioBillingStatus);
+router.get('/system/openai-billing', requireAuth, require('../controllers/system').openaiBillingStatus);
+router.get('/system/gcp-billing', requireAuth, require('../controllers/system').gcpBillingStatus);
 // The Dreams log: what Athena did in her own database overnight, told plainly
 // and as a dream. Read-only; statements leave redacted (services/dreams/redact).
 router.get('/dreams', requireAuth, require('../controllers/dreams').list);

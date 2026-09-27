@@ -262,7 +262,8 @@ async function probeAll() {
 			try {
 				const models = await openaiAdapter.probe(endpoint);
 				probedModels.set(endpoint.id, models);
-				health.reportSuccess(endpoint.id, Date.now() - started);
+				// A probe proves listening, not generating — see health.js.
+				health.reportProbeOk(endpoint.id, Date.now() - started);
 			} catch (err) {
 				health.reportFailure(endpoint.id, err);
 			}

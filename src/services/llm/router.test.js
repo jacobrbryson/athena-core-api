@@ -121,6 +121,50 @@ describe("generate + fallback", () => {
 		expect(global.fetch).not.toHaveBeenCalled();
 	});
 
+	test("one timeout opens the circuit, so the next call skips the hung server", async () => {
+		global.fetch.mockRejectedValueOnce(new Error("orc-a /chat/completions timed out"));
+		mockGenerateContent.mockResolvedValueOnce({ text: "{}" });
+		await router.generate({ task: "chat", contents: "x" });
+		expect(health.isAvailable("orc-a")).toBe(false);
+
+		global.fetch.mockClear();
+		mockGenerateContent.mockResolvedValueOnce({ text: "{}" });
+		await expect(router.generate({ task: "chat", contents: "x" })).resolves.toMatchObject({ endpointId: "gemini" });
+		expect(global.fetch).not.toHaveBeenCalled();
+	});
+
+	test("a green /models probe cannot close a circuit a timeout opened", async () => {
+		global.fetch.mockRejectedValueOnce(new Error("orc-a /chat/completions timed out"));
+		mockGenerateContent.mockResolvedValueOnce({ text: "{}" });
+		await router.generate({ task: "chat", contents: "x" });
+
+		global.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ data: [{ id: "qwen3:8b" }] }) });
+		await router.probeAll();
+		expect(health.isAvailable("orc-a")).toBe(false);
+	});
+
+	test("a green probe still closes a circuit that connection failures opened", async () => {
+		for (let i = 0; i < health.FAILURE_THRESHOLD; i++) {
+			global.fetch.mockRejectedValueOnce(new Error("ECONNREFUSED"));
+			mockGenerateContent.mockResolvedValueOnce({ text: "{}" });
+			await router.generate({ task: "chat", contents: "x" });
+		}
+		expect(health.isAvailable("orc-a")).toBe(false);
+
+		global.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ data: [{ id: "qwen3:8b" }] }) });
+		await router.probeAll();
+		expect(health.isAvailable("orc-a")).toBe(true);
+	});
+
+	test("after the cooldown a real success closes a timeout-opened circuit", () => {
+		const t0 = 1_000_000;
+		health.reportFailure("orc-a", new Error("orc-a /chat/completions timed out"), t0);
+		expect(health.isAvailable("orc-a", t0 + 1)).toBe(false);
+		expect(health.isAvailable("orc-a", t0 + 31_000)).toBe(true); // half-open
+		health.reportSuccess("orc-a", 900, t0 + 31_000);
+		expect(health.snapshot(t0 + 31_001)[0]).toMatchObject({ circuit: "closed", openedByTimeout: false });
+	});
+
 	test("if every circuit is open, still try rather than refuse (half-open)", async () => {
 		setEnv({ LLM_POLICY: "local-first", GEMINI_API_KEY: "" });
 		router.reload();

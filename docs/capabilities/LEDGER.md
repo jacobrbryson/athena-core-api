@@ -1,5 +1,10 @@
 # Capability ledger
 
+- 2026-09-27 — The System page now shows OpenAI spend (month, today, last 7
+  days, by model) and the Athena project's Google Cloud cost (after credits,
+  by service and top line items, from the BigQuery billing export) beside
+  Twilio — `system.md` (status: live)
+
 - 2026-09-26 — Singing now flows: Athena says a line of her own first (it
   shows in chat), hums a short vocal warm-up while the song gets ready, then
   sings, and the lyrics appear under what she said — `singing.md`

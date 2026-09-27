@@ -316,6 +316,102 @@ describe("ruleFindings", () => {
 		});
 		expect(f.find((x) => x.area === "evals")).toBeUndefined();
 	});
+
+	// admits-gap failed 5 of 8 nights and was filed as "intermittent" every time.
+	test("a case failing most of many nights is a real gap, not noise", () => {
+		const f = ruleFindings({
+			metrics: { models: { last24h: healthyModels } },
+			evals: night(["admits-gap"]),
+			evalHistory: [["admits-gap"], [], ["admits-gap"], ["admits-gap"], []].map((x) => ({ evals: night(x) })),
+			config: { orcwoodCount: 1 },
+		});
+		expect(f.find((x) => x.area === "evals")).toMatchObject({
+			severity: "medium",
+			title: "gemini admits-gap fails most nights — a real gap, not noise",
+			evidence: expect.stringMatching(/failed 4 of the last 6 nights/),
+		});
+	});
+
+	// 09-27: 133 calls, 40% "errors" — every one a 60s timeout, 6 of them chat.
+	test("an endpoint whose failures are timeouts is reported as hanging, with the wait", () => {
+		const f = ruleFindings({
+			metrics: {
+				models: {
+					last24h: {
+						...healthyModels,
+						byEndpoint: { "orcwood-dev": { calls: 20, errors: 8, errorRate: 0.4, timeouts: 7, timeoutWaitMs: 7 * 60_000, timeoutsByTask: { json: 5, chat: 2 } } },
+					},
+				},
+			},
+			evals: {},
+			config: { orcwoodCount: 1 },
+		});
+		const hung = f.find((x) => x.area === "infra");
+		expect(hung.title).toBe("Endpoint orcwood-dev is hanging: 7 call(s) timed out");
+		expect(hung.evidence).toMatch(/~60s .*json 5, chat 2.*2 of them were people waiting on a chat reply; other errors: 1/);
+		expect(f.filter((x) => x.area === "infra")).toHaveLength(1);
+	});
+
+	test("summarizeCalls counts timeouts apart from other errors", () => {
+		const s = summarizeCalls([
+			row({ endpoint_id: "orc", tier: "orcwood", outcome: "error", error: "orc /chat/completions timed out", latency_ms: 60000 }),
+			row({ endpoint_id: "orc", tier: "orcwood", outcome: "error", error: "ECONNREFUSED" }),
+		]);
+		expect(s.byTask.chat).toMatchObject({ errors: 2, timeouts: 1 });
+		expect(s.byEndpoint.orc).toMatchObject({ errors: 2, timeouts: 1, timeoutWaitMs: 60000, timeoutsByTask: { chat: 1 } });
+	});
+
+	// 09-25..27: the plan kept proposing to pause nearby-emergency alerts
+	// because nobody replied to them.
+	test("alert triggers are judged on reach, never counted as ignored nudges", () => {
+		const f = ruleFindings({
+			metrics: { ...nudges({ nearby_incident: trig({ sent: 9, ignored: 9 }) }), initiative: { available: true, enabledProfiles: 1, sent7d: 9, alertAcks7d: 1, byTrigger: { nearby_incident: trig({ sent: 9, ignored: 9 }) } } },
+			evals: {},
+			config: { orcwoodCount: 1 },
+		});
+		expect(f.find((x) => /got no response/.test(x.title))).toBeUndefined();
+		expect(f.find((x) => x.area === "initiative")).toMatchObject({
+			severity: "low",
+			evidence: expect.stringMatching(/9 sent, 9 reached someone.*1 person\(s\) tapped "Got it"/),
+		});
+	});
+
+	test("an alert nobody saw is a high finding", () => {
+		const f = ruleFindings({
+			metrics: nudges({ nearby_incident: trig({ sent: 6, unseen: 4, ignored: 2 }) }),
+			evals: {},
+			config: { orcwoodCount: 1 },
+		});
+		expect(f.find((x) => x.severity === "high" && x.area === "initiative").title).toMatch(/67% of alerts expired before anyone saw them/);
+	});
+
+	test("a plan item repeated three nights running becomes a stuck finding and an owner question", () => {
+		const item = (title, area) => ({ title, area });
+		const planHistory = [
+			{ date: "2026-09-26", plan: { plan: [item("Investigate Orcwood health and API service routing", "localization"), item("Brand new thing", "memory")] } },
+			{ date: "2026-09-25", plan: { plan: [item("Investigate Orcwood health and API service routing", "localization")] } },
+			{ date: "2026-09-24", plan: { plan: [item("Investigate Orcwood health and routing", "localization")] } },
+			{ date: "2026-09-23", plan: { plan: [item("Refine nearby incident nudge triggers", "initiative")] } },
+		];
+		const f = ruleFindings({ metrics: { models: { last24h: healthyModels } }, evals: {}, config: { orcwoodCount: 1 }, planHistory });
+		const stuck = f.filter((x) => x.area === "stuck");
+		expect(stuck).toHaveLength(1);
+		expect(stuck[0]).toMatchObject({ severity: "high", title: "Stuck 3 nights: Investigate Orcwood health and API service routing" });
+		expect(stuck[0].evidence).toMatch(/since 2026-09-24/);
+
+		const plan = fallbackPlan(f);
+		expect(plan.plan.find((p) => p.area === "stuck")).toBeUndefined();
+		expect(plan.questionsForOwner).toEqual([expect.stringMatching(/^Stuck 3 nights: Investigate Orcwood/)]);
+	});
+
+	test("two nights of the same item is not yet stuck", () => {
+		const planHistory = [
+			{ date: "2026-09-26", plan: { plan: [{ title: "Fix news watcher", area: "news" }] } },
+			{ date: "2026-09-25", plan: { plan: [{ title: "Fix news watcher", area: "news" }] } },
+			{ date: "2026-09-24", plan: { plan: [] } },
+		];
+		expect(ruleFindings({ metrics: { models: { last24h: healthyModels } }, evals: {}, config: { orcwoodCount: 1 }, planHistory }).find((x) => x.area === "stuck")).toBeUndefined();
+	});
 });
 
 describe("evalRecord / thinSamples", () => {

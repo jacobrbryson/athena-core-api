@@ -40,7 +40,69 @@ const THRESHOLDS = {
 	// Enough proposals for "none of them were written" to mean something.
 	extractionMinProposals: 5,
 	extractionDuplicateShare: 0.8,
+	// An endpoint that times out this often is hung, not flaky: each one cost
+	// somebody the full timeout before the next tier answered.
+	hungTimeouts: 3,
+	// Planned this many nights running without moving: stop re-planning it and
+	// ask the owner. Two Orcwood/nearby_incident items sat "unchanged" for five.
+	stuckNights: 3,
+	stuckTitleSimilarity: 0.5,
+	// A "flaky" eval that fails at least this share of at least this many
+	// nights is a real gap wearing a noise label (admits-gap: 5 of 8).
+	persistentEvalFailShare: 0.5,
+	persistentEvalMinNights: 5,
 };
+
+/**
+ * Triggers whose job is to inform, not to start a conversation. A nearby-
+ * emergency alert that someone read and did not reply to has done its job;
+ * judging it on replies led the 09-27 plan to propose pausing it — the reason
+ * it exists is the owner missing a structure fire two miles away.
+ */
+const ALERT_TRIGGERS = new Set(["nearby_incident"]);
+
+const STOPWORDS = new Set(["the", "and", "for", "with", "into", "from", "its", "fix", "investigate", "check", "refine", "improve"]);
+function titleWords(title) {
+	return new Set(String(title || "").toLowerCase().split(/[^a-z0-9_]+/).filter((w) => w.length > 2 && !STOPWORDS.has(w)));
+}
+function similar(a, b) {
+	const x = titleWords(a);
+	const y = titleWords(b);
+	if (!x.size || !y.size) return false;
+	let both = 0;
+	for (const w of x) if (y.has(w)) both += 1;
+	return both / (x.size + y.size - both) >= THRESHOLDS.stuckTitleSimilarity;
+}
+
+/**
+ * Items from last night's plan that were also planned on each of the nights
+ * before it. `planHistory` is newest first: [{ date, plan: { plan: [...] } }].
+ * The model is told not to repeat an item without new evidence, and repeated
+ * them anyway — nothing acted on them, so nothing changed, so the evidence was
+ * "still broken" every night. Counting it in code makes the escalation certain.
+ */
+function stuckItems(planHistory = []) {
+	const nights = planHistory.map((h) => ({ date: h.date, items: h.plan?.plan || [] }));
+	if (nights.length < THRESHOLDS.stuckNights) return [];
+	const stuck = [];
+	for (const item of nights[0].items) {
+		let streak = 1;
+		for (const n of nights.slice(1)) {
+			if (!n.items.some((o) => (o.area || "") === (item.area || "") && similar(o.title, item.title))) break;
+			streak += 1;
+		}
+		if (streak >= THRESHOLDS.stuckNights) {
+			const since = nights[streak - 1].date;
+			stuck.push({
+				title: item.title,
+				area: item.area,
+				nights: streak,
+				since: since instanceof Date ? since.toISOString().slice(0, 10) : String(since || "").slice(0, 10),
+			});
+		}
+	}
+	return stuck;
+}
 
 /**
  * Per-case eval record across tonight plus recent nights:
@@ -91,7 +153,7 @@ function thinSamples(metrics) {
  * Severity "low" is context, not work: it explains the tables (why a row is
  * missing, why a failure is noise) and never becomes a plan item.
  */
-function ruleFindings({ metrics, evals, config, evalHistory = [], maintenance = null }) {
+function ruleFindings({ metrics, evals, config, evalHistory = [], maintenance = null, planHistory = [] }) {
 	const out = [];
 	const add = (severity, area, title, evidence) => out.push({ severity, area, title, evidence });
 	const m24 = metrics.models?.last24h;
@@ -115,7 +177,23 @@ function ruleFindings({ metrics, evals, config, evalHistory = [], maintenance = 
 			add("medium", "latency", `Chat p95 latency is ${(chat.p95Ms / 1000).toFixed(1)}s`, `p50 ${(chat.p50Ms / 1000).toFixed(1)}s over ${chat.ok} replies`);
 		}
 		for (const [id, e] of Object.entries(m24.byEndpoint)) {
-			if (e.calls >= 5 && e.errorRate > 0.25) add("high", "infra", `Endpoint ${id} is failing`, `${(e.errorRate * 100).toFixed(0)}% errors over ${e.calls} calls`);
+			const timeouts = e.timeouts || 0;
+			if (timeouts >= THRESHOLDS.hungTimeouts) {
+				// Hung is worse than down: a refused connection falls through in
+				// milliseconds, a timeout makes someone wait for all of it.
+				const waited = Math.round((e.timeoutWaitMs || 0) / timeouts / 1000);
+				const tasks = Object.entries(e.timeoutsByTask || {})
+					.sort(([, a], [, b]) => b - a)
+					.map(([t, n]) => `${t} ${n}`)
+					.join(", ");
+				const chat = e.timeoutsByTask?.chat || 0;
+				add(
+					"high",
+					"infra",
+					`Endpoint ${id} is hanging: ${timeouts} call(s) timed out`,
+					`each waited ~${waited}s before the next tier answered (${tasks})${chat ? ` — ${chat} of them were people waiting on a chat reply` : ""}; other errors: ${e.errors - timeouts}. A hung server still answers the /models probe, so check the inference process, not just that the box is up`
+				);
+			} else if (e.calls >= 5 && e.errorRate > 0.25) add("high", "infra", `Endpoint ${id} is failing`, `${(e.errorRate * 100).toFixed(0)}% errors over ${e.calls} calls`);
 		}
 	}
 
@@ -194,6 +272,17 @@ function ruleFindings({ metrics, evals, config, evalHistory = [], maintenance = 
 	const init = metrics.initiative;
 	if (init?.available && init.enabledProfiles > 0) {
 		for (const [id, t] of Object.entries(init.byTrigger)) {
+			if (ALERT_TRIGGERS.has(id)) {
+				// Judged on reach, never on replies — and never a reason to send fewer.
+				const reached = (t.ignored || 0) + t.engaged + t.dismissed;
+				const acks = init.alertAcks7d == null ? "acknowledgements unknown" : `${init.alertAcks7d} person(s) tapped "Got it" on an alert this week`;
+				add("low", "initiative", `${id} is an alert: judged on reach, not replies`, `${t.sent} sent, ${reached} reached someone, ${t.unseen} expired unseen over 7 days; ${acks}. No reply is expected, so an unanswered alert is not an ignored one`);
+				if (t.sent >= 5 && t.unseen / t.sent > THRESHOLDS.initiativeUnseen) {
+					add("high", "initiative", `${id}: ${((t.unseen / t.sent) * 100).toFixed(0)}% of alerts expired before anyone saw them`, `${t.unseen}/${t.sent} in 7 days — an emergency alert nobody saw is the failure this trigger exists to prevent; check push delivery`);
+				}
+				if (t.mutedBy > 0) add("medium", "initiative", `${id} has been muted by ${t.mutedBy} person(s)`, "someone turned emergency alerts off entirely");
+				continue;
+			}
 			const answered = t.engaged + t.dismissed;
 			if (answered >= THRESHOLDS.initiativeMinReactions && t.acceptance !== null && t.acceptance < THRESHOLDS.initiativeAcceptance) {
 				add("high", "initiative", `${id}: only ${(t.acceptance * 100).toFixed(0)}% of interruptions were welcome`, `${t.engaged} engaged vs ${t.dismissed} dismissed over 7 days — tighten the rule or retire it`);
@@ -210,8 +299,7 @@ function ruleFindings({ metrics, evals, config, evalHistory = [], maintenance = 
 				add("medium", "initiative", `${id}: Athena has stopped raising this for ${t.learned.suppressed} person(s)`, `learned from how it landed${t.learned.avgScore !== null ? `; average standing ${t.learned.avgScore}` : ""} — review the rule, or leave it suppressed`);
 			}
 			// Firing into the void. Usually a TTL shorter than the gap between
-			// app opens, which means the interruption budget was spent on
-			// something nobody could ever have seen.
+			// app opens, so the nudge was true but nobody could ever have seen it.
 			if (t.sent >= 5 && t.unseen / t.sent > THRESHOLDS.initiativeUnseen) {
 				add("medium", "initiative", `${id}: ${((t.unseen / t.sent) * 100).toFixed(0)}% of these expired before anyone saw them`, `${t.unseen}/${t.sent} in 7 days — the TTL is shorter than people's habits`);
 			}
@@ -223,14 +311,15 @@ function ruleFindings({ metrics, evals, config, evalHistory = [], maintenance = 
 		let reached = 0;
 		let ignored = 0;
 		let engaged = 0;
-		for (const t of Object.values(init.byTrigger)) {
+		for (const [id, t] of Object.entries(init.byTrigger)) {
+			if (ALERT_TRIGGERS.has(id)) continue;
 			reached += (t.ignored || 0) + t.engaged + t.dismissed;
 			ignored += t.ignored || 0;
 			engaged += t.engaged;
 		}
 		if (reached >= THRESHOLDS.initiativeMinReactions && ignored / reached >= THRESHOLDS.initiativeIgnored) {
 			const worst = Object.entries(init.byTrigger)
-				.filter(([, t]) => t.ignored > 0)
+				.filter(([id, t]) => t.ignored > 0 && !ALERT_TRIGGERS.has(id))
 				.sort(([, a], [, b]) => b.ignored - a.ignored)
 				.slice(0, 3)
 				.map(([id, t]) => `${id} ${t.ignored}`)
@@ -238,7 +327,7 @@ function ruleFindings({ metrics, evals, config, evalHistory = [], maintenance = 
 			add("high", "initiative", `${((ignored / reached) * 100).toFixed(0)}% of nudges people saw got no response`, `${ignored}/${reached} ignored, ${engaged} engaged over 7 days (${worst}) — she is speaking first but not being heard; fix what she says or when, before sending more`);
 		}
 		if (init.sent7d === 0) {
-			add("opportunity", "initiative", "Initiative is switched on but Athena has not spoken first all week", "either nothing triggered, or the budget is too tight to ever fire");
+			add("opportunity", "initiative", "Initiative is switched on but Athena has not spoken first all week", "either nothing triggered, or a trigger is broken — there has been no budget to blame since 2026-09-19");
 		}
 	} else if (init && !init.available) {
 		add("medium", "initiative", "Initiative metrics unavailable", init.reason);
@@ -262,7 +351,11 @@ function ruleFindings({ metrics, evals, config, evalHistory = [], maintenance = 
 			for (const f of r.failures || []) {
 				const x = record[`${endpoint}:${f.case}`];
 				if (x && x.failed < x.ran) {
-					add("low", "evals", `${endpoint} ${f.case} is intermittent, not a regression`, `failed ${x.failed} of the last ${x.ran} nights — judge it on the rate, not tonight`);
+					if (x.ran >= THRESHOLDS.persistentEvalMinNights && x.failed / x.ran >= THRESHOLDS.persistentEvalFailShare) {
+						add("medium", "evals", `${endpoint} ${f.case} fails most nights — a real gap, not noise`, `failed ${x.failed} of the last ${x.ran} nights (tonight: ${f.problem}) — fix the prompt or the behaviour it tests`);
+					} else {
+						add("low", "evals", `${endpoint} ${f.case} is intermittent, not a regression`, `failed ${x.failed} of the last ${x.ran} nights — judge it on the rate, not tonight`);
+					}
 				}
 			}
 		}
@@ -302,6 +395,13 @@ function ruleFindings({ metrics, evals, config, evalHistory = [], maintenance = 
 		}
 	} else if (!config.orcwoodCount) {
 		add("opportunity", "localization", "No Orcwood endpoints configured — everything runs on the frontier", "set LLM_ORCWOOD_ENDPOINTS to start localizing");
+	}
+
+	// Planned night after night and never moved: a question for the owner now,
+	// not another night in the plan. Area "stuck" is how writePlan and the
+	// rules-only plan tell these apart.
+	for (const s of stuckItems(planHistory)) {
+		add("high", "stuck", `Stuck ${s.nights} nights: ${s.title}`, `planned every night since ${s.since} (${s.area || "no area"}) and still not done — it needs a decision or hands from the owner, not another night in the plan`);
 	}
 
 	const order = { high: 0, medium: 1, opportunity: 2, low: 3 };
@@ -368,6 +468,9 @@ Rules for the plan — these override your instincts:
 - Sample size: never cite or act on a rate from fewer than ${THRESHOLDS.minCallsToJudge} calls. The tasks/endpoints below that bar tonight are listed under "Too few calls to judge"; quote their raw counts if you mention them at all, never a percentage.
 - Intermittent evals (listed below) pass some nights and fail others. Tonight's result for them is neither a regression nor an improvement; mention them only if the failure rate itself is the problem.
 - Don't repeat an item from yesterday's plan unless tonight's data gives new evidence or a more specific change. If it needs something only the owner can provide, drop it from the plan and ask once in questionsForOwner.
+- Findings with area "stuck" have been planned for several nights and never moved. Never put them in the plan. Turn each into ONE specific question in questionsForOwner that names the decision or action you need.
+- Alert triggers (${[...ALERT_TRIGGERS].join(", ")}) are judged on whether they reached someone, never on replies. Never propose pausing, muting, rate-limiting or sending fewer alerts; the owner removed every interruption budget on 2026-09-19.
+- An endpoint that is "hanging" (timeouts) is an operations problem on that machine; say what to check on it, not how to change a prompt.
 - Every number you write must appear in the data below, with the same denominator. Don't restate or re-add counts.
 
 For previousPlanStatus, judge each of yesterday's items against tonight's numbers: "improved" or "worse" only when the metric the item named moved beyond noise on at least ${THRESHOLDS.minCallsToJudge} calls; "unchanged" when nothing relevant moved (including when nobody acted on it); "unknown" when the sample is too small or the item was about an intermittent eval.
@@ -413,7 +516,7 @@ function fallbackPlan(findings) {
 		wins: [],
 		regressions: findings.filter((f) => f.severity === "high").map((f) => f.title),
 		previousPlanStatus: [],
-		plan: findings.filter((f) => f.severity !== "low").slice(0, 5).map((f) => ({
+		plan: findings.filter((f) => f.severity !== "low" && f.area !== "stuck").slice(0, 5).map((f) => ({
 			title: f.title,
 			area: f.area,
 			why: f.evidence,
@@ -423,7 +526,7 @@ function fallbackPlan(findings) {
 			effort: "M",
 			impact: f.severity === "high" ? "high" : "medium",
 		})),
-		questionsForOwner: [],
+		questionsForOwner: findings.filter((f) => f.area === "stuck").map((f) => `${f.title} — what should happen with it?`),
 		servedBy: "rules",
 	};
 }
@@ -465,9 +568,9 @@ function renderMarkdown({ date, metrics, evals, findings, plan, maintenance }) {
 	const m = metrics.models?.last24h;
 	L.push("## Models (24h)", "");
 	if (m?.available) {
-		L.push("| Task | Calls | Errors | Invalid | Fallback | Local share | p50 | p95 |", "|---|---:|---:|---:|---:|---:|---:|---:|");
+		L.push("| Task | Calls | Errors | Timeouts | Invalid | Fallback | Local share | p50 | p95 |", "|---|---:|---:|---:|---:|---:|---:|---:|---:|");
 		for (const [task, t] of Object.entries(m.byTask)) {
-			L.push(`| ${task} | ${t.calls} | ${pct(t.errorRate)} | ${pct(t.invalidRate)} | ${pct(t.fallbackRate)} | ${pct(t.localShare)} | ${secs(t.p50Ms)} | ${secs(t.p95Ms)} |`);
+			L.push(`| ${task} | ${t.calls} | ${pct(t.errorRate)} | ${t.timeouts || 0} | ${pct(t.invalidRate)} | ${pct(t.fallbackRate)} | ${pct(t.localShare)} | ${secs(t.p50Ms)} | ${secs(t.p95Ms)} |`);
 		}
 	} else L.push(`_Unavailable: ${m?.reason}_`);
 	if (m?.smokeCalls) {
@@ -515,4 +618,4 @@ function renderMarkdown({ date, metrics, evals, findings, plan, maintenance }) {
 	return L.join("\n");
 }
 
-module.exports = { ruleFindings, writePlan, fallbackPlan, renderMarkdown, evalRecord, flakyCases, thinSamples, THRESHOLDS, PLAN_SCHEMA };
+module.exports = { ruleFindings, writePlan, fallbackPlan, renderMarkdown, evalRecord, flakyCases, thinSamples, stuckItems, THRESHOLDS, PLAN_SCHEMA, ALERT_TRIGGERS };
