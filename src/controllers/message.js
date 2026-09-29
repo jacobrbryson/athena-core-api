@@ -124,7 +124,14 @@ function parseMessageContext(body = {}) {
         timezone = null;
       }
     }
-    companion = { device, driving: body.companion.driving === true, timezone };
+    // handsFree: spoken to through the phone's wake word, most likely while
+    // running or riding — the reply is heard, never read.
+    companion = {
+      device,
+      driving: body.companion.driving === true,
+      handsFree: body.companion.handsFree === true,
+      timezone,
+    };
   }
 
   return {

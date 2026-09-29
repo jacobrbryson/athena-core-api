@@ -122,6 +122,13 @@ describe("adult companion prompt", () => {
 		expect(p).toMatch(/through their car/);
 		expect(p).toMatch(/They are DRIVING/);
 	});
+
+	test("hands-free mode asks for short replies that are only heard", () => {
+		const p = buildAdultCompanionPrompt({}, [], { companion: { device: "android", handsFree: true } });
+		expect(p).toMatch(/HANDS-FREE/);
+		expect(p).toMatch(/only heard, never read/);
+		expect(buildAdultCompanionPrompt({}, [], { companion: { device: "android" } })).not.toMatch(/HANDS-FREE/);
+	});
 });
 
 describe("chat pipeline fallback", () => {

@@ -1,5 +1,12 @@
 # Capability ledger
 
+- 2026-09-29 — Hands-free on the Android app: turn it on in Phone & car,
+  then say "Athena", hear a chime and talk with the screen off; she answers out
+  loud (short, spoken replies) and takes one follow-up without her name. Her
+  name and your words are recognised on the phone — only text is sent, never
+  audio — and Android shows a notification the whole time it listens. Needs
+  the next APK — `hands-free.md` (status: partial)
+
 - 2026-09-29 — Phone & car can put the Android app on another phone or
   tablet: a QR code (or a Download button on an Android browser) fetches the
   app with a 15-minute link for signed-in people only, and inside the app the
