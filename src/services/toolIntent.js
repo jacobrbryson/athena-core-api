@@ -168,7 +168,7 @@ async function guess(message, { profileId, audience, sources } = {}) {
 	if (typeof message !== "string" || !message.trim()) return null;
 	// No key on this deployment: skip quietly rather than failing (and logging)
 	// on every message.
-	if (!jev.configured()) return null;
+	if (!(await jev.configured())) return null;
 	const pool = sources || (profileId ? await availableSources(profileId, { audience }) : []);
 	if (!pool.length) return null;
 

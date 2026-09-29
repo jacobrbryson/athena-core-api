@@ -18,6 +18,8 @@ jest.mock("../services/session", () => ({ updateSession: jest.fn().mockResolvedV
 jest.mock("../services/sessionTopic", () => ({ getSessionTopics: jest.fn().mockResolvedValue([]) }));
 jest.mock("../services/integration", () => ({ messageNeedsFamilyChores: () => false }));
 jest.mock("../services/mission", () => ({}));
+// No guess: keeps the Jev key lookup away from the real Secret Manager.
+jest.mock("../services/toolIntent", () => ({ guess: jest.fn().mockResolvedValue(null), extraGrounding: () => null }));
 jest.mock("../services/perception", () => ({ getPromptBlock: () => null }));
 jest.mock("../services/memoryStore", () => ({
 	buildMemoryContext: jest.fn().mockResolvedValue({ audience: "adult", memoryEnabled: true, promptBlock: null }),

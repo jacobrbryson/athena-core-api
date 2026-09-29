@@ -18,6 +18,7 @@
  * ({ choice, probabilities, confidence }).
  */
 const { assertModelAccess } = require("../../../security/access");
+const secrets = require("../../secrets");
 
 const BASE_URL = process.env.JEV_BASE_URL || "https://api.typesafe.ai";
 const MODEL = process.env.JEV_MODEL || "jev-latest";
@@ -25,8 +26,15 @@ const MODEL = process.env.JEV_MODEL || "jev-latest";
 // budget is tight and a miss is simply "no guess" — the caller falls back.
 const DEFAULT_TIMEOUT_MS = Number(process.env.JEV_TIMEOUT_MS) || 800;
 
-function configured() {
-	return !!process.env.JEV_API_KEY;
+// The key is read at runtime — env first (local .env), then Secret Manager
+// (Cloud Run) — like the OpenAI key, so a new version needs no redeploy and
+// cloudbuild.yaml never carries it. getSecret caches hits and misses.
+async function apiKey() {
+	return (await secrets.getSecret("JEV_API_KEY").catch(() => null)) || null;
+}
+
+async function configured() {
+	return !!(await apiKey());
 }
 
 /**
@@ -35,7 +43,8 @@ function configured() {
  */
 async function decide({ state, questions, timeoutMs = DEFAULT_TIMEOUT_MS }) {
 	await assertModelAccess();
-	if (!configured()) throw new Error("JEV_API_KEY is not set");
+	const key = await apiKey();
+	if (!key) throw new Error("JEV_API_KEY is not set");
 	if (!state || !questions || !Object.keys(questions).length) {
 		throw new Error("Jev needs a state and at least one question");
 	}
@@ -46,7 +55,7 @@ async function decide({ state, questions, timeoutMs = DEFAULT_TIMEOUT_MS }) {
 		const res = await fetch(`${BASE_URL}/v1/systemone`, {
 			method: "POST",
 			headers: {
-				Authorization: `Bearer ${process.env.JEV_API_KEY}`,
+				Authorization: `Bearer ${key}`,
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({ model: MODEL, state, questions }),

@@ -8,6 +8,12 @@ jest.mock("../../security/access", () => ({
 	context: { getStore: () => null },
 }));
 
+// Env wins in getSecret; this keeps a missing env var from reaching the real
+// Secret Manager.
+jest.mock("../secrets", () => ({
+	getSecret: jest.fn(async (name) => process.env[name] ?? null),
+}));
+
 const jev = require("./adapters/jev");
 
 const QUESTIONS = { calendar: { type: "noul", instructions: "Needs the calendar?" } };

@@ -1,6 +1,6 @@
 jest.mock("./llm", () => ({ decide: jest.fn() }));
 jest.mock("./connectors/context", () => ({ linkedProviders: jest.fn(), relevantConnectors: jest.fn() }));
-jest.mock("./llm/adapters/jev", () => ({ configured: jest.fn(() => true) }));
+jest.mock("./llm/adapters/jev", () => ({ configured: jest.fn(async () => true) }));
 jest.mock("./heartRate", () => ({ getPref: jest.fn(), matches: jest.fn() }));
 
 const llm = require("./llm");
@@ -80,7 +80,7 @@ describe("guess", () => {
 	});
 
 	it("skips quietly when this deployment has no Jev key", async () => {
-		require("./llm/adapters/jev").configured.mockReturnValueOnce(false);
+		require("./llm/adapters/jev").configured.mockResolvedValueOnce(false);
 		expect(await intent.guess("anything tonight?", { profileId: PROFILE, audience: "adult" })).toBeNull();
 		expect(llm.decide).not.toHaveBeenCalled();
 		expect(connectorContext.linkedProviders).not.toHaveBeenCalled();
