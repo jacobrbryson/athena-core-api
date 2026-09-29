@@ -7,6 +7,7 @@
  *   llm.image(prompt, { size, quality })
  *   llm.speech(text)
  *   llm.raw(contents, config)   // Gemini function calling
+ *   llm.decide({ state, questions })  // Jev typed decisions (probabilities)
  *   llm.status() / llm.manifest()
  *
  * See config.js for tiers and env vars.
@@ -48,6 +49,7 @@ module.exports = {
 	embeddingSpace: router.embeddingSpace,
 	image: router.image,
 	speech: router.speech,
+	decide: router.decide,
 	status: router.status,
 	servingTier: router.servingTier,
 	startHealthLoop: router.startHealthLoop,

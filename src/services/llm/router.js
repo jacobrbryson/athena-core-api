@@ -16,6 +16,7 @@ const telemetry = require("./telemetry");
 const autotune = require("./autotune");
 const geminiAdapter = require("./adapters/gemini");
 const openaiAdapter = require("./adapters/openaiCompat");
+const jevAdapter = require("./adapters/jev");
 
 let config = loadConfig();
 const probedModels = new Map(); // endpointId -> model ids the server reported
@@ -254,6 +255,26 @@ async function speech(text, { sing = false } = {}) {
 	}
 }
 
+/**
+ * Typed decisions from Jev (TypeSafe's System One model): probabilities, not
+ * text. One hosted endpoint, no fallback — a caller treats a throw as "no
+ * guess" and carries on without one, which is always safe.
+ */
+async function decide({ state, questions, timeoutMs, task = "decide" }) {
+	const started = Date.now();
+	try {
+		const out = await jevAdapter.decide({ state, questions, timeoutMs });
+		const latencyMs = Date.now() - started;
+		health.reportSuccess("jev", latencyMs);
+		telemetry.recordCall({ task, endpointId: "jev", tier: "frontier", model: out.model, outcome: "ok", latencyMs, inputChars: inputSize(state) });
+		return { ...out, latencyMs };
+	} catch (err) {
+		health.reportFailure("jev", err);
+		telemetry.recordCall({ task, endpointId: "jev", tier: "frontier", model: jevAdapter.MODEL, outcome: "error", latencyMs: Date.now() - started, error: err.message });
+		throw err;
+	}
+}
+
 /** Active health: probe Orcwood endpoints so recovery is noticed without traffic. */
 async function probeAll() {
 	await Promise.all(
@@ -334,6 +355,7 @@ module.exports = {
 	embeddingSpace,
 	image,
 	speech,
+	decide,
 	status,
 	servingTier,
 	candidatesFor,
