@@ -151,6 +151,16 @@ function parseMessageContext(body = {}) {
   };
 }
 
+/** Send one rpc to every open socket watching this session. */
+function broadcastToSession(clients, sessionUuid, message) {
+  const sessionClients = clients?.get(sessionUuid);
+  if (!sessionClients) return;
+  const payload = JSON.stringify(message);
+  for (const ws of sessionClients) {
+    if (ws.readyState === ws.OPEN) ws.send(payload);
+  }
+}
+
 async function getMessage(req, res) {
   try {
     const ip = extractIp(req);
@@ -287,6 +297,16 @@ async function addMessage(req, res, clients) {
       ctx.guessPromise = toolIntent
         .guess(text, { profileId: session.profile_id, audience: "adult" })
         .catch(() => null);
+      // Anyone watching this conversation sees the line in place of the
+      // plain "thinking…" — typed turns and hands-free alike.
+      ctx.guessPromise.then((guessed) => {
+        if (guessed?.filler) {
+          broadcastToSession(clients, session.uuid, {
+            rpc: "filler",
+            filler: guessed.filler,
+          });
+        }
+      });
     }
 
     // Lake Norman mission state is server-owned. Apply any deterministic
@@ -392,20 +412,12 @@ async function addMessage(req, res, clients) {
 
     await sessionService.updateSession(session.id, { is_busy: true });
 
-    const sessionClients = clients.get(session.uuid);
-    if (sessionClients) {
-      const payload = JSON.stringify({
-        rpc: "sessionStatus",
-        session: {
-          is_busy: true,
-        },
-      });
-      for (const ws of sessionClients) {
-        if (ws.readyState === ws.OPEN) {
-          ws.send(payload);
-        }
-      }
-    }
+    broadcastToSession(clients, session.uuid, {
+      rpc: "sessionStatus",
+      session: {
+        is_busy: true,
+      },
+    });
 
     // A client that plays fillers gets one the moment the guess lands; the
     // reply is told it was said, so she doesn't say it again.

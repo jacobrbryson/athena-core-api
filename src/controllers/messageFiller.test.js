@@ -27,13 +27,17 @@ const { addMessage } = require("./message");
 
 const FILLER = { key: "calendar", text: "Let me check your calendar, hmm…" };
 
-function send(companion) {
+function socket() {
+	return { OPEN: 1, readyState: 1, send: jest.fn() };
+}
+
+function send(companion, clients = new Map()) {
 	const res = { status: jest.fn(() => res), json: jest.fn(), headersSent: false };
 	const req = {
 		body: { sessionId: "sess-uuid", text: "Do I have anything going on tonight?", companion },
 		headers: {},
 	};
-	return addMessage(req, res, new Map()).then(() => res);
+	return addMessage(req, res, clients).then(() => res);
 }
 
 beforeEach(() => {
@@ -84,4 +88,21 @@ it("sends no filler when the guess had nothing to announce, or failed", async ()
 	res = await send({ device: "android", filler: true });
 	expect(res.json.mock.calls[0][0]).not.toHaveProperty("filler");
 	expect(res.status).not.toHaveBeenCalledWith(500);
+});
+
+it("shows the filler to everyone watching the conversation, even a client that can't play it", async () => {
+	const ws = socket();
+	await send({ device: "web" }, new Map([["sess-uuid", new Set([ws])]]));
+	await new Promise((r) => setImmediate(r));
+	const sent = ws.send.mock.calls.map(([p]) => JSON.parse(p));
+	expect(sent).toContainEqual({ rpc: "filler", filler: FILLER });
+	expect(sent).toContainEqual({ rpc: "sessionStatus", session: { is_busy: true } });
+});
+
+it("broadcasts nothing extra when there is no filler", async () => {
+	toolIntent.guess.mockResolvedValue({ fetch: [], announce: [], filler: null });
+	const ws = socket();
+	await send({ device: "web" }, new Map([["sess-uuid", new Set([ws])]]));
+	await new Promise((r) => setImmediate(r));
+	expect(ws.send.mock.calls.map(([p]) => JSON.parse(p).rpc)).toEqual(["sessionStatus"]);
 });
