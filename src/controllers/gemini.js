@@ -7,6 +7,7 @@ const sessionTopicService = require("../services/sessionTopic");
 const integrationService = require("../services/integration");
 const connectorContext = require("../services/connectors/context");
 const heartRate = require("../services/heartRate");
+const toolIntent = require("../services/toolIntent");
 const missionService = require("../services/mission");
 const selfKnowledge = require("../services/selfKnowledge");
 const actions = require("../services/actions");
@@ -43,6 +44,38 @@ function isValidReply(r) {
   );
 }
 
+/**
+ * Grounding for the sources the fast guess picked and the keyword gates did
+ * not. Null when there is no guess or nothing to add; never throws.
+ */
+async function groundedFromGuess(profileId, message, audience) {
+  try {
+    const guessed = await toolIntent.guess(message, { profileId, audience });
+    const extra = toolIntent.extraGrounding(guessed, message);
+    if (!extra) return null;
+    console.info(
+      "[gemini] guess added:",
+      [...extra.providers, ...(extra.heartRate ? ["heart_rate"] : [])].join(", "),
+    );
+    const blocks = await Promise.all([
+      extra.providers.length
+        ? connectorContext.buildContext(profileId, {
+            providers: extra.providers,
+            daysByProvider: extra.daysByProvider,
+            audience,
+          })
+        : null,
+      extra.heartRate
+        ? heartRate.buildContext(profileId, { message, audience, force: true })
+        : null,
+    ]);
+    return blocks.filter(Boolean).join("\n\n") || null;
+  } catch (e) {
+    console.warn("[gemini] guessed grounding failed:", e.message);
+    return null;
+  }
+}
+
 async function processAiResponse(session, message, clients, ctx = {}) {
   try {
     const topics = await sessionTopicService.getSessionTopics(session.id);
@@ -70,6 +103,17 @@ async function processAiResponse(session, message, clients, ctx = {}) {
     const groundingAudience = await audienceForSession(session, ctx).catch(
       () => "child",
     );
+
+    // The fast guess (Jev, ~0.2 s) at which sources this message needs, for
+    // what the keyword gates below miss — "anything going on tonight?" names
+    // no calendar word. It runs alongside everything else and is only awaited
+    // just before the prompt is built, so a keyword hit costs nothing extra.
+    // Adults only: a child's words do not go to another provider. Never
+    // throws; no guess just means the keyword gates stand alone.
+    const guessedGrounding =
+      groundingProfileId && groundingAudience === "adult"
+        ? groundedFromGuess(groundingProfileId, message, groundingAudience)
+        : Promise.resolve(null);
 
     let integrationContext = null;
     if (groundingProfileId) {
@@ -252,6 +296,12 @@ async function processAiResponse(session, message, clients, ctx = {}) {
         console.warn("[gemini] dreams block failed:", e.message);
       }
     }
+
+    const guessedBlock = await guessedGrounding;
+    if (guessedBlock)
+      integrationContext = [integrationContext, guessedBlock]
+        .filter(Boolean)
+        .join("\n\n");
 
     const prompt = await generatePrompt(session, topics || [], message, {
       integrationContext,

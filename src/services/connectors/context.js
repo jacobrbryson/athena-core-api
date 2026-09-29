@@ -248,9 +248,18 @@ function needsReconnectBlock(connector) {
  * could not be read), unlinked ones a line saying they are not connected. A
  * provider the message is not about still costs nothing.
  */
-async function buildContext(profileId, { message, days, audience } = {}) {
+async function buildContext(profileId, { message, days, audience, providers = [], daysByProvider = {} } = {}) {
 	if (!profileId) return null;
-	const relevant = relevantConnectors(message);
+	// `providers` adds connectors the keyword gate missed but the fast guess
+	// (services/toolIntent) picked; `daysByProvider` lets the guess narrow one
+	// connector's window ("tonight" → today's calendar) without shrinking the
+	// others' defaults.
+	const relevant = [
+		...new Set([
+			...relevantConnectors(message),
+			...CONNECTORS.filter((c) => providers.includes(c.PROVIDER)),
+		]),
+	];
 	if (!relevant.length) return null;
 
 	let statuses;
@@ -272,9 +281,10 @@ async function buildContext(profileId, { message, days, audience } = {}) {
 	const unlinked = relevant.filter((c) => !statuses.has(c.PROVIDER));
 
 	const fetched = await Promise.all(
-		wanted.map((c) =>
-			c
-				.buildContext(profileId, days ? { days } : {})
+		wanted.map((c) => {
+			const span = daysByProvider[c.PROVIDER] || days;
+			return c
+				.buildContext(profileId, span ? { days: span } : {})
 				.catch((err) => {
 					// Every failure here is a link the user believes works —
 					// `wanted` is already filtered to active links — so each
@@ -282,8 +292,8 @@ async function buildContext(profileId, { message, days, audience } = {}) {
 					// hid a broken calendar behind an empty prompt.
 					console.warn(`[connectors] ${c.PROVIDER} context failed:`, err.message);
 					return unavailableBlock(c, err, { audience });
-				})
-		)
+				});
+		})
 	);
 
 	// Working links first: what the user actually has outranks what they

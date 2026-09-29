@@ -1,6 +1,6 @@
 jest.mock("./llm", () => ({ decide: jest.fn() }));
-jest.mock("./connectors/context", () => ({ linkedProviders: jest.fn() }));
-jest.mock("./heartRate", () => ({ getPref: jest.fn() }));
+jest.mock("./connectors/context", () => ({ linkedProviders: jest.fn(), relevantConnectors: jest.fn() }));
+jest.mock("./heartRate", () => ({ getPref: jest.fn(), matches: jest.fn() }));
 
 const llm = require("./llm");
 const connectorContext = require("./connectors/context");
@@ -19,6 +19,8 @@ beforeEach(() => {
 	jest.clearAllMocks();
 	connectorContext.linkedProviders.mockResolvedValue(new Set(["google_calendar", "whoop", "strava"]));
 	heartRate.getPref.mockResolvedValue({ enabled: true });
+	connectorContext.relevantConnectors.mockReturnValue([]);
+	heartRate.matches.mockReturnValue(false);
 });
 
 describe("guess", () => {
@@ -94,5 +96,34 @@ describe("fillerLine", () => {
 			"Let me check WHOOP and Strava, and I'll grab your heart rate off the band too…"
 		);
 		expect(intent.fillerLine(["heart_rate"]).text).toBe("Let me grab your heart rate, hmm…");
+	});
+});
+
+describe("extraGrounding", () => {
+	const guessed = (fetch, days = 1) => ({ fetch, days });
+
+	it("adds the calendar for 'tonight', narrowed to today", () => {
+		expect(intent.extraGrounding(guessed(["calendar"]), "anything going on tonight?")).toEqual({
+			providers: ["google_calendar"],
+			daysByProvider: { google_calendar: 1 },
+			heartRate: false,
+		});
+	});
+
+	it("leaves out what a keyword gate already fetches", () => {
+		connectorContext.relevantConnectors.mockReturnValue([{ PROVIDER: "google_calendar" }]);
+		expect(intent.extraGrounding(guessed(["calendar"]), "what's on my calendar?")).toBeNull();
+	});
+
+	it("does not narrow WHOOP or Strava history to the calendar window", () => {
+		const extra = intent.extraGrounding(guessed(["whoop", "strava", "heart_rate"]), "was that too much?");
+		expect(extra.providers).toEqual(["whoop", "strava"]);
+		expect(extra.daysByProvider).toEqual({});
+		expect(extra.heartRate).toBe(true);
+	});
+
+	it("is null with no guess", () => {
+		expect(intent.extraGrounding(null, "hi")).toBeNull();
+		expect(intent.extraGrounding(guessed([]), "hi")).toBeNull();
 	});
 });

@@ -175,8 +175,9 @@ async function whoopRestingHeartRate(profileId) {
 	}
 }
 
-async function buildContext(profileId, { message, audience } = {}) {
-	if (!profileId || audience !== "adult" || !matches(message)) return null;
+/** `force`: the fast guess (services/toolIntent) picked heart rate though no keyword did. */
+async function buildContext(profileId, { message, audience, force = false } = {}) {
+	if (!profileId || audience !== "adult" || !(force || matches(message))) return null;
 	const pref = await getPref(profileId);
 	if (!pref.enabled) return null;
 

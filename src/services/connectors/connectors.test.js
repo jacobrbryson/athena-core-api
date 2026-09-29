@@ -615,6 +615,19 @@ describe("context aggregation", () => {
 		expect(text).toMatch(/Google Calendar: NOT connected/);
 	});
 
+	it("reads a provider the fast guess picked even when no keyword matched", async () => {
+		mockList.mockResolvedValue([{ provider: "strava", status: "active" }]);
+		global.fetch.mockResolvedValue(apiResponse([]));
+
+		const text = await context.buildContext(PROFILE, {
+			message: "was that too much for me?",
+			providers: ["strava"],
+			daysByProvider: { strava: 3 },
+		});
+		expect(global.fetch).toHaveBeenCalledTimes(1);
+		expect(text).toMatch(/Strava: no activities recorded in the last 3 days/);
+	});
+
 	it("never calls a revoked link, and says it needs reconnecting", async () => {
 		mockList.mockResolvedValue([{ provider: "strava", status: "needs_reauth" }]);
 

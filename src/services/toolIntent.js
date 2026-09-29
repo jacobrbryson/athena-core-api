@@ -205,8 +205,33 @@ async function guess(message, { profileId, audience, sources } = {}) {
 	};
 }
 
+/**
+ * What the guess adds beyond the keyword gates, for the grounding step:
+ *   { providers: ["google_calendar"], daysByProvider: { google_calendar: 1 },
+ *     heartRate: false }
+ * Sources a keyword gate already caught are left out — they are being fetched
+ * already, and fetching them twice would put two copies in the prompt.
+ * Returns null when there is nothing to add.
+ */
+function extraGrounding(guessed, message) {
+	if (!guessed || !guessed.fetch.length) return null;
+	const covered = new Set(connectorContext.relevantConnectors(message).map((c) => c.PROVIDER));
+	const providers = SOURCES.filter(
+		(s) => s.provider && guessed.fetch.includes(s.id) && !covered.has(s.provider)
+	).map((s) => s.provider);
+	const heart = guessed.fetch.includes("heart_rate") && !heartRate.matches(message);
+	if (!providers.length && !heart) return null;
+	// Only the calendar is about the future; the guess's window means nothing
+	// to WHOOP or Strava history, which keep their own defaults.
+	const daysByProvider = providers.includes("google_calendar")
+		? { google_calendar: guessed.days }
+		: {};
+	return { providers, daysByProvider, heartRate: heart };
+}
+
 module.exports = {
 	guess,
+	extraGrounding,
 	availableSources,
 	buildQuestions,
 	fillerLine,
