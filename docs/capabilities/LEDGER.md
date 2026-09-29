@@ -1,5 +1,11 @@
 # Capability ledger
 
+- 2026-09-29 — Plain schedule questions reach your calendar: "anything going
+  on tonight?", "plans tomorrow?" and the like no longer need the word
+  "calendar", and tonight means today's events. She no longer says "let me
+  check" in a reply that can't check — she answers from what she has, or says
+  it isn't in front of her. Adults — `google-calendar.md` (status: live)
+
 - 2026-09-29 — Live heart rate on the Android app: Phone & car → Heart rate
   connects to a WHOOP (Heart Rate Broadcast) or any Bluetooth heart-rate strap.
   Set over/under limits for a ride or run; crossing one is said out loud right

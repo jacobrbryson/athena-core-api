@@ -6,7 +6,7 @@ where: approve it when you sign in with Google, or the ⋯ menu (top right) → 
 status: live
 surfaces: [companion]
 audiences: [adult]
-triggers: [calendar, google calendar, schedule, agenda, appointment, appointments, meeting, meetings, event, events, availability, free, busy, booked]
+triggers: [calendar, google calendar, schedule, agenda, appointment, appointments, meeting, meetings, event, events, availability, free, busy, booked, tonight, tomorrow, plans, going on, this weekend]
 ---
 
 ## What I can do
@@ -16,7 +16,13 @@ free/busy time, and use them naturally — what's on today, whether Thursday
 afternoon is clear, what time the thing you mentioned actually starts.
 
 I read across the calendars your account can see, not just the default one, and
-I only look when what you said is plausibly about your schedule.
+I only look when what you said is plausibly about your schedule. You don't have
+to say "calendar" — "anything going on tonight?" or "what am I doing tomorrow?"
+is enough, and "tonight" means today's calendar, not tomorrow's.
+
+I can't go and look something up partway through a reply. If your calendar
+isn't in front of me for what you asked, I'll say so rather than promise to
+check.
 
 ## Where to find it
 
@@ -69,7 +75,12 @@ is told to revoke its approval once no other Google service is on (or use
   `access_type=offline` + `prompt=consent` is the only reliable way to get a
   refresh token out of Google; `credentials.put()` preserves an existing one
   when a refresh response omits it.
-- Grounding: `src/services/connectors/context.js`.
+- Grounding: `src/services/connectors/context.js`. Besides the keyword gate,
+  `src/services/toolIntent.js` asks Jev (TypeSafe, hosted, ~0.2 s, adults
+  only) which sources a message needs; a calendar only it picked is read with
+  its window (`daysByProvider`, "tonight" → 1 day). Wired in
+  `src/controllers/gemini.js` (`groundedFromGuess`), awaited just before the
+  prompt. Key: `JEV_API_KEY` via `services/secrets`; no key → no guess.
 - Diagnostic: `diagnose-calendar.js` at the `core_api` root — read-only, run
   with `node diagnose-calendar.js`.
 - Writes: `createEvent` / `deleteEvent` in the same connector, called only
