@@ -5,6 +5,14 @@ function normalizeIp(ip) {
 	return ip;
 }
 
+/**
+ * The caller's IP. The leftmost X-Forwarded-For entry is trustworthy here only
+ * because core_api is invoker-only and the proxy — the one public way in —
+ * replaces the client's header with the single address it verified
+ * (proxy_service src/utils/clientIp.js). Cloud Run then appends the proxy's
+ * own address after it. Anywhere a client can reach directly, the leftmost
+ * entry is whatever the client wrote.
+ */
 function extractIp(req) {
 	const forwarded = req.headers?.["x-forwarded-for"];
 	if (forwarded) {
