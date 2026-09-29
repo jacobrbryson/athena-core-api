@@ -70,8 +70,29 @@ in the sidebar; if it cannot be loaded, I show your initial instead.
 
 ## When it doesn't work
 
-If I cannot check your connected apps, open Connected apps from your menu and
-reconnect the provider there. A topic shortcut only fills the chat input; press
+When a card can't read a source, the fix is on the card, right under the line
+that says so: "Google Calendar · Reconnect to refresh" carries a Reconnect
+button that goes straight to that provider's sign-in and back (WHOOP recovery,
+sleep and strain share one button), missing health consent carries Give
+consent, and a failed read carries Retry. An app you never linked says "Not
+connected" with a Connect button that goes straight to that provider, and
+every card stays on the dashboard even when none of its apps are linked yet.
+When the app shares health data (WHOOP, Strava) and you haven't agreed to that
+yet, Connect and Give consent open Connected apps straight on that app's
+consent prompt; "I agree — connect" then goes on to its sign-in. Nothing is
+agreed for you — the prompt still waits for your tap. Section pages carry the same buttons in
+the panel.
+
+Empty cards say what would fill them, with the button that does: Add a news
+page when you have none (and Fix this page when one stopped answering), Scan
+more on an empty Mail card, Tell her about them when I know no family, Tell
+her what you're working towards when there are no saved goals, Add a place to
+watch on a quiet Community card with no places, and Retry when memories,
+nearby activity, approvals or news failed to load. A Tell her button only
+starts our chat — nothing is saved until you say it.
+
+If a Reconnect can't start from the card, I open Connected apps instead, which
+says why. A topic shortcut only fills the chat input; press
 Send when you want my answer. Existing sign-in and access
 requirements still apply.
 

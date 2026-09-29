@@ -7,6 +7,13 @@
   audio — and Android shows a notification the whole time it listens. Needs
   the next APK — `hands-free.md` (status: partial)
 
+- 2026-09-29 — Dashboard cards now carry their own fix: an expired link shows
+  Reconnect beside "Reconnect to refresh" and goes straight to that provider's
+  sign-in, an app never linked shows Connect (and its card no longer hides),
+  missing health consent shows Give consent, and failed reads show Retry. Empty cards offer the next step — Add a news page, Scan more, Tell
+  her about your family or goals, Add a place to watch — `companion-dashboard.md`
+  (status: live)
+
 - 2026-09-29 — Phone & car can put the Android app on another phone or
   tablet: a QR code (or a Download button on an Android browser) fetches the
   app with a 15-minute link for signed-in people only, and inside the app the
