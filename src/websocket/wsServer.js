@@ -2,6 +2,8 @@ const { WebSocketServer } = require("ws");
 const url = require("url");
 const { decodeUserToken } = require("../middleware/auth");
 const { extractIp } = require("../helpers/utils");
+const { resolveCallerProfileId } = require("../helpers/callerIdentity");
+const sessionService = require("../services/session");
 
 const clients = new Map(); // sessionId => Set<ws>
 
@@ -103,10 +105,32 @@ function startWebSocketServer(server) {
 			ws.close(1011, "Access verification unavailable");
 			return;
 		}
+		// The socket hears every live message in the session it names, so it
+		// must pass the SAME check the transcript endpoints do (owner, admitted
+		// participant, or the anonymous session's own IP). Without this, any
+		// signed-in person holding a session uuid received that conversation.
+		let authorized = null;
+		try {
+			const callerProfileId = await resolveCallerProfileId(req);
+			authorized = await sessionService.getAuthorizedSession(String(sessionId), {
+				ip: requestIp,
+				callerProfileId,
+			});
+		} catch {
+			ws.close(1011, "Session verification unavailable");
+			return;
+		}
+		if (!authorized) {
+			console.warn("WS refused: caller may not read this session");
+			ws.close(1008, "Not your conversation");
+			return;
+		}
+		// Keyed by the stored uuid, not the raw query value.
+		const sessionKey = authorized.uuid;
 		if (ws.readyState !== ws.OPEN) return;
-		const sessionClients = clients.get(sessionId) || new Set();
+		const sessionClients = clients.get(sessionKey) || new Set();
 		sessionClients.add(ws);
-		clients.set(sessionId, sessionClients);
+		clients.set(sessionKey, sessionClients);
 
 		// Guardian sockets (session JWT or ws-ticket — both carry guardian_id)
 		// also register under the credential for cross-device broadcasts.
@@ -140,7 +164,7 @@ function startWebSocketServer(server) {
 		}
 
 		console.log(
-			`WS connected for session ${sessionId}. clients=${sessionClients.size}`
+			`WS connected for session ${sessionKey}. clients=${sessionClients.size}`
 		);
 
 		ws.send(
@@ -151,11 +175,11 @@ function startWebSocketServer(server) {
 		);
 
 		ws.on("close", () => {
-			const currentClients = clients.get(sessionId);
+			const currentClients = clients.get(sessionKey);
 			if (currentClients) {
 				currentClients.delete(ws);
 				if (currentClients.size === 0) {
-					clients.delete(sessionId);
+					clients.delete(sessionKey);
 				}
 			}
 			if (guardianId) {
@@ -186,8 +210,8 @@ function startWebSocketServer(server) {
 				}
 			}
 			console.log(
-				`WS disconnected: ${sessionId}. clients=${
-					clients.get(sessionId)?.size || 0
+				`WS disconnected: ${sessionKey}. clients=${
+					clients.get(sessionKey)?.size || 0
 				}`
 			);
 		});
