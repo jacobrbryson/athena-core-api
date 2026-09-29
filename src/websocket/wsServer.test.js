@@ -68,3 +68,10 @@ it("fails closed when the session check itself fails", async () => {
 	expect(ws.close).toHaveBeenCalledWith(1011, "Session verification unavailable");
 	expect(clients.size).toBe(0);
 });
+
+it("answers with the plain protocol a browser offered, and none otherwise", () => {
+	const { WebSocketServer } = require("ws");
+	const { handleProtocols } = WebSocketServer.mock.calls[0][0];
+	expect(handleProtocols(new Set(["athena.v1"]))).toBe("athena.v1");
+	expect(handleProtocols(new Set(["something-else"]))).toBe(false);
+});

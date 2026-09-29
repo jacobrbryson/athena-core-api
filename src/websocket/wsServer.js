@@ -70,7 +70,13 @@ function pushDashboardUpdate(googleId, reason = null) {
 }
 
 function startWebSocketServer(server) {
-	const wss = new WebSocketServer({ server });
+	// Clients offer "athena.v1" alongside their ticket (the proxy strips the
+	// ticket — see proxy_service wsProxy). A browser that offered a protocol
+	// drops the connection unless the server picks one of them.
+	const wss = new WebSocketServer({
+		server,
+		handleProtocols: (protocols) => (protocols.has("athena.v1") ? "athena.v1" : false),
+	});
 
 	wss.on("connection", async (ws, req) => {
 		const { query } = url.parse(req.url, true);
