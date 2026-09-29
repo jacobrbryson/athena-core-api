@@ -48,9 +48,13 @@ function isValidReply(r) {
  * Grounding for the sources the fast guess picked and the keyword gates did
  * not. Null when there is no guess or nothing to add; never throws.
  */
-async function groundedFromGuess(profileId, message, audience) {
+async function groundedFromGuess(profileId, message, audience, early) {
   try {
-    const guessed = await toolIntent.guess(message, { profileId, audience });
+    // /message may already have started (or finished) this guess to hand the
+    // client a filler; reuse it rather than asking Jev twice.
+    const guessed = early
+      ? await early
+      : await toolIntent.guess(message, { profileId, audience });
     const extra = toolIntent.extraGrounding(guessed, message);
     if (!extra) return null;
     console.info(
@@ -112,7 +116,12 @@ async function processAiResponse(session, message, clients, ctx = {}) {
     // throws; no guess just means the keyword gates stand alone.
     const guessedGrounding =
       groundingProfileId && groundingAudience === "adult"
-        ? groundedFromGuess(groundingProfileId, message, groundingAudience)
+        ? groundedFromGuess(
+            groundingProfileId,
+            message,
+            groundingAudience,
+            ctx.guessPromise,
+          )
         : Promise.resolve(null);
 
     let integrationContext = null;
@@ -314,6 +323,7 @@ async function processAiResponse(session, message, clients, ctx = {}) {
       decodes: ctx.decodes,
       game: ctx.game,
       companion: ctx.companion,
+      fillerSpoken: ctx.fillerSpoken,
       audience: memoryCtx.audience,
       memoryBlock: memoryCtx.promptBlock,
       perceptionBlock:

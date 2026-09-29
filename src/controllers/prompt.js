@@ -831,6 +831,12 @@ async function generatePrompt(session, sessionTopics, message, options = {}) {
     // connector gate missed she answered "Let me check your calendar for
     // tonight." — and there is no later turn in which she checks. This reply
     // is the only one she gets; say what is known, or that it isn't here.
+    // The client already played a fixed filler ("Let me check your calendar,
+    // hmm…") while this prompt was being built. Saying it again reads as a
+    // stutter; the reply picks up where the filler left off.
+    if (options.fillerSpoken)
+      systemPrompt += `\n\n# Already said
+You have just said aloud: "${options.fillerSpoken}" Do not say it again or announce that you are checking — go straight to the answer, as if continuing that sentence.`;
     systemPrompt += `\n\n# No lookups mid-reply
 You cannot fetch, check or look anything up while answering. Everything you can see this turn is already in this prompt. Never say "let me check", "one moment", "I'll look" or anything that promises an answer later — there is no later. If the data they asked about is not above, say plainly you don't have it in front of you right now and suggest they ask again mentioning it directly (for example "what's on my calendar tonight?").`;
     // What she can DO this turn, scoped to what this person has linked and

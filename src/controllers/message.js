@@ -6,6 +6,7 @@ const guardianAuth = require("../services/guardianAuth");
 const { resolveCallerProfileId } = require("../helpers/callerIdentity");
 const { audienceForProfile } = require("../services/audience");
 const { processAiResponse } = require("./gemini");
+const toolIntent = require("../services/toolIntent");
 const missionService = require("../services/mission");
 const gameService = require("../services/game");
 const {
@@ -130,6 +131,10 @@ function parseMessageContext(body = {}) {
       device,
       driving: body.companion.driving === true,
       handsFree: body.companion.handsFree === true,
+      // The client can play a "let me check your calendar, hmm…" clip while
+      // she works. Only then does /message wait for the fast guess — anyone
+      // else gets the reply-less acknowledgement exactly as fast as before.
+      filler: body.companion.filler === true,
       timezone,
     };
   }
@@ -262,17 +267,26 @@ async function addMessage(req, res, clients) {
 
     // The 256-char cap suits the kids' product; adults in the Companion app
     // write real paragraphs.
-    const maxLength =
-      session.profile_id &&
+    const isAdult =
+      !!session.profile_id &&
       (await audienceForProfile(session.profile_id).catch(() => "child")) ===
-        "adult"
-        ? 2000
-        : 256;
+        "adult";
+    const maxLength = isAdult ? 2000 : 256;
     if (text?.length > maxLength) {
       return res.status(400).json({
         success: false,
         message: "Text length too long",
       });
+    }
+
+    // The fast guess at which sources this needs (Jev, ~0.2 s), started now
+    // so it overlaps the bookkeeping below. The reply reuses it rather than
+    // asking twice. Adults on their own session only — never a Guardian
+    // session, whose account is the parent's and whose words are a child's.
+    if (isAdult && !ctx.guardian) {
+      ctx.guessPromise = toolIntent
+        .guess(text, { profileId: session.profile_id, audience: "adult" })
+        .catch(() => null);
     }
 
     // Lake Norman mission state is server-owned. Apply any deterministic
@@ -393,7 +407,16 @@ async function addMessage(req, res, clients) {
       }
     }
 
+    // A client that plays fillers gets one the moment the guess lands; the
+    // reply is told it was said, so she doesn't say it again.
+    let filler = null;
+    if (ctx.companion?.filler && ctx.guessPromise) {
+      filler = (await ctx.guessPromise)?.filler || null;
+      if (filler) ctx.fillerSpoken = filler.text;
+    }
+
     res.json({
+      ...(filler ? { filler } : {}),
       message: {
         uuid: humanChatUuid,
         text,
