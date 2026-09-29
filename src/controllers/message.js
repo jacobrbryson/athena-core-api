@@ -7,6 +7,7 @@ const { resolveCallerProfileId } = require("../helpers/callerIdentity");
 const { audienceForProfile } = require("../services/audience");
 const { processAiResponse } = require("./gemini");
 const toolIntent = require("../services/toolIntent");
+const { isEcho } = require("../services/echo");
 const missionService = require("../services/mission");
 const gameService = require("../services/game");
 const {
@@ -14,6 +15,10 @@ const {
   broadcastToAdventure,
 } = require("../websocket/wsServer");
 const config = require("../config");
+
+// How long after her reply a hands-free turn is checked for being an echo of
+// it. The follow-up window itself is shorter; this allows for slow polling.
+const ECHO_WINDOW_MS = 90_000;
 
 const trimStr = (v, max) =>
   typeof v === "string" && v.trim() ? v.trim().slice(0, max) : null;
@@ -282,6 +287,27 @@ async function addMessage(req, res, clients) {
       (await audienceForProfile(session.profile_id).catch(() => "child")) ===
         "adult";
     const maxLength = isAdult ? 2000 : 256;
+
+    // Hands-free's follow-up window can hear the tail of her own voice and
+    // send it back as the person's next turn — which she answers, and hears
+    // again. Refuse anything that is her last reply played back to her. The
+    // phone treats the refusal as a failed turn and keeps listening.
+    if (ctx.companion?.handsFree) {
+      const recent = await messageService
+        .getMessages(session.id, callerProfileId ?? null)
+        .catch(() => []);
+      const last = [...recent].reverse().find((m) => !m.is_human);
+      const fresh =
+        last && Date.now() - new Date(last.created_at).getTime() < ECHO_WINDOW_MS;
+      if (fresh && isEcho(text, last.text)) {
+        console.warn("[message] refused a hands-free echo of her own reply");
+        return res.status(409).json({
+          success: false,
+          echo: true,
+          message: "That sounded like Athena's own voice, so it was ignored.",
+        });
+      }
+    }
     if (text?.length > maxLength) {
       return res.status(400).json({
         success: false,

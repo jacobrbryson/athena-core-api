@@ -3,7 +3,10 @@
  * check your calendar, hmm…" in the acknowledgement, the reply is told it was
  * said, and the guess is made once and handed on — never for a child.
  */
-jest.mock("../services/message", () => ({ addMessage: jest.fn().mockResolvedValue("human-uuid") }));
+jest.mock("../services/message", () => ({
+	addMessage: jest.fn().mockResolvedValue("human-uuid"),
+	getMessages: jest.fn().mockResolvedValue([]),
+}));
 jest.mock("../services/session", () => ({
 	getAuthorizedSession: jest.fn(),
 	updateSession: jest.fn().mockResolvedValue({}),
@@ -20,6 +23,7 @@ jest.mock("../websocket/wsServer", () => ({ broadcastToGuardian: jest.fn(), broa
 jest.mock("../services/toolIntent", () => ({ guess: jest.fn() }));
 
 const sessionService = require("../services/session");
+const messageService = require("../services/message");
 const { audienceForProfile } = require("../services/audience");
 const { processAiResponse } = require("./gemini");
 const toolIntent = require("../services/toolIntent");
@@ -105,4 +109,41 @@ it("broadcasts nothing extra when there is no filler", async () => {
 	await send({ device: "web" }, new Map([["sess-uuid", new Set([ws])]]));
 	await new Promise((r) => setImmediate(r));
 	expect(ws.send.mock.calls.map(([p]) => JSON.parse(p).rpc)).toEqual(["sessionStatus"]);
+});
+
+describe("hands-free echo", () => {
+	const REPLY = "You've got piano lessons at six tonight, and nothing else until tomorrow morning.";
+	const sendText = (text) => {
+		const res = { status: jest.fn(() => res), json: jest.fn(), headersSent: false };
+		const req = { body: { sessionId: "sess-uuid", text, companion: { device: "android", handsFree: true } }, headers: {} };
+		return addMessage(req, res, new Map()).then(() => res);
+	};
+
+	it("refuses her own reply heard back through the mic, and saves nothing", async () => {
+		messageService.getMessages.mockResolvedValue([
+			{ is_human: true, text: "anything going on tonight", created_at: new Date() },
+			{ is_human: false, text: REPLY, created_at: new Date() },
+		]);
+		const res = await sendText("piano lessons at six tonight and nothing else until tomorrow");
+		expect(res.status).toHaveBeenCalledWith(409);
+		expect(res.json.mock.calls[0][0]).toMatchObject({ echo: true });
+		expect(messageService.addMessage).not.toHaveBeenCalled();
+		expect(processAiResponse).not.toHaveBeenCalled();
+		expect(toolIntent.guess).not.toHaveBeenCalled();
+	});
+
+	it("lets a real follow-up through", async () => {
+		messageService.getMessages.mockResolvedValue([{ is_human: false, text: REPLY, created_at: new Date() }]);
+		const res = await sendText("can you move piano lessons to seven");
+		expect(res.status).not.toHaveBeenCalledWith(409);
+		expect(processAiResponse).toHaveBeenCalled();
+	});
+
+	it("does not treat an old reply as an echo", async () => {
+		messageService.getMessages.mockResolvedValue([
+			{ is_human: false, text: REPLY, created_at: new Date(Date.now() - 10 * 60_000) },
+		]);
+		const res = await sendText("piano lessons at six tonight and nothing else until tomorrow");
+		expect(res.status).not.toHaveBeenCalledWith(409);
+	});
 });
