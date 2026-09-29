@@ -38,8 +38,9 @@ available and shows a retry message. Update Android System WebView if prompted.
 
 ## Limits
 
-This is an implementation awaiting an installed-device acceptance test and a
-signed release; it is not yet a published Android download. Google sign-in still
+Signed-in people can download it from Phone & car (see `devices.md`) once the
+owner has published a release-signed build; until then that panel says none is
+published. Google sign-in still
 requires existing Athena access. The dashboard and avatar assets are packaged,
 but data, chat, sign-in, voice generation, and provider connections need the
 online backend. This scene does not run the legacy native offline model,

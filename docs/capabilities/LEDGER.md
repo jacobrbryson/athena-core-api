@@ -1,5 +1,12 @@
 # Capability ledger
 
+- 2026-09-29 — Phone & car can put the Android app on another phone or
+  tablet: a QR code (or a Download button on an Android browser) fetches the
+  app with a 15-minute link for signed-in people only, and inside the app the
+  same panel says when a newer version is out and fetches it. Needs the first
+  release-signed build published before anything appears — `devices.md`,
+  `android-companion.md` (status: partial)
+
 - 2026-09-28 — The System page now leads with Athena's health (Good,
   Degraded or Down, with a link to the reason), her total lifetime spend
   across Twilio, OpenAI and Google Cloud, this month's LLM cost (OpenAI +

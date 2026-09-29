@@ -9,6 +9,7 @@ const push = require("../services/push");
 const llm = require("../services/llm");
 const { resolveActor, requireAdultActor } = require("../helpers/actor");
 const lookRequests = require("../services/lookRequests");
+const androidReleases = require("../services/androidRelease");
 
 function fail(res, err, fallback) {
 	const status = err.status || (/not found/i.test(err.message) ? 404 : /required|invalid|too large|must be/i.test(err.message) ? 400 : 500);
@@ -251,6 +252,34 @@ async function revokeDevice(req, res) {
 }
 
 // ---------------------------------------------------------------------------
+// The Android app (services/androidRelease)
+// ---------------------------------------------------------------------------
+
+/** GET /android/release — what's published, for the install card and the app's update check. */
+async function androidRelease(req, res) {
+	const who = await requireAdultActor(req, res);
+	if (!who) return;
+	try {
+		return res.json(androidReleases.describe(await androidReleases.latest()));
+	} catch (err) {
+		return fail(res, err, "Failed to read the Android release");
+	}
+}
+
+/** POST /android/release/link — a 15-minute download link (the QR code carries it). */
+async function androidDownloadLink(req, res) {
+	const who = await requireAdultActor(req, res);
+	if (!who) return;
+	try {
+		const link = await androidReleases.downloadLink();
+		console.log(`[companion] android download link for profile ${who.profileId} (${link.versionName}, via ${req.user?.kind || "session"})`);
+		return res.json(link);
+	} catch (err) {
+		return fail(res, err, "Failed to create a download link");
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Perception
 // ---------------------------------------------------------------------------
 
@@ -350,6 +379,8 @@ module.exports = {
 	redeemPairingCode,
 	listDevices,
 	revokeDevice,
+	androidRelease,
+	androidDownloadLink,
 	observe,
 	describeScene,
 };

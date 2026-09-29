@@ -98,6 +98,11 @@ router.post("/devices/pairing-code", requireAuth, companion.createPairingCode);
 router.get("/devices", requireAuth, companion.listDevices);
 router.delete("/devices/:uuid", requireAuth, companion.revokeDevice);
 
+// The Android app itself: signed-in download (a short-lived signed link, the
+// APK is too big for Cloud Run to serve) and the installed app's update check.
+router.get("/android/release", requireAuthOrDevice, companion.androidRelease);
+router.post("/android/release/link", requireAuthOrDevice, companion.androidDownloadLink);
+
 router.post("/vision/observe", requireAuthOrDevice, companion.observe);
 router.post("/vision/describe", requireAuthOrDevice, companion.describeScene);
 
