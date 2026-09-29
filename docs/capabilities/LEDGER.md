@@ -1,5 +1,13 @@
 # Capability ledger
 
+- 2026-09-29 — Live heart rate on the Android app: Phone & car → Heart rate
+  connects to a WHOOP (Heart Rate Broadcast) or any Bluetooth heart-rate strap.
+  Set over/under limits for a ride or run; crossing one is said out loud right
+  away, on the phone, with no signal needed (one alert per crossing, and a
+  warning if the band drops out). Optional sharing sends one-minute summaries
+  (kept 30 days) so she can check them when asked — she never raises them on
+  her own. Adults only. Needs the next APK — `heart-rate.md` (status: partial)
+
 - 2026-09-29 — Hands-free fixes: "Athena, what time is it?" works in one
   breath (no pause for the chime); a failed question plays a low tone and she
   keeps listening instead of switching off; it keeps listening with the screen

@@ -36,6 +36,7 @@ const companionRouter = require("./companion");
 const actionsRouter = require("./actions");
 const initiativeRouter = require("./initiative");
 const locationRouter = require("./location");
+const heartRateRouter = require("./heartRate");
 const smsRouter = require("./sms");
 
 /**
@@ -121,6 +122,7 @@ module.exports = (clients) => {
 	router.use("/actions", actionsRouter);
 	router.use("/initiative", initiativeRouter);
 	router.use("/location", locationRouter);
+	router.use("/heart", heartRateRouter);
 	// Twilio, which has no session and no device token. It authenticates by
 	// signing the request; the controller verifies that before anything else.
 	router.use("/sms", smsRouter);

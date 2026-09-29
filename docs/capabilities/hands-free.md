@@ -65,7 +65,8 @@ same conversation.
   start listening on its own in the background, and I wouldn't want it to.
 - No signal means no answer — recognising my name works offline, answering
   doesn't.
-- Heart-rate limits and alerts from a WHOOP aren't part of this yet.
+- Heart-rate limit alerts are a separate switch — Phone & car → Heart rate
+  (see heart-rate). They're spoken whether or not hands-free is on.
 
 ## Under the hood
 

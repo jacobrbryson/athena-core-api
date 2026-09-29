@@ -6,6 +6,7 @@ const perception = require("../services/perception");
 const sessionTopicService = require("../services/sessionTopic");
 const integrationService = require("../services/integration");
 const connectorContext = require("../services/connectors/context");
+const heartRate = require("../services/heartRate");
 const missionService = require("../services/mission");
 const selfKnowledge = require("../services/selfKnowledge");
 const actions = require("../services/actions");
@@ -92,6 +93,19 @@ async function processAiResponse(session, message, clients, ctx = {}) {
               })
               .catch((e) => {
                 console.warn("[gemini] connector context failed:", e.message);
+                return null;
+              })
+          : null,
+        // Live heart rate from the phone's Bluetooth band: adults only, and
+        // only when they switched it on (buildContext checks both).
+        heartRate.matches(message)
+          ? heartRate
+              .buildContext(groundingProfileId, {
+                message,
+                audience: groundingAudience,
+              })
+              .catch((e) => {
+                console.warn("[gemini] heart rate context failed:", e.message);
                 return null;
               })
           : null,
