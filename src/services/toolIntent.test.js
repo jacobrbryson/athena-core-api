@@ -58,6 +58,15 @@ describe("guess", () => {
 		expect(g.filler.text).toBe("Let me check WHOOP and Strava, hmm…");
 	});
 
+	it("names at most the two likeliest sources, but still fetches them all", async () => {
+		connectorContext.linkedProviders.mockResolvedValue(new Set(["google_calendar", "gmail", "whoop", "strava"]));
+		llm.decide.mockResolvedValue(answers({ calendar: 0.75, email: 0.8, whoop: 0.95, strava: 0.9, heart_rate: 0.9 }));
+		const g = await intent.guess("give me the full rundown", { profileId: PROFILE, audience: "adult" });
+		expect(g.fetch.sort()).toEqual(["calendar", "email", "heart_rate", "strava", "whoop"]);
+		expect(g.announce.sort()).toEqual(["heart_rate", "strava", "whoop"]);
+		expect(g.filler.text).toBe("Let me check WHOOP and Strava, and I'll grab your heart rate off the band too…");
+	});
+
 	it("announces nothing — and says nothing — when nothing is likely", async () => {
 		llm.decide.mockResolvedValue(answers({ calendar: 0.05, whoop: 0.05, strava: 0.05, heart_rate: 0.05 }, "unspecified"));
 		const g = await intent.guess("tell me a story about dragons", { profileId: PROFILE, audience: "adult" });

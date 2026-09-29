@@ -1,5 +1,12 @@
 # Capability ledger
 
+- 2026-09-29 — Hands-free says what it's checking: ask about your schedule,
+  sleep, rides, email or heart rate and she answers at once with "Let me check
+  your calendar, hmm…" (or WHOOP, Strava…) while she reads it, then gives the
+  answer without repeating herself. Each line is silent the first time while
+  the phone saves her voice for it. Adults. Needs the next APK —
+  `hands-free.md` (status: partial)
+
 - 2026-09-29 — Plain schedule questions reach your calendar: "anything going
   on tonight?", "plans tomorrow?" and the like no longer need the word
   "calendar", and tonight means today's events. She no longer says "let me

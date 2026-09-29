@@ -30,6 +30,7 @@ const heartRate = require("./heartRate");
 
 const FETCH_AT = 0.35;
 const SPEAK_AT = 0.7;
+const MAX_NAMED = 2;
 // The whole point is to beat the reply to the punch; a slower guess is no guess.
 const TIMEOUT_MS = 800;
 
@@ -194,7 +195,15 @@ async function guess(message, { profileId, audience, sources } = {}) {
 		scores[source.id] = Math.max(noul(source.id), source.also ? noul(`${source.id}_also`) : 0);
 	}
 	const fetch = pool.map((s) => s.id).filter((id) => scores[id] >= FETCH_AT);
-	const announce = fetch.filter((id) => scores[id] >= SPEAK_AT);
+	// At most two named sources in the line (the likeliest), plus the heart-rate
+	// clause: "let me check your calendar, your email, WHOOP and Strava" is not
+	// a filler, it's a speech. Everything in `fetch` is still read.
+	const sure = fetch.filter((id) => scores[id] >= SPEAK_AT);
+	const named = sure
+		.filter((id) => id !== "heart_rate")
+		.sort((a, b) => scores[b] - scores[a])
+		.slice(0, MAX_NAMED);
+	const announce = sure.filter((id) => named.includes(id) || id === "heart_rate");
 	const window = WINDOWS[result.answers?.window?.choice] ? result.answers.window.choice : "unspecified";
 
 	return {

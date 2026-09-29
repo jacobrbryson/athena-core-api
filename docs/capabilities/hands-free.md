@@ -20,6 +20,11 @@ again ("and tomorrow?"); after that I go back to waiting for my name.
 It's built for being on the move — a run, a ride — so my answers are short and
 spoken: no lists, nothing you'd need to look at.
 
+When your question needs your calendar, WHOOP, Strava, email or heart rate, I
+say so straight away — "Let me check your calendar, hmm…" — while I read it,
+then answer. The first time a particular line comes up it's silent while the
+phone saves my voice for it; after that it plays instantly.
+
 The listening happens on the phone. Until it hears my name nothing is sent
 anywhere, and after it only the words you said go to me — never the sound.
 Recognising my name, and turning what you say next into words, both happen on
@@ -65,6 +70,8 @@ same conversation.
   start listening on its own in the background, and I wouldn't want it to.
 - No signal means no answer — recognising my name works offline, answering
   doesn't.
+- The "let me check…" line only names what I'm sure I'll need — at most two
+  apps, plus your heart rate. I may quietly read a little more than I name.
 - Heart-rate limit alerts are a separate switch — Phone & car → Heart rate
   (see heart-rate). They're spoken whether or not hands-free is on.
 
@@ -83,6 +90,12 @@ same conversation.
   `handsFreeStatus` / `handsFreeStart` / `handsFreeStop` in `DashboardActivity`.
   The open chat skips voicing replies while hands-free runs (`../../../companion/src/native/handsFree.ts`),
   or she'd speak twice.
+- Filler: `HandsFreeClient.converse` sends `companion.filler: true`; `/message`
+  returns `filler { key, text }` from `src/services/toolIntent.js` (Jev guess,
+  ≤ 800 ms, adults only). `HandsFreeService.sayFiller` plays it from
+  `AthenaVoice`'s text-keyed cache on its own thread while the reply is polled
+  and voiced; an uncached line is fetched in the background (silent that
+  once). The reply prompt gets `# Already said` so she doesn't repeat it.
 - Prompt: `companion.handsFree` in `parseMessageContext` (`src/controllers/message.js`)
   → the HANDS-FREE rule in `buildAdultCompanionPrompt()`.
 - Wake test (09-29, Windows SAPI voices, clean audio): 6/6 "Athena" phrases hit,
