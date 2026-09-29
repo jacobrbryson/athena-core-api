@@ -574,6 +574,9 @@ describe("keyword gates", () => {
 	const cases = [
 		["what's on my calendar tomorrow?", ["google_calendar"]],
 		["am I free thursday afternoon?", ["google_calendar"]],
+		["do I have anything going on tonight?", ["google_calendar"]],
+		["what am I doing this weekend?", ["google_calendar"]],
+		["any plans tomorrow?", ["google_calendar"]],
 		["how far did I run this week?", ["strava"]],
 		["what was my recovery this morning?", ["whoop"]],
 		["how did I sleep last night?", ["whoop"]],

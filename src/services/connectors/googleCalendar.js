@@ -26,8 +26,12 @@ const MAX_EVENTS = 25;
 // a product limit. freeBusy also caps out at 50 calendars per request.
 const MAX_CALENDARS = 20;
 
+// People rarely say "calendar" out loud. "Anything going on tonight?" missed
+// every word here, so the calendar was never read and she answered from
+// whatever else was in context — tomorrow's plans, as it happened. Plain
+// schedule questions count: tonight, tomorrow, plans, going on, this weekend.
 const KEYWORDS =
-	/\b(calendar|schedule|scheduled|appointment|appointments|meeting|meetings|event|events|busy|free|availability|available|agenda|booked|what('?s| is) on)\b/i;
+	/\b(calendar|schedule|scheduled|appointment|appointments|meeting|meetings|event|events|busy|free|availability|available|agenda|booked|what('?s| is) on|tonight|tomorrow|plans?|planned|going on|this weekend|(doing|up to) (today|tonight|later|this))\b/i;
 
 /** Cheap gate: is this message plausibly about the user's calendar? */
 function matches(message) {

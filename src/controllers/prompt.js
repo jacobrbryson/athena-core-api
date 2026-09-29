@@ -827,6 +827,12 @@ async function generatePrompt(session, sessionTopics, message, options = {}) {
     // she answers "can you see my calendar?" from a guess — and a confident
     // guess about her own features is believed.
     if (options.capabilityBlock) systemPrompt += `\n${options.capabilityBlock}`;
+    // The capability list says she CAN read the calendar, so when this turn's
+    // connector gate missed she answered "Let me check your calendar for
+    // tonight." — and there is no later turn in which she checks. This reply
+    // is the only one she gets; say what is known, or that it isn't here.
+    systemPrompt += `\n\n# No lookups mid-reply
+You cannot fetch, check or look anything up while answering. Everything you can see this turn is already in this prompt. Never say "let me check", "one moment", "I'll look" or anything that promises an answer later — there is no later. If the data they asked about is not above, say plainly you don't have it in front of you right now and suggest they ask again mentioning it directly (for example "what's on my calendar tonight?").`;
     // What she can DO this turn, scoped to what this person has linked and
     // consented to. Null (the common case) means she is read-only right now
     // and must not offer to change anything — this block is the only thing
