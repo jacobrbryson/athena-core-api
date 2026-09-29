@@ -15,6 +15,7 @@ router.get('/dashboard/priority', requireAuth, require('../controllers/dashboard
 router.get('/system/twilio-billing', requireAuth, require('../controllers/system').twilioBillingStatus);
 router.get('/system/openai-billing', requireAuth, require('../controllers/system').openaiBillingStatus);
 router.get('/system/gcp-billing', requireAuth, require('../controllers/system').gcpBillingStatus);
+router.get('/system/health', requireAuth, require('../controllers/system').healthStatus);
 // The Dreams log: what Athena did in her own database overnight, told plainly
 // and as a dream. Read-only; statements leave redacted (services/dreams/redact).
 router.get('/dreams', requireAuth, require('../controllers/dreams').list);

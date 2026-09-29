@@ -16,6 +16,7 @@
 		"reset:trail": "node db/reset-trail.js",
 		"reset:index": "node db/reset-index.js",
 		"reset:experience": "node db/reset-experience.js",
+		"billing:history": "node db/load-gcp-billing-history.js",
 		"rotate:keys": "node src/jobs/rotate-keys.js",
 		"rotate:keys:dry": "node src/jobs/rotate-keys.js --dry-run",
 		"rotate:keys:reencrypt": "node src/jobs/rotate-keys.js --reencrypt",

@@ -13,7 +13,7 @@ jest.mock("../llm", () => ({
 
 const llm = require("../llm");
 const { summarizeCalls } = require("./metrics");
-const { ruleFindings, fallbackPlan, renderMarkdown, writePlan, evalRecord, flakyCases, thinSamples } = require("./plan");
+const { ruleFindings, fallbackPlan, renderMarkdown, writePlan, evalRecord, flakyCases, thinSamples, stuckItems, findingKey, PLAN_SCHEMA } = require("./plan");
 const { runEvals, DONT_REMEMBER } = require("./evals");
 
 const row = (over) => ({ task: "chat", endpoint_id: "gemini", tier: "frontier", outcome: "ok", latency_ms: 1000, attempt: 0, ...over });
@@ -411,6 +411,50 @@ describe("ruleFindings", () => {
 			{ date: "2026-09-24", plan: { plan: [] } },
 		];
 		expect(ruleFindings({ metrics: { models: { last24h: healthyModels } }, evals: {}, config: { orcwoodCount: 1 }, planHistory }).find((x) => x.area === "stuck")).toBeUndefined();
+	});
+
+	test("the real 09-25..09-28 plans: a reworded, re-filed Orcwood item still counts as stuck", () => {
+		// Verbatim from self_review_report. The model moved the item from
+		// "localization" to "infra" and reworded it, and the old matcher missed it.
+		const i = (area, title) => ({ area, title });
+		const planHistory = [
+			{ date: "2026-09-28", plan: { plan: [i("infra", "Investigate and restore orcwood-dev endpoint health"), i("news", "Fix news watcher Cloud Run job and scheduler")] } },
+			{ date: "2026-09-27", plan: { plan: [i("infra", "Investigate and restore orcwood-dev endpoint health"), i("news", "Fix news watcher Cloud Run job and scheduler"), i("initiative", "Pause or refine nearby_incident initiative triggers")] } },
+			{ date: "2026-09-26", plan: { plan: [i("localization", "Investigate Orcwood health and API service routing"), i("initiative", "Refine nearby incident nudge triggers and phrasing")] } },
+			{ date: "2026-09-25", plan: { plan: [i("localization", "Investigate Orcwood health and API service routing"), i("initiative", "Refine nearby incident nudge triggers and phrasing")] } },
+			{ date: "2026-09-24", plan: { plan: [i("initiative", "Refine nearby incident nudge triggers and phrasing")] } },
+		];
+		const stuck = stuckItems(planHistory);
+		expect(stuck).toEqual([expect.objectContaining({ title: "Investigate and restore orcwood-dev endpoint health", nights: 4, since: "2026-09-25" })]);
+	});
+
+	test("items carrying a finding key match on the key, not the wording", () => {
+		const night = (date, ...items) => ({ date, plan: { plan: items } });
+		const reworded = [
+			night("2026-09-30", { area: "infra", title: "Restart the inference process", finding: "endpoint:orcwood-dev" }),
+			night("2026-09-29", { area: "ops", title: "Look at the box under the desk", finding: "endpoint:orcwood-dev" }),
+			night("2026-09-28", { area: "localization", title: "Why is local share zero", finding: "endpoint:orcwood-dev" }),
+		];
+		expect(stuckItems(reworded)).toEqual([expect.objectContaining({ nights: 3, finding: "endpoint:orcwood-dev" })]);
+
+		// Same words, different problems: two endpoints are not one stuck item.
+		const twoEndpoints = [
+			night("2026-09-30", { area: "infra", title: "Investigate Orcwood hanging", finding: "endpoint:orcwood-a" }),
+			night("2026-09-29", { area: "infra", title: "Investigate Orcwood hanging", finding: "endpoint:orcwood-b" }),
+			night("2026-09-28", { area: "infra", title: "Investigate Orcwood hanging", finding: "endpoint:orcwood-a" }),
+		];
+		expect(stuckItems(twoEndpoints)).toEqual([]);
+	});
+
+	test("finding keys are stable across nights and carried into the fallback plan", () => {
+		expect(findingKey("models", "json: 12.9% of calls errored")).toBe(findingKey("models", "json: 8.3% of calls errored"));
+		const endpoint = (e) => ({ models: { last24h: { ...healthyModels, byEndpoint: { "orcwood-dev": e } } } });
+		const hanging = ruleFindings({ metrics: endpoint({ calls: 23, errors: 23, errorRate: 1, timeouts: 23, timeoutWaitMs: 23 * 60000 }), evals: {}, config: { orcwoodCount: 1 } });
+		const failing = ruleFindings({ metrics: endpoint({ calls: 133, errors: 53, errorRate: 0.4, timeouts: 0 }), evals: {}, config: { orcwoodCount: 1 } });
+		expect(hanging.find((f) => f.area === "infra").key).toBe("endpoint:orcwood-dev");
+		expect(failing.find((f) => f.area === "infra").key).toBe("endpoint:orcwood-dev");
+		expect(fallbackPlan(hanging).plan.find((p) => p.area === "infra").finding).toBe("endpoint:orcwood-dev");
+		expect(PLAN_SCHEMA.properties.plan.items.required).toContain("finding");
 	});
 });
 

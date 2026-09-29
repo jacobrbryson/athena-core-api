@@ -1,5 +1,12 @@
 # Capability ledger
 
+- 2026-09-28 — The System page now leads with Athena's health (Good,
+  Degraded or Down, with a link to the reason), her total lifetime spend
+  across Twilio, OpenAI and Google Cloud, this month's LLM cost (OpenAI +
+  Gemini) and hosting cost (Google Cloud without Gemini); the Google Cloud
+  panel says when a new billing export is still catching up instead of showing
+  nothing — `system.md` (status: live)
+
 - 2026-09-27 — Athena's hologram avatar now blinks at natural random
   intervals, with the odd double blink, and moves her lips in time with her
   voice, closing them when she stops. Live on web; the Android app has it in

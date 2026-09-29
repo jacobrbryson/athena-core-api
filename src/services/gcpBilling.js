@@ -7,8 +7,14 @@ const config = require('../config');
 // behind and has no history from before it was switched on.
 const BQ_URL = 'https://bigquery.googleapis.com/bigquery/v2/projects';
 const TABLE_PREFIX = 'gcp_billing_export_v1_';
+// Monthly totals from before the export existed, loaded once from a Cloud
+// Billing report CSV (db/load-gcp-billing-history.js). Optional; for any month
+// it holds it is authoritative, because the export's first months are partial.
+const HISTORY_TABLE = 'billing_history';
 const TIMEOUT_MS = 20000;
 const TOP_SKUS = 10;
+// Model spend billed through this project. Everything else is hosting.
+const LLM_SERVICE = /gemini|generative language|vertex ai/i;
 
 let authClient = null;
 async function token() {
@@ -54,10 +60,33 @@ function settings() {
 }
 
 /** The export table is named after the billing account, so find it rather than configure it. */
-async function findTable({ exportProject, dataset }) {
+async function findTables({ exportProject, dataset }) {
   const body = await bq('GET', `${exportProject}/datasets/${dataset}/tables?maxResults=100`);
-  const table = (body?.tables || []).map((t) => t.tableReference?.tableId).find((id) => id?.startsWith(TABLE_PREFIX));
-  return table || null;
+  const ids = (body?.tables || []).map((t) => t.tableReference?.tableId);
+  return { table: ids.find((id) => id?.startsWith(TABLE_PREFIX)) || null, history: ids.includes(HISTORY_TABLE) };
+}
+
+/**
+ * Lifetime cost, month by month: the history table for every month it holds,
+ * the export for the rest. Also how far the export reaches — a newly
+ * switched-on export backfills oldest-first, so for a while "this month" is
+ * empty only because it hasn't got there yet.
+ */
+function lifetimeSql(cfg, from, credits, history) {
+  const exported = `SELECT invoice.month AS month, SUM(cost) + SUM(${credits}) AS cost, MIN(usage_start_time) AS since, MAX(usage_end_time) AS through
+      FROM ${from} WHERE project.id = @project GROUP BY month`;
+  if (!history) {
+    return `WITH exported AS (${exported})
+      SELECT SUM(cost) AS cost, FORMAT_TIMESTAMP('%F', MIN(since), 'America/Los_Angeles') AS data_since, MAX(through) AS data_through, NULL AS history_since FROM exported`;
+  }
+  return `WITH exported AS (${exported}),
+    history AS (SELECT invoice_month AS month, SUM(cost) AS cost FROM \`${cfg.exportProject}.${cfg.dataset}.${HISTORY_TABLE}\`
+      WHERE project_id = @project GROUP BY month)
+    SELECT
+      IFNULL((SELECT SUM(cost) FROM history), 0) + IFNULL((SELECT SUM(cost) FROM exported WHERE month NOT IN (SELECT month FROM history)), 0) AS cost,
+      (SELECT FORMAT_TIMESTAMP('%F', MIN(since), 'America/Los_Angeles') FROM exported) AS data_since,
+      (SELECT MAX(through) FROM exported) AS data_through,
+      (SELECT MIN(month) FROM history) AS history_since`;
 }
 
 async function query(project, sql, params) {
@@ -91,9 +120,9 @@ async function getBilling(now = new Date()) {
   const base = { checkedAt: now.toISOString(), project: cfg.project || null, dataset: `${cfg.exportProject}.${cfg.dataset}` };
   if (!cfg.project) return { configured: false, reason: 'no_project', ...base };
 
-  let table;
+  let table, history;
   try {
-    table = await findTable(cfg);
+    ({ table, history } = await findTables(cfg));
   } catch (err) {
     if (err.status === 404) return { configured: false, reason: 'no_dataset', ...base };
     throw err;
@@ -104,7 +133,7 @@ async function getBilling(now = new Date()) {
   const params = { month: invoiceMonth(now), project: cfg.project };
   const where = 'WHERE invoice.month = @month AND project.id = @project';
   const credits = 'IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c), 0)';
-  const [services, skus, days, meta] = await Promise.all([
+  const [services, skus, days, meta, lifetime] = await Promise.all([
     query(cfg.exportProject, `SELECT service.description AS name, SUM(cost) AS cost, SUM(${credits}) AS credits
       FROM ${from} ${where} GROUP BY name ORDER BY cost DESC`, params),
     query(cfg.exportProject, `SELECT service.description AS service, sku.description AS name, SUM(cost) AS cost, SUM(${credits}) AS credits
@@ -113,11 +142,16 @@ async function getBilling(now = new Date()) {
       FROM ${from} ${where} GROUP BY date ORDER BY date`, params),
     query(cfg.exportProject, `SELECT ANY_VALUE(currency) AS currency, MAX(export_time) AS last_export
       FROM ${from} ${where}`, params),
+    query(cfg.exportProject, lifetimeSql(cfg, from, credits, history), { project: cfg.project }),
   ]);
 
   const gross = services.reduce((sum, s) => sum + Number(s.cost || 0), 0);
   const creditTotal = services.reduce((sum, s) => sum + Number(s.credits || 0), 0);
   const lastExport = Number(meta[0]?.last_export);
+  const through = Number(lifetime[0]?.data_through);
+  const historySince = lifetime[0]?.history_since;
+  const net = (s) => Number(s.cost || 0) + Number(s.credits || 0);
+  const llm = services.filter((s) => LLM_SERVICE.test(s.name || '')).reduce((sum, s) => sum + net(s), 0);
   return {
     configured: true,
     ...base,
@@ -127,6 +161,12 @@ async function getBilling(now = new Date()) {
     costThisMonth: num(gross + creditTotal),
     grossThisMonth: num(gross),
     creditsThisMonth: num(creditTotal),
+    llmThisMonth: num(llm),
+    hostingThisMonth: num(gross + creditTotal - llm),
+    costAllTime: num(lifetime[0]?.cost),
+    // The earliest month the lifetime figure covers, history included.
+    dataSince: historySince ? `${historySince.slice(0, 4)}-${historySince.slice(4, 6)}-01` : lifetime[0]?.data_since || null,
+    dataThrough: Number.isFinite(through) && through > 0 ? new Date(through * 1000).toISOString() : null,
     services: services.map((s) => ({ name: s.name, cost: num(Number(s.cost) + Number(s.credits)), gross: num(s.cost) })),
     topSkus: skus.map((s) => ({ service: s.service, name: s.name, cost: num(Number(s.cost) + Number(s.credits)), gross: num(s.cost) })),
     daily: days.map((d) => ({ date: d.date, cost: num(d.cost) })),

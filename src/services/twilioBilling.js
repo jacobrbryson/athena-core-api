@@ -53,17 +53,23 @@ function smsUsage(body) {
 async function getBilling() {
   const cfg = await config();
   if (!cfg) return { configured: false, checkedAt: new Date().toISOString() };
-  const [balance, month] = await Promise.all([
+  const [balance, month, allTime] = await Promise.all([
     twilioGet(cfg, 'Balance.json'),
     twilioGet(cfg, 'Usage/Records/ThisMonth.json'),
+    twilioGet(cfg, 'Usage/Records/AllTime.json?Category=totalprice'),
   ]);
   const usage = smsUsage(month);
+  const total = (Array.isArray(allTime?.usage_records) ? allTime.usage_records : [])
+    .find((record) => record.category === 'totalprice');
+  const totalPrice = Math.abs(Number(total?.price));
   return {
     configured: true,
     checkedAt: new Date().toISOString(),
     balance: { amount: balance?.balance ?? null, currency: balance?.currency || null },
     smsMessagesSent: usage.messagesSent,
     smsCostThisMonth: usage.cost,
+    // Everything the account has ever been charged, not only SMS.
+    costAllTime: Number.isFinite(totalPrice) ? Math.round(totalPrice * 100) / 100 : null,
   };
 }
 

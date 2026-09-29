@@ -61,17 +61,46 @@ const THRESHOLDS = {
  */
 const ALERT_TRIGGERS = new Set(["nearby_incident"]);
 
-const STOPWORDS = new Set(["the", "and", "for", "with", "into", "from", "its", "fix", "investigate", "check", "refine", "improve"]);
-function titleWords(title) {
-	return new Set(String(title || "").toLowerCase().split(/[^a-z0-9_]+/).filter((w) => w.length > 2 && !STOPWORDS.has(w)));
+/**
+ * A finding's identity across nights: the thing that is wrong, not the words
+ * used to describe it tonight. Numbers are stripped so "40% errors" and "100%
+ * errors" on the same endpoint are one problem. Rules that name a subject
+ * (an endpoint, a task, a trigger) pass their own key instead.
+ */
+function findingKey(area, title) {
+	const words = String(title || "").toLowerCase().replace(/[0-9.,%]+/g, " ").split(/[^a-z_-]+/).filter(Boolean);
+	return `${area}:${words.join("-")}`;
 }
-function similar(a, b) {
-	const x = titleWords(a);
-	const y = titleWords(b);
+
+// Verbs and generic nouns the plan writer reaches for on any item. Leaving
+// them in let "Investigate Orcwood health and API service routing"
+// (localization) and "Investigate and restore orcwood-dev endpoint health"
+// (infra) read as different items, so an Orcwood item planned five nights out
+// of six never counted as stuck.
+const STOPWORDS = new Set([
+	"the", "and", "for", "with", "into", "from", "its", "not", "fix", "investigate", "check", "refine", "improve", "restore", "pause",
+	"verify", "review", "adjust", "update", "endpoint", "health", "service", "routing", "api", "job", "cloud", "run", "scheduler",
+	"trigger", "triggers", "phrasing", "dev",
+]);
+function subjectWords(title) {
+	return new Set(String(title || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2 && !STOPWORDS.has(w)));
+}
+
+/**
+ * Same underlying item on two nights? By the finding it came from when both
+ * carry one — code-assigned, so the model can't reword it away. Plans written
+ * before items carried `finding` fall back to their subject words, ignoring
+ * area: the model filed the same Orcwood item under "localization" one night
+ * and "infra" the next.
+ */
+function sameItem(a, b) {
+	if (a.finding && b.finding) return a.finding === b.finding;
+	const x = subjectWords(a.title);
+	const y = subjectWords(b.title);
 	if (!x.size || !y.size) return false;
 	let both = 0;
 	for (const w of x) if (y.has(w)) both += 1;
-	return both / (x.size + y.size - both) >= THRESHOLDS.stuckTitleSimilarity;
+	return both / Math.min(x.size, y.size) >= THRESHOLDS.stuckTitleSimilarity;
 }
 
 /**
@@ -88,7 +117,7 @@ function stuckItems(planHistory = []) {
 	for (const item of nights[0].items) {
 		let streak = 1;
 		for (const n of nights.slice(1)) {
-			if (!n.items.some((o) => (o.area || "") === (item.area || "") && similar(o.title, item.title))) break;
+			if (!n.items.some((o) => sameItem(o, item))) break;
 			streak += 1;
 		}
 		if (streak >= THRESHOLDS.stuckNights) {
@@ -96,6 +125,7 @@ function stuckItems(planHistory = []) {
 			stuck.push({
 				title: item.title,
 				area: item.area,
+				finding: item.finding || null,
 				nights: streak,
 				since: since instanceof Date ? since.toISOString().slice(0, 10) : String(since || "").slice(0, 10),
 			});
@@ -155,7 +185,7 @@ function thinSamples(metrics) {
  */
 function ruleFindings({ metrics, evals, config, evalHistory = [], maintenance = null, planHistory = [] }) {
 	const out = [];
-	const add = (severity, area, title, evidence) => out.push({ severity, area, title, evidence });
+	const add = (severity, area, title, evidence, key = findingKey(area, title)) => out.push({ severity, area, title, evidence, key });
 	const m24 = metrics.models?.last24h;
 
 	if (!m24?.available) {
@@ -163,13 +193,13 @@ function ruleFindings({ metrics, evals, config, evalHistory = [], maintenance = 
 	} else {
 		for (const [task, t] of Object.entries(m24.byTask)) {
 			if (t.calls >= 10 && t.errorRate > THRESHOLDS.errorRate) {
-				add("high", "models", `${task}: ${(t.errorRate * 100).toFixed(1)}% of calls errored`, `${t.errors}/${t.calls} calls in 24h`);
+				add("high", "models", `${task}: ${(t.errorRate * 100).toFixed(1)}% of calls errored`, `${t.errors}/${t.calls} calls in 24h`, `task:${task}:errors`);
 			}
 			if (t.calls >= 10 && t.invalidRate > THRESHOLDS.errorRate) {
-				add("medium", "models", `${task}: ${(t.invalidRate * 100).toFixed(1)}% of outputs failed validation`, `${t.invalid}/${t.calls} calls; the next tier had to answer`);
+				add("medium", "models", `${task}: ${(t.invalidRate * 100).toFixed(1)}% of outputs failed validation`, `${t.invalid}/${t.calls} calls; the next tier had to answer`, `task:${task}:invalid`);
 			}
 			if (t.ok >= 10 && t.fallbackRate > THRESHOLDS.fallbackRate) {
-				add("medium", "models", `${task}: ${(t.fallbackRate * 100).toFixed(0)}% of answers came from a fallback tier`, "the preferred tier is unreliable for this task");
+				add("medium", "models", `${task}: ${(t.fallbackRate * 100).toFixed(0)}% of answers came from a fallback tier`, "the preferred tier is unreliable for this task", `task:${task}:fallback`);
 			}
 		}
 		const chat = m24.byTask.chat;
@@ -191,9 +221,10 @@ function ruleFindings({ metrics, evals, config, evalHistory = [], maintenance = 
 					"high",
 					"infra",
 					`Endpoint ${id} is hanging: ${timeouts} call(s) timed out`,
-					`each waited ~${waited}s before the next tier answered (${tasks})${chat ? ` — ${chat} of them were people waiting on a chat reply` : ""}; other errors: ${e.errors - timeouts}. A hung server still answers the /models probe, so check the inference process, not just that the box is up`
+					`each waited ~${waited}s before the next tier answered (${tasks})${chat ? ` — ${chat} of them were people waiting on a chat reply` : ""}; other errors: ${e.errors - timeouts}. A hung server still answers the /models probe, so check the inference process, not just that the box is up`,
+					`endpoint:${id}`
 				);
-			} else if (e.calls >= 5 && e.errorRate > 0.25) add("high", "infra", `Endpoint ${id} is failing`, `${(e.errorRate * 100).toFixed(0)}% errors over ${e.calls} calls`);
+			} else if (e.calls >= 5 && e.errorRate > 0.25) add("high", "infra", `Endpoint ${id} is failing`, `${(e.errorRate * 100).toFixed(0)}% errors over ${e.calls} calls`, `endpoint:${id}`);
 		}
 	}
 
@@ -244,9 +275,9 @@ function ruleFindings({ metrics, evals, config, evalHistory = [], maintenance = 
 			.map((s) => `${s.host} (last polled ${s.lastCheckedAt ? new Date(s.lastCheckedAt).toISOString().slice(0, 10) : "never"})`)
 			.join(", ");
 		if (news.overdue.length === news.worldSources) {
-			add("high", "news", `News watcher has stopped: none of ${news.worldSources} world source(s) polled on schedule`, `${hosts}; ${news.items24h} headlines stored in 24h — check that the athena-news Cloud Run job and its scheduler trigger exist and are running`);
+			add("high", "news", `News watcher has stopped: none of ${news.worldSources} world source(s) polled on schedule`, `${hosts}; ${news.items24h} headlines stored in 24h — check that the athena-news Cloud Run job and its scheduler trigger exist and are running`, "news:watcher");
 		} else {
-			add("medium", "news", `${news.overdue.length} of ${news.worldSources} world news source(s) overdue`, hosts);
+			add("medium", "news", `${news.overdue.length} of ${news.worldSources} world news source(s) overdue`, hosts, "news:watcher");
 		}
 	} else if (news && !news.available) {
 		add("medium", "news", "News metrics unavailable", news.reason);
@@ -401,7 +432,7 @@ function ruleFindings({ metrics, evals, config, evalHistory = [], maintenance = 
 	// not another night in the plan. Area "stuck" is how writePlan and the
 	// rules-only plan tell these apart.
 	for (const s of stuckItems(planHistory)) {
-		add("high", "stuck", `Stuck ${s.nights} nights: ${s.title}`, `planned every night since ${s.since} (${s.area || "no area"}) and still not done — it needs a decision or hands from the owner, not another night in the plan`);
+		add("high", "stuck", `Stuck ${s.nights} nights: ${s.title}`, `planned every night since ${s.since} (${s.area || "no area"}) and still not done — it needs a decision or hands from the owner, not another night in the plan`, `stuck:${s.finding || findingKey(s.area, s.title)}`);
 	}
 
 	const order = { high: 0, medium: 1, opportunity: 2, low: 3 };
@@ -429,6 +460,7 @@ const PLAN_SCHEMA = {
 				properties: {
 					title: { type: "string" },
 					area: { type: "string" },
+					finding: { type: "string" },
 					why: { type: "string" },
 					evidence: { type: "string" },
 					change: { type: "string" },
@@ -436,7 +468,7 @@ const PLAN_SCHEMA = {
 					effort: { type: "string", enum: ["S", "M", "L"] },
 					impact: { type: "string", enum: ["low", "medium", "high"] },
 				},
-				required: ["title", "area", "why", "change", "measure", "effort", "impact"],
+				required: ["title", "area", "finding", "why", "change", "measure", "effort", "impact"],
 			},
 		},
 		questionsForOwner: { type: "array", items: { type: "string" } },
@@ -468,6 +500,7 @@ Rules for the plan — these override your instincts:
 - Sample size: never cite or act on a rate from fewer than ${THRESHOLDS.minCallsToJudge} calls. The tasks/endpoints below that bar tonight are listed under "Too few calls to judge"; quote their raw counts if you mention them at all, never a percentage.
 - Intermittent evals (listed below) pass some nights and fail others. Tonight's result for them is neither a regression nor an improvement; mention them only if the failure rate itself is the problem.
 - Don't repeat an item from yesterday's plan unless tonight's data gives new evidence or a more specific change. If it needs something only the owner can provide, drop it from the plan and ask once in questionsForOwner.
+- Set each plan item's "finding" to the exact "key" of the actionable finding it addresses, copied verbatim; use "" only for an item drawn from a metrics pattern with no finding. Keep the same key night after night for the same problem, however you word the title.
 - Findings with area "stuck" have been planned for several nights and never moved. Never put them in the plan. Turn each into ONE specific question in questionsForOwner that names the decision or action you need.
 - Alert triggers (${[...ALERT_TRIGGERS].join(", ")}) are judged on whether they reached someone, never on replies. Never propose pausing, muting, rate-limiting or sending fewer alerts; the owner removed every interruption budget on 2026-09-19.
 - An endpoint that is "hanging" (timeouts) is an operations problem on that machine; say what to check on it, not how to change a prompt.
@@ -519,6 +552,7 @@ function fallbackPlan(findings) {
 		plan: findings.filter((f) => f.severity !== "low" && f.area !== "stuck").slice(0, 5).map((f) => ({
 			title: f.title,
 			area: f.area,
+			finding: f.key,
 			why: f.evidence,
 			evidence: f.evidence,
 			change: "Investigate — see the finding's evidence.",
@@ -618,4 +652,4 @@ function renderMarkdown({ date, metrics, evals, findings, plan, maintenance }) {
 	return L.join("\n");
 }
 
-module.exports = { ruleFindings, writePlan, fallbackPlan, renderMarkdown, evalRecord, flakyCases, thinSamples, stuckItems, THRESHOLDS, PLAN_SCHEMA, ALERT_TRIGGERS };
+module.exports = { findingKey, ruleFindings, writePlan, fallbackPlan, renderMarkdown, evalRecord, flakyCases, thinSamples, stuckItems, THRESHOLDS, PLAN_SCHEMA, ALERT_TRIGGERS };
