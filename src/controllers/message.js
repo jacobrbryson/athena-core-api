@@ -300,6 +300,16 @@ async function addMessage(req, res, clients) {
       // Anyone watching this conversation sees the line in place of the
       // plain "thinking…" — typed turns and hands-free alike.
       ctx.guessPromise.then((guessed) => {
+        // One line per turn, so a missing filler can be traced: was there a
+        // guess, what did it announce, and who was watching.
+        console.info(
+          "[message] guess:",
+          guessed
+            ? `announce=[${guessed.announce.join(",")}] filler=${guessed.filler?.key || "none"} ${guessed.latencyMs}ms`
+            : "none",
+          `sockets=${clients?.get(session.uuid)?.size || 0}`,
+          `wantsFiller=${!!ctx.companion?.filler}`,
+        );
         if (guessed?.filler) {
           broadcastToSession(clients, session.uuid, {
             rpc: "filler",
