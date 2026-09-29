@@ -11,9 +11,9 @@ triggers: [hands free, hands-free, wake word, hey athena, say your name, always 
 
 ## What I can do
 
-In the Android app you can turn on hands-free. Then you say "Athena", hear a
-chime, and say what you want — the screen can be off and the phone in your
-pocket. I answer out loud, into your earbuds if they're in, and turn your music
+In the Android app you can turn on hands-free. Then you just talk to me —
+"Athena, what time is it?" in one breath works, or say "Athena", wait for the
+chime, and then ask. The screen can be off and the phone in your pocket. I answer out loud, into your earbuds if they're in, and turn your music
 down while I talk. After I answer you get one follow-up without saying my name
 again ("and tomorrow?"); after that I go back to waiting for my name.
 
@@ -26,7 +26,10 @@ Recognising my name, and turning what you say next into words, both happen on
 the phone.
 
 While it's on, Android shows a notification saying I'm listening, the whole
-time. That's how you always know.
+time. That's how you always know. If you leave it on and it stops — the phone
+restarted, Android closed the app — it comes back the next time you open me.
+If something goes wrong in the middle of a question you hear a low tone and I
+keep listening.
 
 ## Where to find it
 
@@ -40,14 +43,14 @@ same conversation.
 
 ## When it doesn't work
 
-- **It doesn't react to my name.** Say it on its own and pause — "Athena…
-  (chime) what's next on my calendar". Wind, heavy breathing and loud music make
-  it harder; a quieter moment or earbuds with a mic help.
-- **It heard me but didn't answer.** Signal on a trail drops; the chime goes
-  low when I couldn't reach the server in time. Ask again when you're back in
-  coverage.
+- **It doesn't react to my name.** Wind, heavy breathing and loud music make it
+  harder; a quieter moment or earbuds with a mic help. Saying my name on its own
+  and waiting for the chime is the most reliable way.
+- **It heard me but didn't answer.** Signal on a trail drops; a low tone means
+  I couldn't reach the server in time. I'm still listening — ask again when
+  you're back in coverage.
 - **"Open Athena and sign in again."** The phone's sign-in expired. Open the
-  app, sign in, and turn hands-free back on.
+  app and sign in; hands-free comes back on by itself.
 - **It misheard what I said.** Some phones can't transcribe offline, and then a
   smaller offline model does it, which gets more wrong. The panel shows which
   one your phone is using.
@@ -55,10 +58,11 @@ same conversation.
 ## Limits
 
 - Android app only — not the website, not iPhone.
-- You have to say my name, pause for the chime, then speak. Saying it all in one
-  breath ("Athena what time is it") can lose the start of the question.
-- It stops when you stop it, when you restart the phone, or if Android closes
-  the app; it never turns itself back on.
+- When you say it all in one breath, the question is transcribed by the
+  smaller offline model, which gets more wrong than the phone's own recogniser.
+  Pausing for the chime uses the better one where your phone has it.
+- After a restart it waits for you to open the app — Android doesn't let an app
+  start listening on its own in the background, and I wouldn't want it to.
 - No signal means no answer — recognising my name works offline, answering
   doesn't.
 - Heart-rate limits and alerts from a WHOOP aren't part of this yet.
@@ -67,7 +71,7 @@ same conversation.
 
 - Native: `../../../native-runtime/AndroidCompanion~/AthenaDashboard.androidlib/java/com/orcwood/athena/dashboard/HandsFreeService.java`
   (microphone foreground service: energy gate → Vosk grammar `athena`/`hey athena`
-  at conf ≥ 0.75 → chime → Android on-device `SpeechRecognizer`, else Vosk free-form;
+  at conf ≥ 0.75; the utterance is buffered, so "athena <request>" in one breath is re-transcribed free-form and split after the last "athena" (≥ 2 words, else chime → Android on-device `SpeechRecognizer`, else Vosk free-form). A failed turn plays NACK and keeps listening; only sign-out/stop ends it. `enabled` pref + `resumeIfEnabled()` in DashboardActivity.onResume restarts it; PARTIAL_WAKE_LOCK while running;
   never a cloud recogniser) and `HandsFreeClient.java` (the chat's own
   `POST /api/v1/message`, poll `GET /api/v1/message`, `POST /api/v1/speech`, with the
   WebView's `companion_session` cookie — no new route or credential).

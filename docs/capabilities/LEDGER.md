@@ -1,5 +1,11 @@
 # Capability ledger
 
+- 2026-09-29 — Hands-free fixes: "Athena, what time is it?" works in one
+  breath (no pause for the chime); a failed question plays a low tone and she
+  keeps listening instead of switching off; it keeps listening with the screen
+  locked; and if you leave it on, it comes back when you open the app. Needs the
+  next APK — `hands-free.md` (status: partial)
+
 - 2026-09-29 — Hands-free on the Android app: turn it on in Phone & car,
   then say "Athena", hear a chime and talk with the screen off; she answers out
   loud (short, spoken replies) and takes one follow-up without her name. Her
