@@ -40,6 +40,8 @@ down to every step I ran.
 - **Last night's dream** is a card on the dashboard, below the other cards.
   "What actually happened" switches it to the plain account; "All dreams" opens
   the history.
+- **The dream's picture** is cropped to fit beside the story; tap or click it
+  to see the whole painting full-screen. Tap anywhere, ✕ or Escape closes it.
 - **Dreams** in the left-hand menu (on a phone: More → Dreams) is the history:
   the last thirty nights as dreams and as plain accounts, "Show every step" for
   the exact log, and the questions I'm holding for you.

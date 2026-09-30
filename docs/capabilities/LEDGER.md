@@ -1,5 +1,9 @@
 # Capability ledger
 
+- 2026-09-29 — Dream pictures can be opened: tap or click the painting on the
+  dashboard card or the Dreams page to see it whole and full-screen instead of
+  cropped beside the story — `dreaming.md` (status: partial)
+
 - 2026-09-29 — Hands-free says what it's checking: ask about your schedule,
   sleep, rides, email or heart rate and she answers at once with "Let me check
   your calendar, hmm…" (or WHOOP, Strava…) while she reads it, then gives the
