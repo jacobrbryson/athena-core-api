@@ -29,11 +29,11 @@ async function ingestNews() {
 	const health = await news.worldPollHealth();
 	const result = { ...totals, seeded: seeded.added || 0, worldSources: health.worldSources, overdue: health.overdue.map((s) => s.host) };
 	// Nothing to catch up is only "ok" if something is reading the pages. With
-	// every world source overdue the watcher is down, and a green step here is
-	// how a week of no news went unnoticed.
-	if (health.worldSources > 0 && health.overdue.length === health.worldSources) {
+	// the watcher down (see worldPollHealth) a green step here is how a week of
+	// no news went unnoticed.
+	if (health.watcherDown) {
 		throw new Error(
-			`news watcher isn't polling: all ${health.worldSources} world source(s) overdue (${result.overdue.join(", ")}) — is the athena-news job running?`
+			`news watcher isn't polling: ${health.overdue.length} of ${health.worldSources} world source(s) overdue (${result.overdue.join(", ")}) — is the athena-news job running?`
 		);
 	}
 	return result;

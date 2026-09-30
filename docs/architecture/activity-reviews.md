@@ -18,6 +18,9 @@ commitments. No deployment or live provider test is implied by source completion
    exact request bytes with its existing Cloud Run service identity; the core
    validates the signature and a five-minute timestamp tolerance. Synchronize
    host clocks. It never trusts user/profile IDs from request headers.
+   Subscribe it to recovery and sleep events as well as workouts: every known
+   event clears the account's cached WHOOP reads (see `caching.md`), and only
+   workout events enter the activity-review inbox.
 4. Schedule the existing core image to run `node src/jobs/attention.js` every
    minute, using the same database, encryption keyring, connector secrets and
    guarded model configuration as the serving app. Use a real job/worker, not

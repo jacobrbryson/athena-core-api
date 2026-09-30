@@ -39,3 +39,17 @@ test('Slack application errors and malformed JSON are returned without filling c
   fetch.mockResolvedValue({ ok: true, status: 200, text: async () => 'not json' });
   expect(await providerGet(42, 'slack', '/auth.test')).toBeNull();
 });
+test('cache lifetime follows how fast each source changes', async () => {
+  const { cacheTtl, invalidateReads } = require('./http');
+  const HOUR = 3_600_000;
+  expect(cacheTtl('whoop', '/v2/recovery')).toBe(6 * HOUR);
+  expect(cacheTtl('whoop', '/v2/activity/sleep')).toBe(6 * HOUR);
+  expect(cacheTtl('whoop', '/v2/cycle')).toBe(HOUR);
+  expect(cacheTtl('whoop', '/v2/activity/workout')).toBe(HOUR);
+  expect(cacheTtl('gmail', '/users/me/messages')).toBe(30_000);
+  expect(cacheTtl('unlisted', '/x')).toBe(30_000);
+  await providerGet(42, 'whoop', '/v2/recovery');
+  expect(cache.read.mock.calls[0][0]).toMatchObject({ namespace: 'provider:whoop', ttlMs: 6 * HOUR });
+  await invalidateReads(42, 'whoop');
+  expect(cache.invalidate).toHaveBeenCalledWith(42, 'provider:whoop');
+});

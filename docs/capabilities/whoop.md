@@ -41,6 +41,10 @@ the same row deletes the credential.
 - **Connected but thin data.** If the strap hasn't synced with Whoop's own app
   recently, I'm reading what they have, which may be behind. Open Whoop on your
   phone and let it sync.
+- **Today's score isn't showing yet.** I keep what I read from Whoop for a few
+  hours, because recovery and sleep change once a day. When Whoop tells me a
+  new score is in, I drop that copy straight away; if that notification hasn't
+  arrived, the new score shows up within six hours (strain within the hour).
 - **Something failed.** I'll tell you what Whoop's error actually said rather
   than inventing a reason your recovery is missing.
 
@@ -51,6 +55,10 @@ the same row deletes the credential.
 - I'm not a doctor and this isn't medical advice — it's your own data, read
   back to you.
 - One Whoop account.
+- The health card's blood oxygen warning compares against your own recent
+  nights, not a fixed number — WHOOP measures it asleep, where low-to-mid 90s
+  is normal for many people. It warns when a night sits about three points
+  under your usual, or under 90%.
 
 ## Under the hood
 
@@ -62,4 +70,9 @@ the same row deletes the credential.
   refresh token which MUST be persisted or the link dies), `identifyAsync` via
   `/v2/user/profile/basic`.
 - Grounding: `src/services/connectors/context.js`.
+- Cache: reads live in the shared read cache for 6 h (recovery, sleep, profile)
+  or 1 h (cycles, workouts) — `CACHE_TTL_MS` in `src/services/connectors/http.js`. Signed
+  `recovery.*`, `sleep.*` and `workout.*` webhooks call
+  `whoop.invalidateAccount()` from `src/controllers/whoopWebhook.js`.
+- Health card verdict: `readinessOf()` in `../../../companion/src/components/Dashboard.tsx`.
 - Tests: `src/services/connectors/connectors.test.js`.

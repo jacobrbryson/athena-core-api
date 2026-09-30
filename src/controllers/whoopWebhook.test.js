@@ -1,8 +1,10 @@
 jest.mock('../services/secrets', () => ({ getSecret: jest.fn() }));
 jest.mock('../services/attention/store', () => ({ receive: jest.fn() }));
+jest.mock('../services/connectors/whoop', () => ({ invalidateAccount: jest.fn() }));
 const crypto = require('node:crypto');
 const secrets = require('../services/secrets');
 const store = require('../services/attention/store');
+const whoop = require('../services/connectors/whoop');
 const { validSignature, receive } = require('./whoopWebhook');
 
 const SECRET = 'test-only-webhook-secret';
@@ -18,7 +20,7 @@ function response() {
   for (const method of ['set', 'status', 'json', 'end']) res[method] = jest.fn(() => res);
   return res;
 }
-beforeEach(() => { jest.clearAllMocks(); secrets.getSecret.mockResolvedValue(SECRET); store.receive.mockResolvedValue(); });
+beforeEach(() => { jest.clearAllMocks(); secrets.getSecret.mockResolvedValue(SECRET); store.receive.mockResolvedValue(); whoop.invalidateAccount.mockResolvedValue(1); });
 
 test('signature covers exact bytes and timestamp; changed bytes, stale time and missing secrets fail closed', () => {
   const ts = String(Date.now()), raw = Buffer.from('{ "x": 1 }');
@@ -57,7 +59,22 @@ test.each([null, { ...payload, id: 123 }, { ...payload, user_id: '42' }])('malfo
   const res = response(); await receive(request(value), res);
   expect(res.status).toHaveBeenCalledWith(400); expect(store.receive).not.toHaveBeenCalled();
 });
-test('unrelated signed event is acknowledged without starting interpretation', async () => {
-  const res = response(); await receive(request({ ...payload, type: 'sleep.updated' }), res);
+test.each(['recovery.updated', 'recovery.deleted', 'sleep.updated', 'sleep.deleted'])('%s refreshes the signed account cache without starting interpretation', async type => {
+  const res = response(); await receive(request({ ...payload, type }), res);
+  expect(whoop.invalidateAccount).toHaveBeenCalledWith(42);
   expect(res.status).toHaveBeenCalledWith(204); expect(store.receive).not.toHaveBeenCalled();
+});
+test('workout events refresh the cache as well as queueing a review', async () => {
+  const res = response(); await receive(request(), res);
+  expect(whoop.invalidateAccount).toHaveBeenCalledWith(42); expect(store.receive).toHaveBeenCalled();
+});
+test('a failed cache refresh is retried by WHOOP, not acknowledged', async () => {
+  whoop.invalidateAccount.mockRejectedValue(new Error('DB down'));
+  const res = response(); await receive(request({ ...payload, type: 'recovery.updated' }), res);
+  expect(res.status).toHaveBeenCalledWith(503);
+});
+test('unknown signed event is acknowledged and touches nothing', async () => {
+  const res = response(); await receive(request({ ...payload, type: 'body_measurement.updated' }), res);
+  expect(res.status).toHaveBeenCalledWith(204);
+  expect(store.receive).not.toHaveBeenCalled(); expect(whoop.invalidateAccount).not.toHaveBeenCalled();
 });

@@ -242,20 +242,30 @@ async function worldItemsSince(since, limit = 200) {
  *
  * Grace is the longer of a day and twice the source's own interval, and a
  * source seeded in the last hour isn't judged yet.
+ *
+ * `watcherDown` is judged on the house sources (NEWS_FEEDS, HOUSE_PROFILE)
+ * when there are any: "check now" only polls the clicking person's own pages,
+ * so the scheduled job is the only thing that can ever read a house source.
+ * On 09-30 one person's page, checked by hand, turned "NPR, BBC and Fox never
+ * polled" into a medium "3 of 4 overdue" while the job had been gone for days.
  */
 async function worldPollHealth() {
 	const [rows] = await pool.query(
-		`SELECT host, last_checked_at, interval_minutes,
+		`SELECT host, profile_id, last_checked_at, interval_minutes,
             (created_at < NOW() - INTERVAL 1 HOUR
              AND (last_checked_at IS NULL
                   OR last_checked_at < NOW() - INTERVAL GREATEST(1440, 2 * interval_minutes) MINUTE)) AS overdue
      FROM news_source WHERE scope = 'world' AND enabled = 1 ORDER BY id`
 	);
+	const late = rows.filter((r) => Number(r.overdue) === 1);
+	const house = rows.filter((r) => Number(r.profile_id) === HOUSE_PROFILE);
+	const houseLate = late.filter((r) => Number(r.profile_id) === HOUSE_PROFILE);
+	const watcherDown = house.length > 0 ? houseLate.length === house.length : rows.length > 0 && late.length === rows.length;
 	return {
 		worldSources: rows.length,
-		overdue: rows
-			.filter((r) => Number(r.overdue) === 1)
-			.map((r) => ({ host: r.host, lastCheckedAt: r.last_checked_at || null })),
+		houseSources: house.length,
+		watcherDown,
+		overdue: late.map((r) => ({ host: r.host, lastCheckedAt: r.last_checked_at || null })),
 	};
 }
 

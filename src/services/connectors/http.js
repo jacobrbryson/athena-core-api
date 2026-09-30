@@ -25,6 +25,21 @@ const CACHEABLE_READS = {
 	jira: /^\/(?:oauth\/token\/accessible-resources|ex\/jira\/[^/]+\/rest\/api\/3\/search\/jql)$/,
 	slack: /^\/(?:auth\.test|search\.messages)$/,
 };
+const MINUTE = 60_000;
+// How long a cached read may stand, by how fast the source actually changes.
+// WHOOP recovery and sleep are scored once a day and their webhooks clear the
+// cache when a new score lands, so hours are safe; cycles accrue strain all
+// day and have no webhook, so they get an hour. Mail stays short: a stale inbox
+// is the complaint, not the saving.
+const CACHE_TTL_MS = {
+	whoop: path => (/^\/v2\/(?:recovery|activity\/sleep|user\/profile\/basic)$/.test(path) ? 6 * 60 * MINUTE : 60 * MINUTE),
+	strava: () => 30 * MINUTE,
+	google_calendar: () => 5 * MINUTE,
+	jira: () => 2 * MINUTE,
+	slack: () => MINUTE,
+	gmail: () => 30_000,
+};
+const cacheTtl = (providerId, path) => CACHE_TTL_MS[providerId]?.(path) ?? 30_000;
 
 function httpError(message, status, code) {
 	return Object.assign(new Error(message), { status, code });
@@ -251,7 +266,7 @@ async function providerRequest(
 		const canonical = new URL(url);
 		canonical.searchParams.sort();
 		return readCache.read({ profileId, namespace,
-			key: [canonical.toString(), readCache.hash(token), actor, invalidateOnAuthFailure], ttlMs: 30000 },
+			key: [canonical.toString(), readCache.hash(token), actor, invalidateOnAuthFailure], ttlMs: cacheTtl(providerId, path) },
 		async () => {
 			const data = await load();
 			if (data === null || data?.ok === false) {
@@ -278,4 +293,7 @@ const providerGet = (profileId, providerId, path, opts = {}) =>
 /** True for the "nothing usable is linked" case, which callers skip quietly. */
 const isNotConnected = (err) => err && err.code === "not_connected";
 
-module.exports = { providerRequest, providerGet, isNotConnected, buildUrl };
+/** Drop every cached read for one profile's provider — a push said it changed. */
+const invalidateReads = (profileId, providerId) => readCache.invalidate(profileId, `provider:${providerId}`);
+
+module.exports = { providerRequest, providerGet, isNotConnected, buildUrl, invalidateReads, cacheTtl };

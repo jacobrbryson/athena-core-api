@@ -308,3 +308,4 @@ See [`README.md`](README.md) for the full contract.
   `memories.md`, `photos.md`, `devices.md`, `local-athena.md`, `brain.md`
   (status: live)
 - 2026-09-19 — Added explicit, short-retention location context from the paired Android companion; it is separate from Initiative and foreground-only for now — `location-context.md` (status: partial)
+- 2026-09-30 — Whoop: health-card blood oxygen now judged against your own nights (no fixed 95% line, no false "two signals"); Whoop reads cached for hours and refreshed by recovery/sleep/workout webhooks — `whoop.md` (status: live)

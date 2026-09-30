@@ -173,14 +173,23 @@ describe("ruleFindings", () => {
 	describe("news and maintenance", () => {
 		const run = ({ news, maintenance = null }) =>
 			ruleFindings({ metrics: { models: { last24h: healthyModels }, news }, evals: {}, config: { orcwoodCount: 1 }, maintenance });
-		const newsMetrics = (overdue, worldSources = 2) => ({ available: true, worldSources, overdue, items24h: 0 });
+		const newsMetrics = (overdue, worldSources = 2, { houseSources = 0, watcherDown = overdue.length === worldSources } = {}) =>
+			({ available: true, worldSources, houseSources, watcherDown, overdue, items24h: 0 });
 
 		// 09-21 to 09-27: NPR and BBC never polled, nightly step "ok", no finding.
 		test("every world source overdue means the watcher is down", () => {
 			const [f] = run({ news: newsMetrics([{ host: "feeds.npr.org", lastCheckedAt: null }, { host: "feeds.bbci.co.uk", lastCheckedAt: null }]) });
 			expect(f).toMatchObject({ severity: "high", area: "news" });
-			expect(f.title).toMatch(/News watcher has stopped/);
+			expect(f.title).toMatch(/News watcher has stopped: none of 2 world source/);
 			expect(f.evidence).toMatch(/feeds.npr.org \(last polled never\).*athena-news/);
+		});
+
+		// 09-30: a hand-checked personal page turned this into "3 of 4 overdue", medium.
+		test("house feeds unpolled is a stopped watcher even when another page was read", () => {
+			const overdue = ["feeds.npr.org", "feeds.bbci.co.uk", "foxnews.com"].map((host) => ({ host, lastCheckedAt: null }));
+			const [f] = run({ news: newsMetrics(overdue, 4, { houseSources: 2, watcherDown: true }) });
+			expect(f).toMatchObject({ severity: "high", area: "news" });
+			expect(f.title).toBe("News watcher has stopped: none of 2 house feed(s) polled on schedule (3 of 4 world sources overdue)");
 		});
 
 		test("some overdue sources are a medium finding", () => {

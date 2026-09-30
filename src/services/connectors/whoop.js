@@ -1,4 +1,5 @@
-const { providerGet } = require("./http");
+const pool = require("../../helpers/db");
+const { providerGet, invalidateReads } = require("./http");
 
 /**
  * Whoop reads — recovery, sleep and strain.
@@ -11,6 +12,7 @@ const { providerGet } = require("./http");
 
 const PROVIDER = "whoop";
 const MAX_LIMIT = 25; // Whoop's own ceiling
+const BUCKET_MS = 6 * 3_600_000;
 
 /**
  * The collection reads do not judge link health.
@@ -35,8 +37,10 @@ function matches(message) {
 
 function since(days) {
 	const lookback = Math.max(1, Math.min(Number(days) || 7, 90));
-	// Stable lower bound for a short read-cache window (at most 30s wider).
-	return new Date(Math.floor(Date.now() / 30000) * 30000 - lookback * 86400_000).toISOString();
+	// Stable lower bound so the read-cache key holds for as long as the cache
+	// may (connectors/http.js): at most six hours wider than asked, against a
+	// lookback measured in days.
+	return new Date(Math.floor(Date.now() / BUCKET_MS) * BUCKET_MS - lookback * 86400_000).toISOString();
 }
 
 function limitOf(value, fallback = 10) {
@@ -122,6 +126,22 @@ function normalizeWorkout(r) {
 async function getWorkout(profileId, id) {
 	if (!/^[a-f0-9-]{36}$/i.test(id)) throw new Error('Invalid WHOOP workout ID');
 	return normalizeWorkout(await providerGet(profileId, PROVIDER, `/v2/activity/workout/${encodeURIComponent(id)}`, COLLECTION_READ));
+}
+
+/**
+ * A signed webhook said this WHOOP account has something new. Drop the cached
+ * reads of every profile actively linked to it, so the next dashboard load
+ * reads WHOOP instead of waiting out the cache. The account comes from the
+ * signed payload; nothing here is caller-chosen, and all it can do is make
+ * the next read fresh.
+ */
+async function invalidateAccount(accountId) {
+	const [rows] = await pool.query(
+		`SELECT DISTINCT profile_id FROM user_credential WHERE provider = 'whoop' AND status = 'active' AND external_account_id = ?`,
+		[String(accountId)],
+	);
+	await Promise.all(rows.map((r) => invalidateReads(r.profile_id, PROVIDER)));
+	return rows.length;
 }
 
 async function workoutPage(profileId, { start, end, nextToken } = {}) {
@@ -274,6 +294,7 @@ async function executeTool(name, args = {}, { profileId }) {
 }
 
 module.exports = {
+	invalidateAccount,
 	normalizeWorkout,
 	getWorkout,
 	workoutPage,

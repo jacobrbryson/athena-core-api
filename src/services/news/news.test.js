@@ -463,31 +463,54 @@ describe("stored headlines", () => {
 describe("world poll health", () => {
 	const news = require("./index");
 	const { ingestNews } = require("../memoryStore/news");
-	const source = (host, overdue, last = null) => ({ host, overdue, last_checked_at: last, interval_minutes: 360 });
+	const source = (host, overdue, last = null, profile_id = 7) => ({ host, profile_id, overdue, last_checked_at: last, interval_minutes: 360 });
+	const house = (host, overdue, last = null) => source(host, overdue, last, store.HOUSE_PROFILE);
 
 	test("lists the sources nobody has visited on schedule", async () => {
 		pool.query.mockResolvedValueOnce([[source("feeds.npr.org", 1), source("www.troutmannc.gov", 0, new Date())]]);
 		const h = await store.worldPollHealth();
-		expect(h).toEqual({ worldSources: 2, overdue: [{ host: "feeds.npr.org", lastCheckedAt: null }] });
+		expect(h).toEqual({ worldSources: 2, houseSources: 0, watcherDown: false, overdue: [{ host: "feeds.npr.org", lastCheckedAt: null }] });
 		const [sql] = pool.query.mock.calls[0];
 		expect(sql).toMatch(/GREATEST\(1440, 2 \* interval_minutes\)/);
 		expect(sql).toMatch(/created_at < NOW\(\) - INTERVAL 1 HOUR/);
 	});
 
-	test("the nightly step fails when every world source is overdue", async () => {
+	test("every world source overdue is a stopped watcher", async () => {
+		pool.query.mockResolvedValueOnce([[house("feeds.npr.org", 1), source("foxnews.com", 1)]]);
+		expect(await store.worldPollHealth()).toMatchObject({ houseSources: 1, watcherDown: true });
+		pool.query.mockResolvedValueOnce([[source("a.example", 1), source("b.example", 1)]]);
+		expect(await store.worldPollHealth()).toMatchObject({ houseSources: 0, watcherDown: true });
+	});
+
+	// 09-30: one person's page checked by hand hid a job that had been gone for days.
+	test("a hand-checked personal page can't hide house feeds nobody polled", async () => {
+		pool.query.mockResolvedValueOnce([
+			[house("feeds.npr.org", 1), house("feeds.bbci.co.uk", 1), source("foxnews.com", 1), source("www.troutmannc.gov", 0, new Date())],
+		]);
+		expect(await store.worldPollHealth()).toMatchObject({ worldSources: 4, houseSources: 2, watcherDown: true });
+	});
+
+	test("one stuck house feed while the others are read is not a stopped watcher", async () => {
+		pool.query.mockResolvedValueOnce([[house("feeds.npr.org", 1), house("feeds.bbci.co.uk", 0, new Date()), source("foxnews.com", 1)]]);
+		expect(await store.worldPollHealth()).toMatchObject({ watcherDown: false });
+	});
+
+	test("the nightly step fails when the watcher is down", async () => {
 		jest.spyOn(news, "seedHouseSources").mockResolvedValue({ added: 0 });
 		jest.spyOn(news, "catchUpWorldMemory").mockResolvedValue({ items: 0, added: 0, skipped: 0 });
 		jest.spyOn(news, "worldPollHealth").mockResolvedValue({
-			worldSources: 2,
+			worldSources: 3,
+			houseSources: 2,
+			watcherDown: true,
 			overdue: [{ host: "feeds.npr.org" }, { host: "feeds.bbci.co.uk" }],
 		});
-		await expect(ingestNews()).rejects.toThrow(/all 2 world source\(s\) overdue \(feeds.npr.org, feeds.bbci.co.uk\).*athena-news/);
+		await expect(ingestNews()).rejects.toThrow(/2 of 3 world source\(s\) overdue \(feeds.npr.org, feeds.bbci.co.uk\).*athena-news/);
 	});
 
 	test("one overdue source is reported, not fatal", async () => {
 		jest.spyOn(news, "seedHouseSources").mockResolvedValue({ added: 0 });
 		jest.spyOn(news, "catchUpWorldMemory").mockResolvedValue({ items: 4, added: 4, skipped: 0 });
-		jest.spyOn(news, "worldPollHealth").mockResolvedValue({ worldSources: 2, overdue: [{ host: "feeds.npr.org" }] });
+		jest.spyOn(news, "worldPollHealth").mockResolvedValue({ worldSources: 2, houseSources: 1, watcherDown: false, overdue: [{ host: "feeds.npr.org" }] });
 		await expect(ingestNews()).resolves.toMatchObject({ added: 4, worldSources: 2, overdue: ["feeds.npr.org"] });
 	});
 

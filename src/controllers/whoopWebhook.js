@@ -1,7 +1,10 @@
 const crypto = require('node:crypto');
 const secrets = require('../services/secrets');
 const store = require('../services/attention/store');
+const whoop = require('../services/connectors/whoop');
 
+// Recovery and sleep only refresh the cache; workouts also feed activity reviews.
+const KNOWN = new Set(['workout.updated', 'workout.deleted', 'recovery.updated', 'recovery.deleted', 'sleep.updated', 'sleep.deleted']);
 const UUID = /^[a-f\d]{8}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{4}-[a-f\d]{12}$/i;
 
 function validSignature(secret, raw, timestamp, signature, now = Date.now()) {
@@ -27,12 +30,18 @@ async function receive(req, res) {
         typeof payload.trace_id !== 'string' || !/^[A-Za-z0-9._:-]{1,190}$/.test(payload.trace_id) || typeof payload.type !== 'string') {
       return res.status(400).json({ message: 'Expected a WHOOP v2 event' });
     }
-    if (!['workout.updated', 'workout.deleted'].includes(payload.type)) return res.status(204).end();
-    // Include resource/type in the key: even a reused trace cannot collapse
-    // two different activities into a single occurrence.
-    await store.receive(String(payload.user_id), {
-      key: ['webhook', payload.trace_id, payload.type, payload.id.toLowerCase()], resourceId: payload.id.toLowerCase(), type: payload.type,
-    });
+    if (!KNOWN.has(payload.type)) return res.status(204).end();
+    // Every known event means cached WHOOP reads are stale: this is what lets
+    // them be kept for hours. It precedes the acknowledgment, so a failed
+    // lookup is retried by WHOOP instead of leaving yesterday's score up.
+    await whoop.invalidateAccount(payload.user_id);
+    if (payload.type.startsWith('workout.')) {
+      // Include resource/type in the key: even a reused trace cannot collapse
+      // two different activities into a single occurrence.
+      await store.receive(String(payload.user_id), {
+        key: ['webhook', payload.trace_id, payload.type, payload.id.toLowerCase()], resourceId: payload.id.toLowerCase(), type: payload.type,
+      });
+    }
     return res.status(204).end(); // only after the inbox transaction committed
   } catch {
     return res.status(503).json({ message: 'Webhook could not be persisted; retry delivery' });

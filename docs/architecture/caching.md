@@ -22,15 +22,31 @@ its browser read participates without introducing another server fetch cache.
 
 | Layer | Lifetime | Bound/key |
 | --- | --- | --- |
-| Provider database payload | 30 seconds | profile, provider, canonical URL/query, token fingerprint, actor, HTTP failure policy, generation |
+| Provider database payload | per source, below | profile, provider, canonical URL/query, token fingerprint, actor, HTTP failure policy, generation |
 | Model card ordering | 10 minutes maximum | profile, versioned prompt and exact current signal sheet, generation |
 | API payload memory | 5 seconds, capped by payload expiry | 128 entries, 256 KiB per serialized value |
 | API in-flight sharing | request duration | 128 tracked requests per process |
 | Companion dashboard reads | 15 seconds | tab-local request path; reset at session boundaries |
 | Companion memory/in-flight | as above | 64 retained results and 64 tracked requests |
 
-WHOOP and Strava lookback boundaries round down to 30 seconds (at most 30
-seconds of extra lookback) so repeated reads have identical query keys.
+Provider lifetimes (`CACHE_TTL_MS` in `connectors/http.js`), by how fast each
+source actually changes:
+
+| Source | Lifetime | Why |
+| --- | --- | --- |
+| WHOOP recovery, sleep, profile | 6 hours | scored once a day; signed webhooks clear it on a new score |
+| WHOOP cycles, workouts | 1 hour | strain accrues all day; workouts are also webhook-cleared |
+| Strava | 30 minutes | activities land after a ride, not continuously |
+| Google Calendar | 5 minutes | matches the dashboard poll |
+| Jira | 2 minutes | |
+| Slack | 1 minute | |
+| Gmail, anything unlisted | 30 seconds | a stale inbox is the complaint |
+
+`readCache` itself caps any lifetime at 24 hours.
+
+WHOOP lookback boundaries round down to six hours (at most six hours of extra
+lookback against a lookback in days) so the query key holds as long as the
+cache may; Strava's round down to 30 minutes for the same reason.
 Calendar keeps its existing local-day windows. Query parameters otherwise
 retain their exact meaning. Card timing signals change as minutes pass, so a
 ten-minute maximum does not imply every ordering remains reusable that long.
@@ -48,6 +64,11 @@ the existing OAuth credential read/refresh/audit; it never caches that decision.
 The existing caller consent checks remain in place. Tokens are hashed into
 the key, never persisted in plaintext. Payloads use the existing authenticated
 encryption/keyring helper. Keys and counters do not contain response text.
+
+A signed WHOOP webhook (any `workout.*`, `recovery.*` or `sleep.*` event)
+rotates the `provider:whoop` generation of every profile actively linked to
+that WHOOP account before it is acknowledged; a failed lookup answers 503 so
+WHOOP retries rather than leaving a stale score for six hours.
 
 Non-GET provider requests are not cached or coalesced. They rotate a database
 generation before and after execution, including ambiguous failures. Every

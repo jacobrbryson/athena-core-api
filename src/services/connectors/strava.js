@@ -28,7 +28,7 @@ const METERS_PER_MILE = 1609.344;
  */
 async function listActivities(profileId, { days = 14, perPage = MAX_ACTIVITIES } = {}) {
 	const lookback = Math.max(1, Math.min(Number(days) || 14, 365));
-	const after = Math.floor(Date.now() / 30000) * 30 - lookback * 86400;
+	const after = Math.floor(Date.now() / 1_800_000) * 1800 - lookback * 86400;
 	const data = await providerGet(profileId, PROVIDER, "/athlete/activities", {
 		query: {
 			after,

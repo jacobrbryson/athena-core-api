@@ -8,6 +8,7 @@ const { encrypt, decrypt } = require('../helpers/crypto');
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const MAX_BYTES = 256 * 1024;
 const MAX_ENTRIES = 128;
+const MAX_TTL_MS = 24 * 60 * 60 * 1000;
 const memory = new Map();
 const flights = new Map();
 const metrics = { memoryHit: 0, databaseHit: 0, miss: 0, shared: 0, unavailable: 0, oversized: 0 };
@@ -78,7 +79,8 @@ async function read({ profileId, namespace, key, ttlMs }, load) {
     const text = JSON.stringify(value);
     if (typeof text !== 'string') throw new Error('Read cache requires JSON data');
     if (Buffer.byteLength(text) > MAX_BYTES) { metrics.oversized++; return text; }
-    const expires = Date.now() + Math.min(ttlMs, 600000);
+    // Hard ceiling: a caller asking for longer still re-reads the source daily.
+    const expires = Date.now() + Math.min(ttlMs, MAX_TTL_MS);
     try {
       const payload = await encrypt(text);
       await pool.query(`INSERT INTO read_cache (cache_key, profile_id, namespace, payload, expires_ms)

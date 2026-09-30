@@ -274,8 +274,13 @@ function ruleFindings({ metrics, evals, config, evalHistory = [], maintenance = 
 		const hosts = news.overdue
 			.map((s) => `${s.host} (last polled ${s.lastCheckedAt ? new Date(s.lastCheckedAt).toISOString().slice(0, 10) : "never"})`)
 			.join(", ");
-		if (news.overdue.length === news.worldSources) {
-			add("high", "news", `News watcher has stopped: none of ${news.worldSources} world source(s) polled on schedule`, `${hosts}; ${news.items24h} headlines stored in 24h — check that the athena-news Cloud Run job and its scheduler trigger exist and are running`, "news:watcher");
+		if (news.watcherDown) {
+			// Judged on the house feeds when there are any — only the job reads
+			// those, so a page someone checked by hand can't make it look alive.
+			const scope = news.houseSources > 0 && news.overdue.length < news.worldSources
+				? `none of ${news.houseSources} house feed(s) polled on schedule (${news.overdue.length} of ${news.worldSources} world sources overdue)`
+				: `none of ${news.worldSources} world source(s) polled on schedule`;
+			add("high", "news", `News watcher has stopped: ${scope}`, `${hosts}; ${news.items24h} headlines stored in 24h — check that the athena-news Cloud Run job and its scheduler trigger exist and are running`, "news:watcher");
 		} else {
 			add("medium", "news", `${news.overdue.length} of ${news.worldSources} world news source(s) overdue`, hosts, "news:watcher");
 		}
