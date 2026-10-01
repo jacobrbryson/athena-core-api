@@ -14,7 +14,6 @@ const {
   broadcastToGuardian,
   broadcastToAdventure,
 } = require("../websocket/wsServer");
-const config = require("../config");
 
 // How long after her reply a hands-free turn is checked for being an echo of
 // it. The follow-up window itself is shorter; this allows for slow polling.
@@ -229,22 +228,10 @@ async function addMessage(req, res, clients) {
         .status(404)
         .json({ success: false, message: "Session not found" });
 
-    if (
-      session.session_message_count_24h >=
-      config.PUBLIC_SESSION_MESSAGE_DAILY_LIMIT
-    ) {
-      return res.status(429).json({
-        success: false,
-        message: `Session daily limit reached (${config.PUBLIC_SESSION_MESSAGE_DAILY_LIMIT})`,
-      });
-    }
-
-    if (session.ip_message_count_24h >= config.PUBLIC_IP_MESSAGE_DAILY_LIMIT) {
-      return res.status(429).json({
-        success: false,
-        message: `IP daily limit reached (${config.PUBLIC_IP_MESSAGE_DAILY_LIMIT})`,
-      });
-    }
+    // No daily message cap. Every caller here has already passed the access
+    // boundary (a verified Guardian or an owner grant), and the old "public"
+    // per-session/per-IP limits only ever stopped Guardians — hands-free hit
+    // the session one mid-conversation (owner, 2026-09-30).
 
     const ctx = parseMessageContext(req.body);
     // Who is talking this turn. On a shared session this is not the same as

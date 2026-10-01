@@ -51,8 +51,6 @@ beforeEach(() => {
 		uuid: "sess-uuid",
 		profile_id: 7,
 		mode: "companion",
-		session_message_count_24h: 0,
-		ip_message_count_24h: 0,
 	});
 	audienceForProfile.mockResolvedValue("adult");
 	toolIntent.guess.mockResolvedValue({ fetch: ["calendar"], announce: ["calendar"], filler: FILLER });

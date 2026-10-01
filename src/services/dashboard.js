@@ -9,6 +9,7 @@ const integration = require('./integration');
 const chores = require('./familyChores');
 const work = require('./connectors/work');
 const emailTriage = require('./emailTriage');
+const emailSync = require('./emailSync');
 const familyHealth = require('./familyHealth');
 
 const { technicalDetail } = require('./connectors/context');
@@ -108,7 +109,13 @@ async function getDashboard(profileId, user) {
     // Gated on the 'gmail' credential like every other provider() call here,
     // but the data behind it is now the triage summary (see services/emailTriage.js),
     // not the old "5 unread subjects" work.gmail() reader.
-    provider('gmail', () => emailTriage.summary(profileId)),
+    // A quick sync first (history only, no model) so the card reflects what
+    // happened in Gmail since the last look. A failed sync still shows the
+    // card from what is stored — it is logged, not surfaced as an outage.
+    provider('gmail', async () => {
+      await emailSync.syncIfStale(profileId).catch(err => console.warn('[dashboard] mail sync failed:', err?.message || err));
+      return emailTriage.summary(profileId);
+    }),
     // Not gated on a linked provider — this is Athena's own family data, same
     // as familyChores' memories fallback, so it is always 'ready' unless the
     // read itself fails.

@@ -123,21 +123,7 @@ async function getSessionByUuidAndIp(uuid, ip = null) {
 		s.wisdom_points,
 		s.mode,
 		s.profile_id,
-		s.family_id,
-    (
-      SELECT COUNT(*) 
-      FROM message m2 
-      WHERE m2.session_id = s.id
-        AND m2.created_at >= NOW() - INTERVAL 24 HOUR
-    ) AS session_message_count_24h,
-    -- Count of messages for all sessions with this IP in past 24h
-    (
-      SELECT COUNT(*) 
-      FROM message m3
-      JOIN session s2 ON s2.id = m3.session_id
-      WHERE s2.ip_address = s.ip_address
-        AND m3.created_at >= NOW() - INTERVAL 24 HOUR
-    ) AS ip_message_count_24h
+		s.family_id
 FROM session s
 WHERE s.uuid = ?${ip ? " AND s.ip_address = ?" : ""} LIMIT 1;`,
     ip ? [uuid, ip] : [uuid],

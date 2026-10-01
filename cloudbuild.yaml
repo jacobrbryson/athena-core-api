@@ -50,7 +50,7 @@ steps:
       # needs must be listed here. Anything set out-of-band with `gcloud run
       # services update` is wiped by the next deploy — which is exactly how the
       # OAuth connector callback broke once already.
-      - "--set-env-vars=^@^GCP_PROJECT_ID=$PROJECT_ID@DB_HOST=$_DB_HOST@DB_USER=$_DB_USER@DB_NAME=$_DB_NAME@RECAPTCHA_PROJECT_ID=$_RECAPTCHA_PROJECT_ID@RECAPTCHA_SITE_KEY=$_RECAPTCHA_SITE_KEY@PUBLIC_SESSION_MESSAGE_DAILY_LIMIT=$_PUBLIC_SESSION_MESSAGE_DAILY_LIMIT@PUBLIC_IP_MESSAGE_DAILY_LIMIT=$_PUBLIC_IP_MESSAGE_DAILY_LIMIT@FAMILY_CHORES_ADMIN_ROLES=$_FAMILY_CHORES_ADMIN_ROLES@PUBLIC_API_BASE_URL=$_PUBLIC_API_BASE_URL@INTEGRATION_REDIRECT_ALLOWLIST=$_INTEGRATION_REDIRECT_ALLOWLIST"
+      - "--set-env-vars=^@^GCP_PROJECT_ID=$PROJECT_ID@DB_HOST=$_DB_HOST@DB_USER=$_DB_USER@DB_NAME=$_DB_NAME@RECAPTCHA_PROJECT_ID=$_RECAPTCHA_PROJECT_ID@RECAPTCHA_SITE_KEY=$_RECAPTCHA_SITE_KEY@FAMILY_CHORES_ADMIN_ROLES=$_FAMILY_CHORES_ADMIN_ROLES@PUBLIC_API_BASE_URL=$_PUBLIC_API_BASE_URL@INTEGRATION_REDIRECT_ALLOWLIST=$_INTEGRATION_REDIRECT_ALLOWLIST"
 
   # 4. Move the Cloud Run JOBS onto the image this build just deployed.
   #
@@ -102,15 +102,13 @@ substitutions:
   # must move with it — see the UpdateJobs step. Space-separated, and each has
   # to live in $_REGION; a name that isn't deployed is skipped, which is why
   # athena-news can be listed before setup-news-watch.sh has ever been run.
-  _JOBS: "athena-nightly athena-rotate-keys athena-news athena-incidents"
+  _JOBS: "athena-nightly athena-rotate-keys athena-news athena-incidents athena-mail"
   # Non-secret config — override per environment if needed.
   _DB_HOST: "134.209.79.220"
   _DB_USER: "rbryson"
   _DB_NAME: "athena"
   _RECAPTCHA_PROJECT_ID: "athena-476423"
   _RECAPTCHA_SITE_KEY: "6Lc2OiAsAAAAAHZXE64gzTrmdKvvxVMjqdxUa8O5"
-  _PUBLIC_SESSION_MESSAGE_DAILY_LIMIT: "100"
-  _PUBLIC_IP_MESSAGE_DAILY_LIMIT: "300"
   # Family Chores roles allowed to connect Athena (matched against /me.role).
   # Adjust to match Family Chores' real parent/admin role names.
   _FAMILY_CHORES_ADMIN_ROLES: "parent,admin,owner,guardian"

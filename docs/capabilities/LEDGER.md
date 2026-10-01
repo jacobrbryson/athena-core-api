@@ -309,3 +309,7 @@ See [`README.md`](README.md) for the full contract.
   (status: live)
 - 2026-09-19 — Added explicit, short-retention location context from the paired Android companion; it is separate from Initiative and foreground-only for now — `location-context.md` (status: partial)
 - 2026-09-30 — Whoop: health-card blood oxygen now judged against your own nights (no fixed 95% line, no false "two signals"); Whoop reads cached for hours and refreshed by recovery/sleep/workout webhooks — `whoop.md` (status: live)
+- 2026-09-30 — System page: Time saved — minutes saved by approved, completed actions at fixed conservative per-action rates, this month / last month / lifetime, by action — `system.md` (status: live)
+- 2026-09-30 — Gmail/Mail: new mail syncs and sorts on its own (dashboard + 15-min job), mail handled in the Gmail app drops off the list, newest first; capability file rewritten to cover the Mail page — `gmail.md` (status: live)
+- 2026-09-30 — Mail card phase 2: new sorting (needs reply, promo, update, FYI), bundles on the card and Mail page, archive_emails action (1-100, reversible), per-email Archive; time saved counts per email — `gmail.md`, `system.md` (status: live)
+- 2026-09-30 — Mail card phases 3–5: add events from several emails at once (add_email_events), one-click unsubscribe from senders that pile up (unsubscribe_senders, irreversible), and Draft a reply saved to Gmail Drafts, never sent (draft_reply) — `gmail.md`, `system.md` (status: live)

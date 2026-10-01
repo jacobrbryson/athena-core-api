@@ -1,23 +1,32 @@
 ---
 id: system
 title: Athena System
-summary: I show whether I'm healthy, what I've cost in total, and this month's model and hosting costs, with OpenAI, Google Cloud and Twilio detail — read-only.
+summary: I show whether I'm healthy, the time I've saved you, what I've cost, and this month's model and hosting costs — read-only.
 where: Companion → System in the left navigation
 status: live
 surfaces: [companion]
 audiences: [adult]
-triggers: [system, health, status, are you ok, Twilio, OpenAI, ChatGPT, Gemini, Google Cloud, GCP, hosting, billing, usage, balance, spend, total spend, lifetime, LLM cost, cost, costing, Athena System]
+triggers: [system, time saved, saved me, worth it, value, minutes saved, hours saved, health, status, are you ok, Twilio, OpenAI, ChatGPT, Gemini, Google Cloud, GCP, hosting, billing, usage, balance, spend, total spend, lifetime, LLM cost, cost, costing, Athena System]
 ---
 
 ## What I can do
 
-Four figures lead the System page:
+Five figures lead the System page:
 
 - **Athena's health** — Good, Degraded or Down, from a live check of my
   database, whether a model is answering chat (and not failing), and whether
   my nightly review has run in the last two days. When I'm healthy it shows
   when it last checked; otherwise it links to the Health panel, which says
   which check failed and why.
+- **Time saved** — the minutes my approved actions saved you this month. Only
+  things I actually did after you (or a standing approval) said yes count:
+  adding a calendar event is 2 minutes, filing a travel or school email with
+  its event 2.5, filing a receipt 0.5, trashing an email 0.25, archiving an
+  email 0.1, adding an event from an email 2.5, unsubscribing from a sender 1,
+  saving a reply draft 2, saving a memory 0.5. A bundle counts every email it covered, so
+  archiving 30 promos in one approval is 3 minutes. Dismissing a row from my own mail list and looking through the camera
+  count as zero for now. The numbers are deliberately low; proposals you
+  declined, answers I gave and summaries you read count for nothing yet.
 - **Total spend** — everything I've cost so far: Twilio's all-time charges,
   OpenAI since my project was created, and all Google Cloud charges the
   billing export holds. If a provider can't be read it is named as left out,
@@ -27,7 +36,12 @@ Four figures lead the System page:
 - **Hosting cost** — this month's Google Cloud charges, after credits, except
   Gemini.
 
-Below them, each provider has its own panel:
+Below them, the **Time saved** panel shows this month, last month and the
+lifetime total, the last seven days, and this month broken down by action —
+each line shows the count and the minutes credited for one, so every figure
+can be checked by hand. I record minutes, not money.
+
+Each provider also has its own panel:
 
 - **OpenAI** — spend this month and today, the last seven days, and a
   breakdown by model and by input or output.
@@ -80,16 +94,20 @@ A signed-out or access-locked session must be signed in or unlocked first.
   test every connector, the phone app, or the Guardians site.
 - OpenAI's "today" is the UTC day; Google Cloud's month follows its Pacific-time
   invoice month.
+- Time saved uses UTC months and counts only approved, completed actions, at
+  fixed per-action minutes. It isn't a measurement of your day, and it will
+  undercount.
 - I don't predict future charges, compare against a budget, or change any
   account. Each provider's own billing console is authoritative.
 
 ## Under the hood
 
 - Backend readers: `../../src/services/twilioBilling.js`, `../../src/services/openaiBilling.js` (Costs API, `OPENAI_API_ADMIN_KEY`), `../../src/services/gcpBilling.js` (BigQuery `billing_export` dataset, table auto-discovered by the `gcp_billing_export_v1_` prefix; override with `GCP_BILLING_EXPORT_PROJECT` / `GCP_BILLING_EXPORT_DATASET`)
+- Time saved: `../../src/services/timeSaved.js` (`MINUTES` per registry action id; reads `athena_action` rows with `status = 'done'` for the caller's own profile; a new action with no entry counts 0 and a test fails until it gets a deliberate value)
 - Health: `../../src/services/systemHealth.js` (database `SELECT 1`, `llm.status()` serving chat + error rate, latest `self_review_report.report_date`)
 - GCP history before the export: `billing_export.billing_history` (invoice_month, project_id, service, cost net of credits), loaded from a console Reports/Cost-table CSV with `npm run billing:history -- report.csv [--month YYYYMM] [--dry-run]` (`../../db/load-gcp-billing-history.js`, owner's own ADC). Any month it holds replaces the export for that month in the lifetime sum.
 - Lifetime reads: Twilio `Usage/Records/AllTime.json?Category=totalprice`; OpenAI Costs API from `ATHENA_BILLING_SINCE` (default 2025-10-27, cached 1h); GCP export sum for the project. Gemini is split out by service name (`Gemini API` / Generative Language / Vertex AI).
-- Route/controller: `../../src/routes/companion.js` (`/system/health`, `/system/twilio-billing`, `/system/openai-billing`, `/system/gcp-billing`), `../../src/controllers/system.js`
-- Frontend API and page: `../../../companion/src/api/dashboard.ts`, `../../../companion/src/components/Dashboard.tsx`; mock data in `../../../companion/mock/client.ts` (`?gcp=none` not yet exported, `?gcp=behind` backfilling, `?health=degraded` / `?health=down`)
-- Tests: `../../src/services/systemHealth.test.js`, `../../src/services/twilioBilling.test.js`, `../../src/services/openaiBilling.test.js`, `../../src/services/gcpBilling.test.js`
+- Route/controller: `../../src/routes/companion.js` (`/system/health`, `/system/time-saved`, `/system/twilio-billing`, `/system/openai-billing`, `/system/gcp-billing`), `../../src/controllers/system.js`
+- Frontend API and page: `../../../companion/src/api/dashboard.ts`, `../../../companion/src/components/Dashboard.tsx`; mock data in `../../../companion/mock/client.ts` (`?gcp=none` not yet exported, `?gcp=behind` backfilling, `?health=degraded` / `?health=down`, `?saved=none`)
+- Tests: `../../src/services/timeSaved.test.js`, `../../src/services/systemHealth.test.js`, `../../src/services/twilioBilling.test.js`, `../../src/services/openaiBilling.test.js`, `../../src/services/gcpBilling.test.js`
 - Prod: `OPENAI_API_ADMIN_KEY` is in Secret Manager with accessor granted to the Cloud Run runtime SA; the runtime SA's project Editor role covers the BigQuery read. The admin key is read-only (rotated to one 2026-09-27) and is an upstream provider credential and rotates manually in the OpenAI console.

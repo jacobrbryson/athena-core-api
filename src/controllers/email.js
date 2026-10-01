@@ -16,6 +16,7 @@ const { requireAdultActor } = require("../helpers/actor");
 const emailTriage = require("../services/emailTriage");
 const actions = require("../services/actions");
 const gmail = require("../services/connectors/gmail");
+const emailDraft = require("../services/emailDraft");
 
 /** Map a service error onto a status, defaulting to 500 rather than 400. */
 function fail(res, err, fallbackMessage) {
@@ -30,6 +31,25 @@ function fail(res, err, fallbackMessage) {
 
 function parsedExtracted(row) {
 	return typeof row.extracted === "string" ? JSON.parse(row.extracted) : row.extracted || {};
+}
+
+/** True when the extraction found a date to put on a calendar. */
+function hasEventDate(extracted) {
+	return extracted?.has_event !== false && typeof extracted?.start === "string" && !!extracted.start;
+}
+
+/** file_travel_or_school_email params for one row — shared by the single and bundle paths. */
+function eventParams(row, extracted, overrides = {}) {
+	return {
+		email_triage_uuid: row.uuid,
+		label: overrides.label ?? (row.category === "travel" ? "Travel" : "School"),
+		title: overrides.title ?? extracted.title ?? row.subject,
+		start: overrides.start ?? extracted.start,
+		end: overrides.end ?? extracted.end,
+		all_day: overrides.all_day ?? extracted.all_day ?? false,
+		location: overrides.location ?? extracted.location,
+		time_zone: overrides.time_zone,
+	};
 }
 
 async function list(req, res) {
@@ -93,8 +113,11 @@ async function propose(req, res) {
 	try {
 		const row = await emailTriage.getByUuid(actor.profileId, req.params.uuid);
 		if (!row) return res.status(404).json({ success: false, message: "That email could not be found" });
-		if (row.category === "other") {
-			return res.status(400).json({ success: false, message: "There's nothing to propose for this email — dismiss it instead" });
+		if (row.category === "pending") {
+			return res.status(409).json({ success: false, message: "Athena hasn't sorted this email yet — try again in a few minutes, or press Scan more." });
+		}
+		if (!["receipt", "travel", "school"].includes(row.category)) {
+			return res.status(400).json({ success: false, message: "There's nothing to propose for this email — archive or dismiss it instead" });
 		}
 		const overrides = req.body?.overrides || {};
 		const extracted = row.extracted || {};
@@ -124,19 +147,7 @@ async function propose(req, res) {
 					message: "Athena didn't find a specific date on this email — add one yourself, or dismiss it.",
 				});
 			}
-			raw = {
-				id: "file_travel_or_school_email",
-				params: {
-					email_triage_uuid: row.uuid,
-					label: overrides.label ?? (row.category === "travel" ? "Travel" : "School"),
-					title: overrides.title ?? extracted.title ?? row.subject,
-					start: overrides.start ?? extracted.start,
-					end: overrides.end ?? extracted.end,
-					all_day: overrides.all_day ?? extracted.all_day ?? false,
-					location: overrides.location ?? extracted.location,
-					time_zone: overrides.time_zone,
-				},
-			};
+			raw = { id: "file_travel_or_school_email", params: eventParams(row, extracted, overrides) };
 		}
 
 		const proposed = await actions.propose(actor.profileId, null, raw);
@@ -236,4 +247,106 @@ async function deleteEmails(req, res) {
 	}
 }
 
-module.exports = { list, detail, scan, propose, proposeGroup, dismiss, deleteEmails };
+/**
+ * Propose archiving a bundle — the emails the page showed, minus any the
+ * person unticked. Only rows still open here are included; the action's own
+ * execute() checks again, since mail can leave the inbox before Approve.
+ */
+async function proposeArchive(req, res) {
+	const actor = await requireAdultActor(req, res);
+	if (!actor) return;
+	try {
+		const uuids = Array.isArray(req.body?.email_triage_uuids) ? req.body.email_triage_uuids : [];
+		if (!uuids.length) return res.status(400).json({ success: false, message: "Needs at least one email" });
+		const open = (await emailTriage.getRowsByUuids(actor.profileId, uuids.slice(0, 100))).filter((r) => r.status === "new");
+		if (!open.length) return res.status(404).json({ success: false, message: "Those emails are no longer in your inbox" });
+		const proposed = await actions.propose(actor.profileId, null, {
+			id: "archive_emails",
+			params: { email_triage_uuids: open.map((r) => r.uuid) },
+		});
+		if (!proposed) return res.status(422).json({ success: false, message: "Athena couldn't propose that" });
+		return res.json({ success: true, action: proposed });
+	} catch (err) {
+		return fail(res, err, "Failed to propose archiving those");
+	}
+}
+
+/**
+ * Propose adding the events from several travel/school emails at once (Mail
+ * card phase 3). Only open emails where Athena found a date go in; the rest
+ * keep the one-at-a-time path, where the person can type the date in.
+ */
+async function proposeEvents(req, res) {
+	const actor = await requireAdultActor(req, res);
+	if (!actor) return;
+	try {
+		const uuids = Array.isArray(req.body?.email_triage_uuids) ? req.body.email_triage_uuids : [];
+		if (!uuids.length) return res.status(400).json({ success: false, message: "Needs at least one email" });
+		const rows = (await emailTriage.getRowsByUuids(actor.profileId, uuids.slice(0, 10)))
+			.filter((r) => r.status === "new" && (r.category === "travel" || r.category === "school"));
+		const items = rows.map((r) => ({ row: r, extracted: parsedExtracted(r) }))
+			.filter(({ extracted }) => hasEventDate(extracted))
+			.map(({ row, extracted }) => eventParams(row, extracted));
+		if (!items.length) return res.status(404).json({ success: false, message: "None of those emails has a date Athena could read — open each to add one" });
+		const proposed = await actions.propose(actor.profileId, null, { id: "add_email_events", params: { items } });
+		if (!proposed) return res.status(422).json({ success: false, message: "Athena couldn't propose that — check that Google Calendar is still connected" });
+		return res.json({ success: true, action: proposed });
+	} catch (err) {
+		return fail(res, err, "Failed to propose those events");
+	}
+}
+
+/**
+ * Propose unsubscribing from senders (Mail card phase 4). The body names one
+ * stored email per sender; only open rows that carry a one-click link go in.
+ */
+async function proposeUnsubscribe(req, res) {
+	const actor = await requireAdultActor(req, res);
+	if (!actor) return;
+	try {
+		const uuids = Array.isArray(req.body?.email_triage_uuids) ? req.body.email_triage_uuids : [];
+		if (!uuids.length) return res.status(400).json({ success: false, message: "Needs at least one sender" });
+		const rows = (await emailTriage.getRowsByUuids(actor.profileId, uuids.slice(0, 10)))
+			.filter((r) => r.status === "new" && parsedExtracted(r)?.unsub);
+		if (!rows.length) return res.status(404).json({ success: false, message: "None of those senders offers a one-click unsubscribe" });
+		const items = rows.map((r) => ({ email_triage_uuid: r.uuid, sender: r.from_name || r.from_address || r.group_key }));
+		const proposed = await actions.propose(actor.profileId, null, { id: "unsubscribe_senders", params: { items } });
+		if (!proposed) return res.status(422).json({ success: false, message: "Athena couldn't propose that" });
+		return res.json({ success: true, action: proposed });
+	} catch (err) {
+		return fail(res, err, "Failed to propose unsubscribing");
+	}
+}
+
+/** A suggested reply, as text to edit in the drawer. Writes nothing anywhere. */
+async function suggestReply(req, res) {
+	const actor = await requireAdultActor(req, res);
+	if (!actor) return;
+	try {
+		const [row] = await emailTriage.getRowsByUuids(actor.profileId, [req.params.uuid]);
+		if (!row || row.status !== "new") return res.status(404).json({ success: false, message: "That email is no longer open" });
+		return res.json({ success: true, body: await emailDraft.writeDraft(actor.profileId, row) });
+	} catch (err) {
+		return fail(res, err, "Athena couldn't write a reply just now");
+	}
+}
+
+/** Propose saving the (edited) reply to Gmail's Drafts. Still needs Approve. */
+async function proposeDraft(req, res) {
+	const actor = await requireAdultActor(req, res);
+	if (!actor) return;
+	try {
+		const [row] = await emailTriage.getRowsByUuids(actor.profileId, [req.params.uuid]);
+		if (!row || row.status !== "new") return res.status(404).json({ success: false, message: "That email is no longer open" });
+		const proposed = await actions.propose(actor.profileId, null, {
+			id: "draft_reply",
+			params: { email_triage_uuid: row.uuid, body: req.body?.body, to_name: row.from_name || row.from_address },
+		});
+		if (!proposed) return res.status(422).json({ success: false, message: "Athena couldn't propose that draft" });
+		return res.json({ success: true, action: proposed });
+	} catch (err) {
+		return fail(res, err, "Failed to propose that draft");
+	}
+}
+
+module.exports = { list, detail, scan, propose, proposeGroup, dismiss, deleteEmails, proposeArchive, proposeEvents, proposeUnsubscribe, suggestReply, proposeDraft };

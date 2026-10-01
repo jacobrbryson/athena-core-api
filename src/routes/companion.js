@@ -11,11 +11,15 @@ const router = express.Router();
 // Inherits the global access boundary, then authenticates and resolves the
 // adult caller. No caller-supplied profile or provider URL is accepted.
 router.get('/dashboard', requireAuth, require('../controllers/dashboard').summary);
+// Hands-free: the phone's timing of each turn, stage by stage. Logged, not
+// stored, and never the person's words (controllers/handsFree.js).
+router.post('/handsfree/turn', requireAuth, express.json({ limit: '4kb' }), require('../controllers/handsFree').recordTurn);
 router.get('/dashboard/priority', requireAuth, require('../controllers/dashboard').priority);
 router.get('/system/twilio-billing', requireAuth, require('../controllers/system').twilioBillingStatus);
 router.get('/system/openai-billing', requireAuth, require('../controllers/system').openaiBillingStatus);
 router.get('/system/gcp-billing', requireAuth, require('../controllers/system').gcpBillingStatus);
 router.get('/system/health', requireAuth, require('../controllers/system').healthStatus);
+router.get('/system/time-saved', requireAuth, require('../controllers/system').timeSavedStatus);
 // The Dreams log: what Athena did in her own database overnight, told plainly
 // and as a dream. Read-only; statements leave redacted (services/dreams/redact).
 router.get('/dreams', requireAuth, require('../controllers/dreams').list);
@@ -71,7 +75,12 @@ router.get('/dashboard/email/:uuid', requireAuth, require('../controllers/email'
 router.post('/dashboard/email/scan', requireAuth, express.json({ limit: '4kb' }), require('../controllers/email').scan);
 router.post('/dashboard/email/group/propose', requireAuth, express.json({ limit: '16kb' }), require('../controllers/email').proposeGroup);
 router.post('/dashboard/email/delete', requireAuth, express.json({ limit: '4kb' }), require('../controllers/email').deleteEmails);
+router.post('/dashboard/email/unsubscribe', requireAuth, express.json({ limit: '4kb' }), require('../controllers/email').proposeUnsubscribe);
+router.post('/dashboard/email/events', requireAuth, express.json({ limit: '8kb' }), require('../controllers/email').proposeEvents);
+router.post('/dashboard/email/archive', requireAuth, express.json({ limit: '8kb' }), require('../controllers/email').proposeArchive);
 router.post('/dashboard/email/:uuid/propose', requireAuth, express.json({ limit: '8kb' }), require('../controllers/email').propose);
+router.post('/dashboard/email/:uuid/reply/suggest', requireAuth, express.json({ limit: '1kb' }), require('../controllers/email').suggestReply);
+router.post('/dashboard/email/:uuid/reply/propose', requireAuth, express.json({ limit: '16kb' }), require('../controllers/email').proposeDraft);
 router.post('/dashboard/email/:uuid/dismiss', requireAuth, express.json({ limit: '1kb' }), require('../controllers/email').dismiss);
 
 // Family health watch: who's under the weather right now. Read lives on the

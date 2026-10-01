@@ -1,4 +1,5 @@
 const { providerGet, providerRequest } = require("./http");
+const { oneClickUrl } = require("../unsubscribe");
 
 /**
  * Gmail reads, and the writes the email-triage action layer can propose.
@@ -26,6 +27,23 @@ const PROVIDER = "gmail";
 async function listInbox(profileId, { pageToken, maxResults = 50, query = "in:inbox" } = {}) {
 	return providerGet(profileId, PROVIDER, "/users/me/messages", {
 		query: { q: query, maxResults: Math.min(Number(maxResults) || 50, 100), pageToken },
+	});
+}
+
+/** The mailbox's current historyId — where an incremental sync starts. */
+async function mailboxHistoryId(profileId) {
+	const data = await providerGet(profileId, PROVIDER, "/users/me/profile");
+	return data?.historyId ? String(data.historyId) : null;
+}
+
+/**
+ * One page of mailbox changes since `startHistoryId`. Not in the read cache
+ * (connectors/http.js allowlist), on purpose: this is the freshness path.
+ * Gmail answers 404 when the cursor is too old; the caller re-bootstraps.
+ */
+async function history(profileId, { startHistoryId, pageToken } = {}) {
+	return providerGet(profileId, PROVIDER, "/users/me/history", {
+		query: { startHistoryId, pageToken, maxResults: 500 },
 	});
 }
 
@@ -71,6 +89,12 @@ function summarizeMetadata(message) {
 		from: headerValue(message, "from"),
 		date: headerValue(message, "date"),
 		snippet: message.snippet || "",
+		// Gmail's own sorting (CATEGORY_PROMOTIONS, CATEGORY_UPDATES, UNREAD…)
+		// and whether a sender offers unsubscribe: hints for the classifier.
+		labels: Array.isArray(message.labelIds) ? message.labelIds : [],
+		listUnsubscribe: !!headerValue(message, "list-unsubscribe"),
+		// Only an RFC 8058 one-click https link, or null — see services/unsubscribe.js.
+		unsubscribeUrl: oneClickUrl(headerValue(message, "list-unsubscribe"), headerValue(message, "list-unsubscribe-post")),
 	};
 }
 
@@ -147,6 +171,42 @@ async function fileMessage(profileId, id, labelName, { archive = true } = {}) {
 }
 
 /**
+ * Save a reply to Gmail's Drafts, threaded under the original. gmail.modify
+ * (already granted for filing) covers drafts, so no new consent is needed.
+ * There is deliberately no send counterpart anywhere in Athena.
+ */
+async function createDraft(profileId, { raw, threadId }) {
+	try {
+		return await providerRequest(profileId, PROVIDER, "/users/me/drafts", {
+			method: "POST",
+			body: { message: { raw, ...(threadId ? { threadId } : {}) } },
+		});
+	} catch (err) {
+		throw asWriteAuthError(err);
+	}
+}
+
+/**
+ * Archive: take messages out of the inbox (remove INBOX) and nothing else.
+ * They stay in All Mail and in search, unread state untouched — the same as
+ * pressing Archive in Gmail, and undone by moving them back to the inbox.
+ * One batchModify call per 1,000 ids (Gmail's own ceiling).
+ */
+async function archiveMessages(profileId, ids) {
+	for (let i = 0; i < ids.length; i += 1000) {
+		try {
+			await providerRequest(profileId, PROVIDER, "/users/me/messages/batchModify", {
+				method: "POST",
+				body: { ids: ids.slice(i, i + 1000), removeLabelIds: ["INBOX"] },
+			});
+		} catch (err) {
+			throw asWriteAuthError(err);
+		}
+	}
+	return ids.length;
+}
+
+/**
  * Move a message to Gmail's Trash — NOT users.messages.delete. Trash is
  * recoverable there for about 30 days before Gmail purges it, same as
  * dragging something to Trash by hand; a true permanent, unrecoverable
@@ -213,6 +273,11 @@ async function executeTool(name, _args, { profileId }) {
 }
 
 module.exports = {
+	createDraft,
+	headerValue,
+	archiveMessages,
+	mailboxHistoryId,
+	history,
 	PROVIDER,
 	matches,
 	buildContext,

@@ -32,6 +32,8 @@ const gmail = require("../connectors/gmail");
 const emailTriage = require("../emailTriage");
 const memory = require("../memory");
 const lookRequests = require("../lookRequests");
+const unsubscribe = require("../unsubscribe");
+const emailDraft = require("../emailDraft");
 
 /** A rejection that is the model's fault, not the person's or the server's. */
 function invalid(message) {
@@ -599,6 +601,256 @@ const ACTIONS = [
 			if (!trashed.length) throw new Error("None of these emails could be found");
 			await emailTriage.markStatus(profileId, trashed, "trashed");
 			return { ref: trashed.join(","), detail: { trashed: trashed.length } };
+		},
+	},
+
+	// Mail card phase 5, added on the owner's instruction 2026-09-30. Saves a
+	// reply to Gmail's Drafts — never sends; the person sends it from Gmail.
+	{
+		id: "draft_reply",
+		label: "Save a reply draft",
+		provider: "gmail",
+		consentType: "action_authority",
+		// A draft can be edited or deleted in Gmail and nothing has left yet.
+		reversible: true,
+		standing: false,
+		describe:
+			"Save a reply to a triaged email as a Gmail draft in the same thread, " +
+			"for the person to review and send themselves. Never sends.",
+		params: {
+			email_triage_uuid: "The email being answered. Required.",
+			body: `The reply text, up to ${emailDraft.MAX_BODY} characters. Required.`,
+			to_name: "Who it goes to, for display. Optional.",
+		},
+
+		normalize(raw = {}) {
+			const email_triage_uuid = str(raw.email_triage_uuid, 36);
+			if (!email_triage_uuid) throw invalid("Needs the email being answered");
+			const body = str(raw.body, emailDraft.MAX_BODY);
+			if (!body) throw invalid("A draft needs some text");
+			return { email_triage_uuid, body, to_name: str(raw.to_name, 100) };
+		},
+
+		summarize(p) {
+			const preview = p.body.length > 220 ? `${p.body.slice(0, 220)}…` : p.body;
+			return `Save a draft reply${p.to_name ? ` to ${p.to_name}` : ""} in Gmail — not sent: "${preview}"`.slice(0, 500);
+		},
+
+		async execute(profileId, params) {
+			const [row] = await emailTriage.getRowsByUuids(profileId, [params.email_triage_uuid]);
+			if (!row) throw new Error("That email could not be found");
+			const original = await gmail.getMessage(profileId, row.gmail_message_id, { format: "metadata" });
+			const header = (name) => gmail.headerValue(original, name);
+			const raw = emailDraft.replyMime({
+				to: header("reply-to") || header("from"),
+				subject: header("subject") || row.subject || "",
+				messageId: header("message-id"),
+				references: header("references"),
+				body: params.body,
+			});
+			const draft = await gmail.createDraft(profileId, { raw, threadId: original.threadId || row.thread_id });
+			// Drafted means it has left the "needs you" list; the reply itself
+			// is the person's to send.
+			await emailTriage.markStatus(profileId, [row.uuid], "actioned");
+			return { ref: draft?.id || null, detail: { drafted: true } };
+		},
+	},
+
+	// Mail card phase 4, added on the owner's instruction 2026-09-30. The one
+	// action here that cannot be undone, so it never gets a standing approval.
+	// Params name stored triage rows only: the link that gets called is read
+	// from Athena's own copy of the email at execute time (services/unsubscribe.js
+	// says why that, and only that, makes calling it acceptable).
+	{
+		id: "unsubscribe_senders",
+		label: "Unsubscribe from senders",
+		provider: "gmail",
+		consentType: "action_authority",
+		reversible: false,
+		standing: false,
+		describe:
+			"Unsubscribe from mailing lists using the sender's own one-click " +
+			"unsubscribe link, then archive what they already sent. Only senders " +
+			"whose emails offer one-click unsubscribe; cannot be undone from here.",
+		params: {
+			items: "Array of 1-10 { email_triage_uuid, sender } — one recent email per sender; `sender` is display text. Required.",
+		},
+
+		normalize(raw = {}) {
+			const items = Array.isArray(raw.items) ? raw.items : [];
+			if (!items.length) throw invalid("Needs at least one sender");
+			if (items.length > 10) throw invalid("Too many senders in one proposal");
+			const seen = new Set();
+			return {
+				items: items.map((item) => {
+					const email_triage_uuid = str(item?.email_triage_uuid, 36);
+					if (!email_triage_uuid) throw invalid("Each sender needs an email_triage_uuid");
+					return { email_triage_uuid, sender: str(item.sender, 100) || "this sender" };
+				}).filter((i) => !seen.has(i.email_triage_uuid) && seen.add(i.email_triage_uuid)),
+			};
+		},
+
+		summarize(p) {
+			const names = p.items.map((i) => i.sender);
+			const shown = names.slice(0, 5).join(", ") + (names.length > 5 ? ` and ${names.length - 5} more` : "");
+			return `Unsubscribe from ${shown} and archive what they already sent — unsubscribing can't be undone from here`.slice(0, 500);
+		},
+
+		async execute(profileId, params) {
+			const rows = await emailTriage.getRowsByUuids(profileId, params.items.map((i) => i.email_triage_uuid));
+			const done = [];
+			const failed = [];
+			let archived = 0;
+			for (const row of rows) {
+				const link = emailTriage.safeJson(row.extracted || "null")?.unsub;
+				if (!link) { failed.push(row.uuid); continue; }
+				let result;
+				try { result = await unsubscribe.send(link); }
+				catch (err) { result = { ok: false, error: err.message }; }
+				if (!result.ok) {
+					console.warn("[actions] unsubscribe_senders: not accepted:", row.group_key, result.status ?? result.error);
+					failed.push(row.uuid);
+					continue;
+				}
+				done.push(row.uuid);
+				const open = await emailTriage.openFromSender(profileId, row.group_key);
+				if (open.length) {
+					try {
+						await gmail.archiveMessages(profileId, open.map((r) => r.gmail_message_id));
+						await emailTriage.markStatus(profileId, open.map((r) => r.uuid), "archived");
+						archived += open.length;
+					} catch (err) {
+						// Unsubscribed is the part that matters; the archive can be redone.
+						console.warn("[actions] unsubscribe_senders: unsubscribed but archive failed:", err.message);
+					}
+				}
+			}
+			if (!done.length) throw new Error("None of those senders accepted the unsubscribe");
+			return { ref: done.join(","), detail: { unsubscribed: done.length, failed: failed.length, archived } };
+		},
+	},
+
+	// Mail card phase 3, added on the owner's instruction 2026-09-30: the
+	// bundle form of file_travel_or_school_email. Every item goes through that
+	// action's own normalize(), so a bundle can never accept an event the
+	// single-email action would refuse. Capped at 10 because a wrong date is
+	// worse than a missed promo: the card lists every event it will add.
+	{
+		id: "add_email_events",
+		label: "Add events from emails",
+		provider: "google_calendar",
+		consentType: "action_authority",
+		reversible: true,
+		standing: false,
+		describe:
+			"Add the calendar events from several triaged travel or school emails " +
+			"at once, filing each email into its label — the bundle form of " +
+			"file_travel_or_school_email, with the same rules for every item.",
+		params: {
+			items: "Array of 1-10 file_travel_or_school_email params objects. Required.",
+		},
+
+		normalize(raw = {}) {
+			const items = Array.isArray(raw.items) ? raw.items : [];
+			if (!items.length) throw invalid("Needs at least one email");
+			if (items.length > 10) throw invalid("Too many events in one proposal");
+			const single = get("file_travel_or_school_email");
+			const seen = new Set();
+			const clean = items.map((item) => single.normalize(item)).filter((item) => {
+				if (seen.has(item.email_triage_uuid)) return false;
+				seen.add(item.email_triage_uuid);
+				return true;
+			});
+			return { items: clean };
+		},
+
+		summarize(p) {
+			const list = p.items.map((i) => {
+				const when = i.event.all_day ? `all day ${i.event.start}` : humanTime(i.event.start, i.event.time_zone);
+				return `"${i.event.title}" (${when})`;
+			});
+			const shown = list.slice(0, 4).join(", ") + (list.length > 4 ? ` and ${list.length - 4} more` : "");
+			return `Add ${p.items.length === 1 ? "this event" : `${p.items.length} events`} to your calendar — ${shown} — and file the emails`.slice(0, 500);
+		},
+
+		async execute(profileId, params) {
+			const rows = await emailTriage.getRowsByUuids(profileId, params.items.map((i) => i.email_triage_uuid));
+			const byUuid = new Map(rows.filter((r) => r.status === "new").map((r) => [r.uuid, r]));
+			const created = [];
+			const failed = [];
+			let filed = 0;
+			for (const item of params.items) {
+				const row = byUuid.get(item.email_triage_uuid);
+				if (!row) continue; // dealt with since the proposal — skip, don't fail the rest
+				try {
+					const { ref } = await googleCalendar.createEvent(profileId, item.event);
+					created.push({ uuid: row.uuid, ref });
+				} catch (err) {
+					failed.push(row.uuid);
+					console.warn("[actions] add_email_events: event failed:", err.message);
+					continue;
+				}
+				try {
+					await gmail.fileMessage(profileId, row.gmail_message_id, item.label);
+					filed++;
+				} catch (err) {
+					console.warn("[actions] add_email_events: event created but filing failed:", err.message);
+				}
+			}
+			if (!created.length) throw new Error(failed.length ? "None of those events could be added" : "None of these emails are still open");
+			await emailTriage.markStatus(profileId, created.map((c) => c.uuid), "actioned");
+			return { ref: created.map((c) => c.ref).join(","), detail: { added: created.length, filed, failed: failed.length } };
+		},
+	},
+
+	// Mail card phase 2 (docs/architecture/mail-card.md), added on the
+	// owner's instruction 2026-09-30. Archive, not Trash, was the owner's call
+	// for promos: nothing is deleted and everything stays searchable.
+	{
+		id: "archive_emails",
+		label: "Archive emails",
+		provider: "gmail",
+		consentType: "action_authority",
+		// Archive only removes the INBOX label. Every message stays in All Mail
+		// and in search, and "Move to Inbox" in Gmail puts it back.
+		reversible: true,
+		// Not yet. A standing approval for archive bundles is the owner's
+		// decision to make later, never one this code grants itself.
+		standing: false,
+		describe:
+			"Archive triaged emails out of the inbox in one go — for promotions, " +
+			"newsletters and automated notifications the person doesn't need to " +
+			"see. Nothing is deleted: they stay in All Mail and Gmail search.",
+		params: {
+			email_triage_uuids: "Array of 1-100 email_triage uuids to archive. Required.",
+		},
+
+		normalize(raw = {}) {
+			const uuids = Array.isArray(raw.email_triage_uuids) ? raw.email_triage_uuids : [];
+			if (!uuids.length) throw invalid("Needs at least one email");
+			if (uuids.length > 100) throw invalid("Too many emails in one proposal");
+			const clean = [...new Set(uuids.map((u) => {
+				const email_triage_uuid = str(u, 36);
+				if (!email_triage_uuid) throw invalid("Each entry needs an email_triage_uuid");
+				return email_triage_uuid;
+			}))];
+			return { email_triage_uuids: clean };
+		},
+
+		summarize(p) {
+			const n = p.email_triage_uuids.length;
+			return `Archive ${n === 1 ? "this email" : `${n} emails`} out of your inbox (still in All Mail and search)`;
+		},
+
+		async execute(profileId, params) {
+			const rows = await emailTriage.getRowsByUuids(profileId, params.email_triage_uuids);
+			// Only what is still open here: mail already archived, filed or
+			// trashed (in Gmail or through Athena) since the proposal is skipped.
+			const open = rows.filter((r) => r.status === "new");
+			if (!open.length) throw new Error("None of these emails are still in the inbox");
+			await gmail.archiveMessages(profileId, open.map((r) => r.gmail_message_id));
+			await emailTriage.markStatus(profileId, open.map((r) => r.uuid), "archived");
+			return { ref: open.map((r) => r.uuid).join(","), detail: { archived: open.length } };
 		},
 	},
 ];
