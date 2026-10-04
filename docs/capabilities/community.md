@@ -20,12 +20,15 @@ all of it in mind whenever we talk:
   by PulsePoint Respond on your phone, or a severe-weather warning, inside a
   ring reaches you straight away. Any headline in the news pages you have me
   reading that mentions one of these places or its town shows up as local news.
-- **Neighbors** — names, which house, which of your places they're near, a
-  phone number or email if you want it kept, and notes (the kids' names, the
-  dog, who has a generator). I'll know who you mean, and I think of them when
-  something happens near home. You can link a neighbor to their entry in your
-  Google Contacts: the card then shows their current phone, email, address and
-  photo straight from Google, so a change there shows up here.
+- **Neighbors** — kept as households, by their address: one entry per house,
+  with an optional name ("The Hendersons"), which of your places it's near, a
+  description ("the blue house") and notes (the kids' names, the dog, who has a
+  generator). Link everyone who lives there from your Google Contacts — as many
+  people as the house has — and the entry shows each one's current phone,
+  email and photo straight from Google, so a change there shows up here. When
+  you type an address, I suggest the contacts whose Google address is that
+  same house. I'll know who you mean, and I think of them when something
+  happens near home.
 - **Local events** — church suppers, school fairs, town days like Ham Day: the
   day (or days), a time, where, a link and notes. Mark one "happens every year"
   and it comes round again — a week after, it's "last Saturday"; by winter it's
@@ -33,18 +36,21 @@ all of it in mind whenever we talk:
   planning a free Saturday.
 
 I never fill these lists by guessing: nothing is added from your contacts,
-email or location history on its own — linking a contact is something you
-pick. If you tell me about a new neighbor or event in
+email or location history on its own — a suggested contact is only linked
+when you pick it. If you tell me about a new neighbor or event in
 conversation, I'll suggest adding it on the Community page so I keep it.
 
 ## Where to find it
 
 **Community** in the sidebar (on the phone, the Community card on the
 Dashboard). Each list has its own **Add** button; every entry has **Edit** and
-**Remove**. In a neighbor's form, **Google contact** searches your contacts as
-you type (name, email or phone); pick one to link it, **Unlink** to undo. If
-Google Contacts isn't connected, the same spot offers **Connect Google
-Contacts**, which opens Connected apps. Points of interest are added by street address (Find) or **or use
+**Remove**. **Add a household** starts with the address (**Find** standardizes
+it). Under **Who lives here**, contacts at that address are offered first; the
+**Add someone from your Google contacts** box finds anyone else by name, email
+or phone. **Unlink** takes a person off the house. A contact can only live at
+one house — one already linked elsewhere says where. If Google Contacts isn't
+connected, the same spot offers **Connect Google Contacts**, which opens
+Connected apps. Points of interest are added by street address (Find) or **or use
 my current location**, with a radius and a preview of the ring. The radius and
 the **watching / paused** switch sit on each place. The same page shows what's
 happening near your places, local news, and **Emergency alerts on this phone**
@@ -59,11 +65,17 @@ happening near your places, local news, and **Emergency alerts on this phone**
   pages). Add your local paper or your town's news page — "Add a local news
   page" on the Community page opens the same list. A place whose address has no
   town, and a generic name like "Home", can't be searched for.
-- **A neighbor's contact details went missing:** the card says why — the
-  contact was deleted or merged in Google (edit and link it again), Google
-  Contacts was disconnected (reconnect it in Connected apps), or Google
-  couldn't be read just then (it comes back on its own). The link itself is
-  kept.
+- **"You already have a household at …":** each address is one house. Edit
+  that one and add the people to it.
+- **"… is already linked to …":** a contact lives at one house. Unlink them
+  there first if they've moved.
+- **A person's details went missing:** their row says why — the contact was
+  deleted or merged in Google (unlink and link the new one), Google Contacts
+  was disconnected (reconnect it in Connected apps), or Google couldn't be
+  read just then (it comes back on its own). The link itself is kept.
+- **No contacts suggested for an address:** I match the house number and
+  street only, so the contact's address in Google has to be filled in and be
+  the same house.
 - **An event disappeared from "Coming up":** a one-off moves to "Recently" once
   it's over. A yearly one moves to next year's date two weeks after.
 
@@ -75,13 +87,12 @@ happening near your places, local news, and **Emergency alerts on this phone**
   the page itself.
 - Linking is read-only: I can't create or change a Google contact, and editing
   a neighbor here never touches Google.
-- I don't suggest neighbors from your contacts by their address — you pick
-  each link.
+- I only suggest contacts for an address you've entered; I don't go looking
+  through your contacts for neighbors on my own, and I never link one for you.
 - A neighbor's phone number, email or linked contact details are on the page
-  for you; in conversation I only know that they're in your contacts, not
-  their details, and I never share a neighbor's details with
-  anyone else.
-- Up to 200 neighbors and 200 events. In conversation I see the first 25
+  for you; in conversation I know the house and who lives there by name, not
+  their details, and I never share a neighbor's details with anyone else.
+- Up to 200 households (20 people each) and 200 events. In conversation I see the first 25
   places, 40 neighbors, and events from two weeks ago to three months ahead.
 
 ## Under the hood
@@ -96,19 +107,26 @@ happening near your places, local news, and **Emergency alerts on this phone**
   `../../src/services/pulsepoint/watch.js` (`kind`, `notes`, `PLACE_KINDS`);
   every kind is watched the same way. Saved through
   `PUT /api/v1/dashboard/incidents/places` (kind/notes omitted = kept).
-- Google Contacts link: `athena_neighbor.contact_id` (People API id only;
-  details are never copied). `searchContacts`/`withContacts` read through
+- Households: `athena_neighbor` keyed by `address_key` = `streetKey()` (street
+  line, normalized: "Lane" = "LN"); unique per profile. Links in
+  `athena_neighbor_contact` (People API id + display-name snapshot for the
+  prompt; unique per profile+contact, so a contact is at one house).
+  `saveNeighbor` takes the whole `contacts` set. `searchContacts`,
+  `contactsAtAddress` and `withContacts` read through
   `../../src/services/connectors/googleContacts.js` `listContacts` (the guarded
-  adapter, contacts.readonly), cached 5 min per profile. `linkStatus`:
-  ok | missing | not_connected | unreadable — a failed read never drops a link.
+  adapter, contacts.readonly), cached 5 min per profile. Per-contact `status`:
+  ok | missing | not_connected | unreadable — a failed read never drops a link;
+  a renamed contact refreshes its snapshot.
 - Controller/routes: `../../src/controllers/community.js`;
-  `GET /api/v1/dashboard/community`, `GET /api/v1/dashboard/community/contacts?q=`, `POST|PATCH|DELETE
+  `GET /api/v1/dashboard/community`, `GET /api/v1/dashboard/community/contacts?q=`, `GET …/contacts/at?address=`, `POST|PATCH|DELETE
   /api/v1/dashboard/community/neighbors[/:uuid]`, same for `/events`.
 - Chat: `../../src/controllers/gemini.js` appends `community.promptBlock` for
   adult, non-guardian sessions (owner asked that she always be aware).
 - Migrations: `../../db/migrations/0050_community.up.sql` (`kind`/`notes` on
   `athena_watch_place`, `athena_neighbor`, `athena_community_event`) and
-  `../../db/migrations/0051_neighbor_contact.up.sql` (`athena_neighbor.contact_id`).
+  `../../db/migrations/0051_neighbor_contact.up.sql` (single `contact_id`,
+  superseded) and `../../db/migrations/0053_neighbor_household.up.sql`
+  (address key, coordinates, `athena_neighbor_contact`; moves 0051 links).
 - Frontend: `../../../companion/src/components/Community.tsx` (panels),
   `../../../companion/src/components/Dashboard.tsx` (CommunityPage),
   `../../../companion/src/components/EmergencyAlertSetup.tsx`.
