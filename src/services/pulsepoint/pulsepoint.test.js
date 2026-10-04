@@ -446,3 +446,92 @@ describe("recordPhoneAlert (where the phone is, and calls that cannot be placed)
 		expect(out.incident).toMatchObject({ place: "Home" });
 	});
 });
+
+describe('"Got it" buries an alert forever (owner, 2026-10-04)', () => {
+	const db = require("../../helpers/db");
+	const watch = require("./watch");
+	const geocode = require("./geocode");
+	const phone = require("./phoneAlerts");
+	const home = { uuid: "h", name: "Home", address: "1 Home Rd, Troutman, NC", latitude: 35.6741, longitude: -80.9073, radius_miles: 3, enabled: 1 };
+	const wreck = { id: "ph:wreck", what: "Traffic Collision", where: "Main St", miles: 1, place: "Home", via: "phone", receivedAt: new Date(), serious: false };
+	const fire = { id: "ph:fire", what: "Structure Fire", where: "Oak Dr", miles: 2, place: "Home", via: "phone", receivedAt: new Date(), serious: true };
+
+	function fakeDb({ incidents, key = "k1", acked = [] }) {
+		const ackRows = new Set(acked);
+		const nudges = [];
+		db.query.mockImplementation(async (sql, params) => {
+			if (/FROM athena_incident_situation/.test(sql)) {
+				return [[{ level: "watch", headline: "A wreck on Main St", body: "A wreck on Main St, 1 mile from Home.", incidents: JSON.stringify(incidents), weather: "[]", incident_key: key }]];
+			}
+			if (/FROM athena_alert_ack_item/.test(sql)) return [[...ackRows].map((item_id) => ({ item_id }))];
+			if (/INSERT IGNORE INTO athena_alert_ack_item/.test(sql)) {
+				for (let i = 1; i < params.length; i += 2) ackRows.add(params[i]);
+				return [{ affectedRows: 1 }];
+			}
+			if (/FROM athena_watch_place/.test(sql)) return [[home]];
+			if (/INSERT IGNORE INTO athena_nudge/.test(sql)) {
+				nudges.push(params);
+				return [{ affectedRows: 1 }];
+			}
+			if (/INSERT/.test(sql) || /UPDATE/.test(sql) || /DELETE/.test(sql)) return [{ affectedRows: 1 }];
+			return [[]];
+		});
+		return { ackRows, nudges };
+	}
+
+	beforeEach(() => {
+		phone._resetCache();
+		jest.restoreAllMocks();
+		jest.spyOn(require("../push"), "deliverNudge").mockResolvedValue({ sent: 1 });
+		jest.spyOn(require("../push"), "sendToProfile").mockResolvedValue({ sent: 1 });
+	});
+
+	test("Got it on the current banner buries every call on it, and the banner goes quiet", async () => {
+		const { ackRows } = fakeDb({ incidents: [wreck] });
+		const out = await watch.acknowledge(1, "k1");
+		expect(out).toMatchObject({ buried: 1, stale: false });
+		expect(ackRows.has("ph:wreck")).toBe(true);
+		const shown = await watch.alertFor(1);
+		expect(shown.level).toBe("none");
+		expect(shown.incidents).toEqual([]);
+		expect(await watch.promptBlock(1)).toBeNull();
+	});
+
+	test("a new call brings back only itself, worded without the buried one", async () => {
+		fakeDb({ incidents: [wreck, fire], key: "k2", acked: ["ph:wreck"] });
+		const shown = await watch.visibleSituation(1);
+		expect(shown.incidents.map((i) => i.id)).toEqual(["ph:fire"]);
+		expect(shown.key).not.toBe("k2");
+		expect(`${shown.headline} ${shown.body}`).not.toMatch(/Main St|Collision/);
+		expect(await watch.promptBlock(1)).not.toMatch(/Main St/);
+	});
+
+	test("a tap on an older banner never buries a call they have not seen", async () => {
+		const { ackRows } = fakeDb({ incidents: [wreck, fire], key: "k2" });
+		const out = await watch.acknowledge(1, "k1");
+		expect(out).toMatchObject({ buried: 0, stale: true });
+		expect(ackRows.size).toBe(0);
+	});
+
+	test("the same call forwarded again after Got it stays buried", async () => {
+		fakeDb({ incidents: [], key: null });
+		jest.spyOn(geocode, "regionsAt").mockResolvedValue([]);
+		jest.spyOn(geocode, "lookup").mockResolvedValue([{ latitude: 35.68, longitude: -80.9073 }]);
+		const first = await watch.recordPhoneAlert(1, { title: "Vehicle Fire", text: "12 Oak Dr", generate: async () => { throw new Error("no model"); } });
+		const { nudges } = fakeDb({ incidents: [], key: null, acked: [first.incident.id] });
+		const again = await watch.recordPhoneAlert(1, { title: "Vehicle Fire", text: "12 Oak Dr", generate: async () => { throw new Error("no model"); } });
+		expect(again).toMatchObject({ ignored: "already acknowledged" });
+		expect(nudges).toHaveLength(0);
+	});
+
+	test("an unreadable ack table hides nothing", async () => {
+		fakeDb({ incidents: [wreck] });
+		const base = db.query.getMockImplementation();
+		db.query.mockImplementation(async (sql, params) => {
+			if (/FROM athena_alert_ack_item/.test(sql)) throw new Error("no such table");
+			return base(sql, params);
+		});
+		const shown = await watch.visibleSituation(1);
+		expect(shown.incidents).toHaveLength(1);
+	});
+});

@@ -226,7 +226,7 @@ function mergeAlert(raw, situation) {
 async function getPriority(profileId, user) {
 	// The emergency situation first: it is the floor under the alert, and it
 	// must stand even when the dashboard or the model cannot be reached.
-	const situation = await require("./pulsepoint/watch").getSituation(profileId).catch(() => null);
+	const situation = await require("./pulsepoint/watch").visibleSituation(profileId).catch(() => null);
 	const fallback = () => ({
 		order: DEFAULT_ORDER,
 		source: "default",

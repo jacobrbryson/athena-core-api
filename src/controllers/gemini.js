@@ -23,6 +23,37 @@ const activity = require("../services/activity");
 
 const { generatePrompt, RESPONSE_SCHEMA } = require("./prompt");
 const { parseModelJson } = require("../services/llm/parse");
+const actionRegistry = require("../services/actions/registry");
+
+// The reply schema with `proposed_action.params` spelled out. Left as a bare
+// object, Gemini's structured output always fills it as `{}` and every
+// proposal is rejected for its first missing field (found 2026-10-04; see
+// actions/registry.js paramsSchema). normalize() still decides what counts.
+function chatSchema(base) {
+  const proposed = base?.properties?.proposed_action;
+  if (!proposed) return base;
+  return {
+    ...base,
+    properties: {
+      ...base.properties,
+      proposed_action: {
+        ...proposed,
+        properties: { ...proposed.properties, params: actionRegistry.paramsSchema() },
+      },
+    },
+  };
+}
+const CHAT_SCHEMA = chatSchema(RESPONSE_SCHEMA);
+
+/** Strict-schema tiers return null for every param they did not use; absent is what normalize() expects. */
+function withoutNulls(proposal) {
+  const params = proposal?.params;
+  if (!params || typeof params !== "object") return proposal;
+  return {
+    ...proposal,
+    params: Object.fromEntries(Object.entries(params).filter(([, v]) => v !== null)),
+  };
+}
 
 // How many prior messages to feed back as conversation history.
 const MAX_HISTORY = 20;
@@ -398,7 +429,7 @@ async function processAiResponse(session, message, clients, ctx = {}) {
           audience: memoryCtx.audience,
           // Constrain the model to the reply schema (Gemini structured
           // output) rather than only asking for JSON in the prompt.
-          schema: RESPONSE_SCHEMA,
+          schema: CHAT_SCHEMA,
           validate: (text) => {
             const candidate = parseModelJson(text);
             if (!candidate) return "invalid JSON";
@@ -427,6 +458,41 @@ async function processAiResponse(session, message, clients, ctx = {}) {
         new_proficiency: -1,
         is_factually_true: true,
       };
+    }
+
+    // Turn a `proposed_action` into a real pending proposal, if it survives
+    // the registry. Everything about it is untrusted model output, so
+    // actions.propose() re-derives what is available rather than believing
+    // the prompt only offered legal things, and returns null for every
+    // "she should not have proposed that" case.
+    //
+    // Done BEFORE the reply is saved so that, when it fails, the reply can
+    // say so. Her `response` was written assuming the card would appear ("I'll
+    // remind you when you get to Missy's"); on 2026-10-04 one was rejected and
+    // the owner was left believing a reminder was set that never existed.
+    //
+    // A standing authority makes propose() execute inline, so `proposal`
+    // here may already be done or failed rather than pending. The client
+    // renders from `status`, which is why both go down the same rpc.
+    let proposal = null;
+    let proposalFailed = false;
+    if (mayPropose && parsedResponse.proposed_action && !fellBack) {
+      try {
+        proposal = await actions.propose(
+          session.profile_id,
+          session.id,
+          withoutNulls(parsedResponse.proposed_action),
+        );
+      } catch (e) {
+        // A standing-authority execution that failed at the provider lands
+        // here. The athena_action row is already terminal with the error on
+        // it, so the person can still see what happened in their history.
+        console.warn("[gemini] action proposal failed:", e.message);
+      }
+      proposalFailed = !proposal || proposal.status === "failed";
+      if (proposalFailed) {
+        parsedResponse.response = `${parsedResponse.response} …Actually, scratch that: I couldn't set that up just now — something went wrong on my end, so nothing was saved. Could you ask me again?`;
+      }
     }
 
     // A song: she says `response`, then sings `lyrics`. Stored as one message
@@ -497,32 +563,6 @@ async function processAiResponse(session, message, clients, ctx = {}) {
         );
       } catch (e) {
         console.warn("[gemini] mission contribution failed:", e.message);
-      }
-    }
-
-    // Turn a `proposed_action` into a real pending proposal, if it survives
-    // the registry. Everything about it is untrusted model output, so
-    // actions.propose() re-derives what is available rather than believing
-    // the prompt only offered legal things, and returns null for every
-    // "she should not have proposed that" case. Never blocks the reply: the
-    // reply is already saved and the proposal is an extra.
-    //
-    // A standing authority makes propose() execute inline, so `proposal`
-    // here may already be done or failed rather than pending. The client
-    // renders from `status`, which is why both go down the same rpc.
-    let proposal = null;
-    if (mayPropose && parsedResponse.proposed_action && !fellBack) {
-      try {
-        proposal = await actions.propose(
-          session.profile_id,
-          session.id,
-          parsedResponse.proposed_action,
-        );
-      } catch (e) {
-        // A standing-authority execution that failed at the provider lands
-        // here. The athena_action row is already terminal with the error on
-        // it, so the person can still see what happened in their history.
-        console.warn("[gemini] action proposal failed:", e.message);
       }
     }
 

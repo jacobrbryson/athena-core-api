@@ -70,7 +70,7 @@ async function nearby(req, res) {
   const actor = await requireAdultActor(req, res);
   if (!actor) return;
   try {
-    const situation = await watch.getSituation(actor.profileId);
+    const situation = await watch.visibleSituation(actor.profileId);
     return res.json({ incidents: [...(situation.incidents || [])].sort((x, y) => x.miles - y.miles) });
   } catch (err) {
     return fail(res, err);

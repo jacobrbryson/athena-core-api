@@ -639,3 +639,29 @@ describe("promptBlock", () => {
 		expect(actions.promptBlock(registry.ACTIONS)).toMatch(/at most ONE action per reply/i);
 	});
 });
+
+describe("the reply schema's params (2026-10-04)", () => {
+	// Gemini structured output fills an object with no declared properties as
+	// {} — every chat proposal arrived empty until params were spelled out.
+	const schema = registry.paramsSchema();
+
+	test("names every param every action declares, so the model can write them", () => {
+		for (const action of registry.ACTIONS) {
+			for (const name of Object.keys(action.params)) {
+				expect(schema.properties[name]).toBeDefined();
+			}
+		}
+		expect(Object.keys(schema.properties).length).toBeGreaterThan(0);
+	});
+
+	test("requires none of them — normalize() decides, per action", () => {
+		expect(schema.required).toBeUndefined();
+	});
+
+	test("types follow what normalize() reads", () => {
+		expect(schema.properties.all_day.type).toBe("boolean");
+		expect(schema.properties.email_triage_uuids.type).toBe("array");
+		expect(schema.properties.items.type).toBe("array");
+		expect(schema.properties.reminder.type).toBe("string");
+	});
+});

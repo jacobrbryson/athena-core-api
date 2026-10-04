@@ -914,9 +914,59 @@ const ACTIONS = [
 
 const BY_ID = new Map(ACTIONS.map((a) => [a.id, a]));
 
+/**
+ * The JSON schema for `proposed_action.params` in the reply schema: every
+ * param name any action declares, all optional. Owner-approved 2026-10-04.
+ *
+ * Gemini's structured output fills an object with NO declared properties as
+ * `{}` — always. Until 2026-10-04 the reply schema said only
+ * `params: { type: "object" }`, so every proposal from chat arrived empty and
+ * normalize() rejected it on its first required field ("An event needs a
+ * title", "A place reminder needs something to remind them").
+ *
+ * Listing names here only lets the model WRITE them; normalize() still decides
+ * what each action accepts, so this widens nothing a person can be asked to
+ * approve. Types follow what normalize() reads.
+ */
+const PARAM_TYPES = {
+	all_day: { type: "boolean" },
+	email_triage_uuids: { type: "array", items: { type: "string" } },
+	items: {
+		type: "array",
+		items: {
+			type: "object",
+			properties: {
+				email_triage_uuid: { type: "string" },
+				label: { type: "string" },
+				merchant: { type: "string" },
+				category: { type: "string" },
+				amount: { type: "number" },
+				currency: { type: "string" },
+				purchased_at: { type: "string" },
+				sender: { type: "string" },
+				title: { type: "string" },
+				start: { type: "string" },
+				end: { type: "string" },
+				all_day: { type: "boolean" },
+				time_zone: { type: "string" },
+				location: { type: "string" },
+			},
+		},
+	},
+};
+function paramsSchema() {
+	const properties = {};
+	for (const action of ACTIONS) {
+		for (const name of Object.keys(action.params || {})) {
+			properties[name] = PARAM_TYPES[name] || { type: "string" };
+		}
+	}
+	return { type: "object", properties };
+}
+
 /** The descriptor, or null. Callers must treat null as "refuse", not "allow". */
 function get(id) {
 	return (typeof id === "string" && BY_ID.get(id)) || null;
 }
 
-module.exports = { ACTIONS, get, invalid };
+module.exports = { ACTIONS, get, invalid, paramsSchema };

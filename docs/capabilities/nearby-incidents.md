@@ -35,8 +35,9 @@ it. A single routine call waits for morning. When an urgent situation ends, I
 say it's all clear.
 
 On screen, the alert banner across the top shows every call with its distance
-and a small map. "Got it" shrinks it to a slim bar, and I remember that on the
-server — on every device — until something new happens, which opens it again.
+and a small map. "Got it" buries every call on it for good, on every device: I
+won't show it again, bring it up in conversation, or mention it inside a later
+alert. A new call opens the banner with just that call.
 
 ## Where to find it
 
@@ -112,6 +113,8 @@ rules. Background calls are charged to `ATHENA_BACKGROUND_GOOGLE_ID`.
 - Tables: `athena_incident_situation` (the one judgement every surface reads),
   `athena_incident_source` (weather health), `athena_alert_ack` (the banner's
   "Got it", migration `../../db/migrations/0044_alert_ack.up.sql`),
+  `athena_alert_ack_item` (each buried call/alert id, forever — 0054;
+  `watch.visibleSituation` filters it out of every surface),
   `athena_watch_place`.
 - Banner: `../../../companion/src/components/EmergencyBanner.tsx`; places:
   `../../../companion/src/components/Community.tsx` (points of interest, on the

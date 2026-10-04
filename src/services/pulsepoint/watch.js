@@ -473,15 +473,81 @@ async function acknowledgedKey(profileId) {
 	return rows[0]?.alert_key || null;
 }
 
+/** The ids of a situation's items: calls as stored, weather as "w:<id>". */
+const itemIds = (situation) => [
+	...(situation.incidents || []).map((i) => i.id),
+	...(situation.weather || []).map((a) => `w:${a.id}`),
+];
+
+/**
+ * Every item this person has said "Got it" to — buried forever (owner,
+ * 2026-10-04). An unreadable table hides nothing: it returns an empty set, so
+ * a database hiccup can only ever show too much, never silence an alert.
+ */
+async function acknowledgedIds(profileId) {
+	try {
+		const [rows] = await pool.query("SELECT item_id FROM athena_alert_ack_item WHERE profile_id = ?", [profileId]);
+		return new Set(rows.map((r) => r.item_id));
+	} catch {
+		return new Set();
+	}
+}
+
+/**
+ * "Got it": buries every item on the banner the person was looking at.
+ *
+ * `key` is the key of what they saw. When it is still the current situation,
+ * all of its items are buried. When it is not — a new call landed between the
+ * banner drawing and the tap — nothing new is buried, because a call they have
+ * never seen must not be silenced by a tap on an older one; the banner then
+ * redraws with the new call and they can say "Got it" again.
+ */
 async function acknowledge(profileId, key) {
 	const alertKey = typeof key === "string" ? key.trim().slice(0, 255) : "";
 	if (!alertKey) throw bad("Nothing to acknowledge.");
+	const shown = await visibleSituation(profileId);
+	const current = shown.key === alertKey;
+	const ids = current ? itemIds(shown) : [];
+	if (ids.length) {
+		await pool.query(
+			`INSERT IGNORE INTO athena_alert_ack_item (profile_id, item_id) VALUES ${ids.map(() => "(?, ?)").join(", ")}`,
+			ids.flatMap((id) => [profileId, String(id).slice(0, 128)])
+		);
+	}
 	await pool.query(
 		`INSERT INTO athena_alert_ack (profile_id, alert_key) VALUES (?, ?)
 		 ON DUPLICATE KEY UPDATE alert_key = VALUES(alert_key), acknowledged_at = NOW()`,
 		[profileId, alertKey]
 	);
-	return { acknowledgedKey: alertKey };
+	return { acknowledgedKey: alertKey, buried: ids.length, stale: !current };
+}
+
+/**
+ * The situation minus everything acknowledged — what the banner, the chat
+ * prompt, the dashboard and the incident list show. When anything was taken
+ * out, the wording is rebuilt by the rules from what is left (the stored
+ * headline may name a buried call), and the key is re-derived so "Got it" on
+ * the remainder refers to the remainder.
+ */
+async function visibleSituation(profileId) {
+	const situation = await getSituation(profileId);
+	const ids = itemIds(situation);
+	if (!ids.length) return situation;
+	const acked = await acknowledgedIds(profileId);
+	if (!ids.some((id) => acked.has(id))) return situation;
+	const incidents = situation.incidents.filter((i) => !acked.has(i.id));
+	const weather = situation.weather.filter((a) => !acked.has(`w:${a.id}`));
+	const rest = itemIds({ incidents, weather });
+	if (!rest.length) {
+		return { ...situation, level: "none", headline: null, body: null, incidents: [], weather: [], key: null };
+	}
+	return {
+		...situation,
+		...fallbackAssessment(incidents.map(asHit), weather),
+		incidents,
+		weather,
+		key: keyOf([...rest].sort()),
+	};
 }
 
 /** The nearby calls as the clients see them. Street names, never raw codes. */
@@ -673,17 +739,26 @@ async function checkProfile(
 			profileId,
 		]);
 
+	// "Got it" buries an item forever: nothing below may bring one back, not
+	// even inside the wording of a message about something else.
+	const acked = await acknowledgedIds(profileId);
+	const openCalls = calls.filter((c) => !acked.has(c.id));
+	const openAlerts = alerts.filter((a) => !acked.has(`w:${a.id}`));
+	const someBuried = openCalls.length < calls.length || openAlerts.length < alerts.length;
+
 	if (freshCalls.length || freshWeather.length) {
-		const text = urgent
-			? `🚨 ${situation.headline}. ${situation.body}`
-			: situation.body || wording(hits || []);
+		const said = someBuried ? await assess(openCalls, { countyActive, generate, weather: openAlerts }) : situation;
+		const saidUrgent = said.level === "urgent";
+		const text = saidUrgent
+			? `🚨 ${said.headline}. ${said.body}`
+			: said.body || wording(hits || []);
 		const told = await tell(profileId, {
 			dedupeKey: `pp:${keyOf([...freshCalls.map((c) => c.id), ...freshWeather.map((a) => `w:${a.id}`)].sort())}`,
 			text,
-			urgent,
+			urgent: saidUrgent,
 			facts: {
 				agency: AGENCY,
-				level: situation.level,
+				level: said.level,
 				incidentIds: [...freshCalls.map((c) => c.id), ...freshWeather.map((a) => `w:${a.id}`)],
 				incidents: freshCalls,
 				weather: freshWeather,
@@ -695,8 +770,16 @@ async function checkProfile(
 
 	// Escalation with nothing new: things they already heard about, one at a
 	// time, now add up to something urgent. That is news in itself.
-	if (changed && urgent && previous.level !== "urgent") {
-		const text = `🚨 ${situation.headline}. ${situation.body}`;
+	// Judged on what is still open: buried items neither push it over the line
+	// nor appear in the words.
+	const open =
+		changed && urgent && previous.level !== "urgent" && someBuried
+			? openCalls.length || openAlerts.length
+				? await assess(openCalls, { countyActive, generate, weather: openAlerts })
+				: { level: "none" }
+			: situation;
+	if (changed && open.level === "urgent" && previous.level !== "urgent") {
+		const text = `🚨 ${open.headline}. ${open.body}`;
 		const told = await tell(profileId, {
 			dedupeKey: `pp-escalate:${key}`,
 			text,
@@ -706,17 +789,20 @@ async function checkProfile(
 				level: "urgent",
 				escalation: true,
 				incidentIds: [],
-				incidents: calls,
-				weather: alerts,
+				incidents: openCalls,
+				weather: openAlerts,
 				places: publicPlaces(places),
 			},
 		});
-		return { ...out, told: told.written ? calls.length + alerts.length : 0, text, pushed: told.pushed, escalated: true };
+		return { ...out, told: told.written ? openCalls.length + openAlerts.length : 0, text, pushed: told.pushed, escalated: true };
 	}
 
 	// The all-clear — only when everything that could have been read WAS read,
 	// so a blocked source can never produce one.
-	if (changed && !calls.length && !alerts.length && previous.level === "urgent") {
+	// Not for things they already buried: "the emergencies I told you about"
+	// would be bringing them back.
+	const allBuried = itemIds(previous).every((id) => acked.has(id));
+	if (changed && !calls.length && !alerts.length && previous.level === "urgent" && !allBuried) {
 		const text = "All clear near home — the emergencies I told you about have ended.";
 		const told = await tell(profileId, {
 			dedupeKey: `pp-clear:${previous.key}`,
@@ -806,13 +892,25 @@ async function recordPhoneAlert(profileId, { title, text, postedAt, generate } =
 	if ((previous.incidents || []).some((i) => i.id === incident.id)) {
 		return { ignored: "already known", what: parsed.what, address: parsed.address };
 	}
+	// "Got it" is forever: the same call forwarded again (a tray sweep, a
+	// repost) after it was buried stays buried.
+	const acked = await acknowledgedIds(profileId);
+	if (acked.has(incident.id)) return { ignored: "already acknowledged", what: parsed.what, address: parsed.address };
 
 	const calls = [...(previous.incidents || []).filter((i) => !phoneAlerts.expired(i)), incident].sort(
 		(a, b) => a.miles - b.miles
 	);
 	const alerts = previous.weather || [];
 	const key = keyOf([...calls.map((c) => c.id), ...alerts.map((a) => `w:${a.id}`)].sort());
-	const situation = { ...(await assess(calls, { weather: alerts, generate })), key };
+	// Judged — and worded — on what they have not buried, so the push for a new
+	// call never drags an acknowledged one back in.
+	const situation = {
+		...(await assess(
+			calls.filter((c) => !acked.has(c.id)),
+			{ weather: alerts.filter((a) => !acked.has(`w:${a.id}`)), generate }
+		)),
+		key,
+	};
 	await saveSituation(profileId, situation, calls, alerts, key, previous);
 
 	const urgent = situation.level === "urgent";
@@ -1115,7 +1213,7 @@ async function runOnce({ dryRun = false, generate, force = false } = {}) {
 
 /** For the in-app banner: the situation and the places it is measured from. */
 async function alertFor(profileId) {
-	const [situation, places] = await Promise.all([getSituation(profileId), placesFor(profileId).catch(() => [])]);
+	const [situation, places] = await Promise.all([visibleSituation(profileId), placesFor(profileId).catch(() => [])]);
 	return {
 		places: publicPlaces(places),
 		weather: situation.weather || [],
@@ -1139,7 +1237,7 @@ async function alertFor(profileId) {
  */
 async function promptBlock(profileId) {
 	if (!profileId) return null;
-	const [situation, sources] = await Promise.all([getSituation(profileId), sourcesHealth().catch(() => null)]);
+	const [situation, sources] = await Promise.all([visibleSituation(profileId), sourcesHealth().catch(() => null)]);
 	const lines = [];
 	if (sources?.weather?.down) {
 		lines.push(
@@ -1211,6 +1309,7 @@ module.exports = {
 	floorLevel,
 	alertFor,
 	getSituation,
+	visibleSituation,
 	acknowledge,
 	sourcesHealth,
 	isDue,
