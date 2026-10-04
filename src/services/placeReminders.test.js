@@ -150,12 +150,17 @@ describe("geofences", () => {
 		expect(db.query).not.toHaveBeenCalled();
 	});
 
-	it("lists armed reminders as fences", async () => {
+	it("lists armed reminders as fences, never smaller than 300 m (a 150 m row from before 10-04 grows)", async () => {
 		db.query.mockResolvedValue([[{ uuid: "r-1", latitude: "35.700100", longitude: "-80.880200", radius_m: 150 }]]);
 		expect(await placeReminders.geofences(1)).toEqual({
 			enabled: true,
-			fences: [{ id: "r-1", latitude: 35.7001, longitude: -80.8802, radius_m: 150 }],
+			fences: [{ id: "r-1", latitude: 35.7001, longitude: -80.8802, radius_m: 300 }],
 		});
+	});
+
+	it("a stored radius larger than 300 m is kept", async () => {
+		db.query.mockResolvedValue([[{ uuid: "r-2", latitude: "35.7", longitude: "-80.88", radius_m: 500 }]]);
+		expect((await placeReminders.geofences(1)).fences[0].radius_m).toBe(500);
 	});
 });
 

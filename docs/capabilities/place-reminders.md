@@ -62,8 +62,9 @@ It needs three things switched on, once:
 ## Limits
 
 - **Android only.** A browser or an iPhone can't tell me where you are.
-- **About 150 metres.** I count you as there once you're within roughly a
-  block of the address; next door may count as there.
+- **About 300 metres.** I count you as there once you're within roughly two
+  blocks of the address, because address lookups can be off by that much on
+  rural roads; a neighbour's house may count as there.
 - **Up to 50 waiting at once.**
 - **I can't remove or change one for you.** Remove it on the Community page and
   ask me again.

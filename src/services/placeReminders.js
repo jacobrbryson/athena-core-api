@@ -42,8 +42,15 @@ const geocode = require("./pulsepoint/geocode");
 const geo = require("./pulsepoint/geo");
 
 const TRIGGER_ID = "place_reminder";
-/** Geofence size. Android's own advice is 100–150 m for a reliable fence. */
-const ARRIVAL_RADIUS_M = 150;
+/**
+ * Geofence size. Android advises 100–150 m, but the Census geocoder can put a
+ * rural house a couple of hundred metres down the road, and on 2026-10-04 the
+ * owner stood at Missy's with no reminder. 300 m (owner-approved) covers that
+ * error; the server still re-checks the distance on arrival.
+ */
+const ARRIVAL_RADIUS_M = 300;
+/** A stored radius never shrinks a fence below today's size (rows from before 10-04 say 150). */
+const radiusOf = (row) => Math.max(Number(row.radius_m) || 0, ARRIVAL_RADIUS_M);
 /** Android allows 100 fences per app; leave room and keep the list readable. */
 const MAX_ARMED = 50;
 /** Arrivals inside this window after the last one are the same visit. */
@@ -71,7 +78,7 @@ function toReminder(row) {
 		address: row.address || null,
 		latitude: Number(row.latitude),
 		longitude: Number(row.longitude),
-		radiusM: Number(row.radius_m) || ARRIVAL_RADIUS_M,
+		radiusM: radiusOf(row),
 		reminder: row.text,
 		repeats: row.repeats === 1 || row.repeats === true,
 		status: row.status,
@@ -201,7 +208,7 @@ async function geofences(profileId) {
 			id: r.uuid,
 			latitude: Number(r.latitude),
 			longitude: Number(r.longitude),
-			radius_m: Number(r.radius_m) || ARRIVAL_RADIUS_M,
+			radius_m: radiusOf(r),
 		})),
 	};
 }
@@ -235,7 +242,7 @@ async function arrived(profileId, deviceId, body = {}, { now = Date.now() } = {}
 		const miles = geo.milesBetween(here, { latitude: Number(row.latitude), longitude: Number(row.longitude) });
 		if (miles === null) continue;
 		const meters = miles * METERS_PER_MILE;
-		if (meters > (Number(row.radius_m) || ARRIVAL_RADIUS_M) + accuracy + SLACK_M) continue;
+		if (meters > (radiusOf(row)) + accuracy + SLACK_M) continue;
 
 		// Claim this visit. A second arrival in the same visit (a fence
 		// re-registered while they're still there, two phones) changes nothing.
