@@ -17,6 +17,7 @@ const familyHealth = require("../services/familyHealth");
 const dreams = require("../services/dreams");
 const { audienceForSession } = require("../services/audience");
 const sessionParticipants = require("../services/sessionParticipant");
+const activity = require("../services/activity");
 
 const { generatePrompt, RESPONSE_SCHEMA } = require("./prompt");
 const { parseModelJson } = require("../services/llm/parse");
@@ -48,7 +49,7 @@ function isValidReply(r) {
  * Grounding for the sources the fast guess picked and the keyword gates did
  * not. Null when there is no guess or nothing to add; never throws.
  */
-async function groundedFromGuess(profileId, message, audience, early) {
+async function groundedFromGuess(profileId, message, audience, early, onRead) {
   try {
     // /message may already have started (or finished) this guess to hand the
     // client a filler; reuse it rather than asking Jev twice.
@@ -67,6 +68,7 @@ async function groundedFromGuess(profileId, message, audience, early) {
             providers: extra.providers,
             daysByProvider: extra.daysByProvider,
             audience,
+            onRead,
           })
         : null,
       extra.heartRate
@@ -114,6 +116,13 @@ async function processAiResponse(session, message, clients, ctx = {}) {
     // just before the prompt is built, so a keyword hit costs nothing extra.
     // Adults only: a child's words do not go to another provider. Never
     // throws; no guess just means the keyword gates stand alone.
+    // What the avatar shows while a real read is under way (calendar, email).
+    const { onRead } = activity.reporter({
+      session,
+      clients,
+      guardian: !!ctx.guardian,
+    });
+
     const guessedGrounding =
       groundingProfileId && groundingAudience === "adult"
         ? groundedFromGuess(
@@ -121,6 +130,7 @@ async function processAiResponse(session, message, clients, ctx = {}) {
             message,
             groundingAudience,
             ctx.guessPromise,
+            onRead,
           )
         : Promise.resolve(null);
 
@@ -143,6 +153,7 @@ async function processAiResponse(session, message, clients, ctx = {}) {
               .buildContext(groundingProfileId, {
                 message,
                 audience: groundingAudience,
+                onRead,
               })
               .catch((e) => {
                 console.warn("[gemini] connector context failed:", e.message);

@@ -17,6 +17,11 @@ opens wider on louder sounds, rounds for "oo" and "o", spreads for "ee" and
 "s", and closes when I stop. I wave when you arrive, move a little while I'm
 thinking, and gesture while I talk. My hair sways as I move.
 
+When I really am looking at your calendar or your email to answer you, a small
+glowing calendar or envelope appears beside me while I read, then fades. It
+only shows while I'm actually doing that, never for show, and it never shows
+what's in them.
+
 ## Where to find it
 
 - **Companion:** open Chat. On a phone, tap Chat or my picture in the bar at the
@@ -42,6 +47,9 @@ Voice).
 
 - My lips follow the sound of my voice, not the exact words, so it's close but
   not perfect lip reading.
+- The calendar and envelope only appear for calendar and email reads, and
+  only in your own conversation, not a shared one. A very quick read can flash
+  by in about two seconds.
 - I can't change how I look, choose my own expressions, or smile or frown on
   purpose.
 - I can't see you through my avatar. Seeing needs the camera, which is a
@@ -55,6 +63,7 @@ Voice).
 - Unity project (outside this workspace): `C:\Users\jacob\Documents\Unity Projects\Athena (1)`. Avatar prefab `Assets/Models/AthenaConcept/AthenaConcept.prefab` in `Assets/Scenes/MainScene.unity`. Hologram look: `Assets/Shaders/AthenaHologram.shader`. Hair: `Assets/Scripts/HairSpringBones.cs`. Gestures and talk/think animation: `Assets/Scripts/AthenaAnimationController.cs`.
 - Face (2026-09-27): the blend shapes Blink_L/R, Jaw_Open, Mouth_O/Wide/Closed are authored in Blender by `Blender/Tools/athena_face_shapes.py`, which is run from `Blender/Tools/athena_unity_finish.py`. They are driven by `Assets/Scripts/AthenaFaceAnimator.cs`. Lip sync reads a loudness/brightness envelope that `Assets/Scripts/AthenaSpeechEnvelope.cs` computes from the decoded PCM in `AthenaWebBridge.PlaySpeech`. It does not use `AudioSource.GetOutputData`, which doesn't work on WebGL. The mouth-cavity faces carry RestY.y = -1, and the shader draws them dark.
 - Web embed: `../../../companion/src/athena/UnityAthena.tsx` and `../../../guardians/src/athena/UnityAthena.tsx`. They load the WebGL build from `UNITY_ASSET_BASE` (`https://storage.googleapis.com/assets-athena-app/unity`, files `Build/unity.*`, served no-cache) and speak the bridge protocol (`AthenaBridge`: PlayGesture, SetThinking, PlaySpeech, StopSpeech).
+- Activity props (2026-10-03, published 2026-10-04: WebGL build in the bucket, APK 2026.10.04.1404 on the owner's phone, server in the same commit as this text). When a reply makes a real calendar or Gmail read, `src/services/activity.js` sends `{rpc:"activity", activity:"calendar"|"email", state:"start"|"end"}` on the session socket, wired through the `onRead` hook in `src/services/connectors/context.js`, passed from `src/controllers/gemini.js`. It is silent on shared sessions, Guardian sessions and unbound sessions, and sends a category only. The web apps re-broadcast it as `CHAT_ACTIVITY_EVENT` (`useChat.ts`); `UnityAthena.tsx` holds each activity at least 1.8 s and clears a lost one after 60 s, then calls `AthenaBridge.SetActivity`. Unity: `Assets/Scripts/AthenaActivityProps.cs` (added at runtime by `AthenaWebBridge.SetActivity`) and `Assets/Resources/AthenaActivityProp.shader`. Deliberately no idle cycle: nothing shows unless it is really happening.
 - Voice → lips: `../../../companion/src/athena/useSpeech.ts` and `../../../guardians/src/athena/useSpeech.ts` send 24 kHz 16-bit PCM as the `PlaySpeech` JSON. The avatar gets no text, so lip sync is purely acoustic.
 - Publishing: WebGL export `Athena.EditorTools.AthenaAndroidBuild.ExportAvatar` writes `build.*`. Those files are renamed to `unity.*` for the bucket. Back up the live files first, to `gs://assets-athena-app/unity-backups/<date>-<label>/`. The Android app embeds its own copy under `Assets/StreamingAssets/AthenaAndroidWeb/unity/Build/`, so the phone only gets avatar changes after an APK rebuild.
 - The WebGL build's `index.html` registers a service worker that caches `Build/*`. When a local preview shows an old avatar, that cache is the usual cause.

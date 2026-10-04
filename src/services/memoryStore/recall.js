@@ -21,6 +21,7 @@ const llm = require("../llm");
 const vectorIndex = require("./vectorIndex");
 const { parseTimeRange } = require("./timeRange");
 const { markRecalled, toMysqlDate } = require("./events");
+const { DEFAULT_TZ, resolveTimeZone } = require("../clock");
 
 const DAY = 86_400_000;
 const PASSIVE_SEM_FLOOR = Number(process.env.MEMORY_SEM_FLOOR) || 0.5;
@@ -276,28 +277,41 @@ async function recall(profileId, query, { k, intent, tz, now = Date.now(), inclu
 	};
 }
 
-function formatWhen(when) {
+/**
+ * "Fri 2026-09-25, 7 days ago" — when a memory was recorded, in the person's
+ * own calendar days. A bare ISO date left the model to do the subtraction, and
+ * an undated "Friday night" plan read as tonight a week later.
+ */
+function formatWhen(when, { now = Date.now(), tz = DEFAULT_TZ } = {}) {
 	if (!when) return "";
 	const d = new Date(when);
-	return Number.isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
+	if (Number.isNaN(d.getTime())) return "";
+	const zone = resolveTimeZone(tz);
+	const day = (date) =>
+		new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+	const weekday = new Intl.DateTimeFormat("en-GB", { timeZone: zone, weekday: "short" }).format(d);
+	const days = Math.round((Date.parse(day(new Date(now))) - Date.parse(day(d))) / DAY);
+	const age = days <= 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`;
+	return `${weekday} ${day(d)}, ${age}`;
 }
 
 /** Prompt block for the chat model. Returns null when there's nothing worth saying. */
-function formatForPrompt(result) {
+function formatForPrompt(result, { now = Date.now(), tz } = {}) {
 	if (!result) return null;
 	const { intent, items, timeRange } = result;
 	if (!items.length && !intent) return null;
 
+	const when = (at) => formatWhen(at, { now, tz });
 	const lines = items.map((i) => {
-		if (i.type === "fact") return `- (fact · ${i.label}) ${i.title}${i.text ? `: ${i.text}` : ""}`;
-		if (i.type === "transcript") return `- (${formatWhen(i.when)}, ${i.label} in chat) "${i.text}"`;
+		if (i.type === "fact") return `- (fact · ${i.label} · noted ${when(i.when)}) ${i.title}${i.text ? `: ${i.text}` : ""}`;
+		if (i.type === "transcript") return `- (${when(i.when)}, ${i.label} in chat) "${i.text}"`;
 		const title = i.title ? `"${i.title}" — ` : "";
-		return `- (${formatWhen(i.when)}, ${i.label}) ${title}${i.text}`;
+		return `- (${when(i.when)}, ${i.label}) ${title}${i.text}`;
 	});
 
 	let block = `\n# Long-term memory\n`;
 	block += items.length
-		? `Retrieved from your memory for this message (most relevant first):\n${lines.join("\n")}\n`
+		? `Retrieved from your memory for this message (most relevant first):\n${lines.join("\n")}\nEach date is when the memory was recorded, not when the thing happens. A plan that says "Friday" or "tonight" means the day after its date: if that day has already passed it is over, so never offer it as tonight or upcoming. For what is on now, trust the calendar and today's date.\n`
 		: `Nothing in your long-term memory matches this message${timeRange ? ` (${timeRange.label})` : ""}.\n`;
 
 	if (intent) {

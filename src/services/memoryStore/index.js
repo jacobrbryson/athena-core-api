@@ -51,12 +51,13 @@ async function buildMemoryContext(session, message, ctx = {}) {
 	const memoryEnabled = await memoryEnabledForProfile(profileId).catch(() => false);
 	if (!memoryEnabled) return { audience, memoryEnabled, recall: null, promptBlock: null };
 
-	const result = await recallModule.recallWithBudget(profileId, message, { tz: ctx.companion?.timezone || undefined });
+	const tz = ctx.companion?.timezone || undefined;
+	const result = await recallModule.recallWithBudget(profileId, message, { tz });
 	return {
 		audience,
 		memoryEnabled,
 		recall: result,
-		promptBlock: recallModule.formatForPrompt(result),
+		promptBlock: recallModule.formatForPrompt(result, { tz }),
 	};
 }
 

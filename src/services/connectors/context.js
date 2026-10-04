@@ -248,7 +248,7 @@ function needsReconnectBlock(connector) {
  * could not be read), unlinked ones a line saying they are not connected. A
  * provider the message is not about still costs nothing.
  */
-async function buildContext(profileId, { message, days, audience, providers = [], daysByProvider = {} } = {}) {
+async function buildContext(profileId, { message, days, audience, providers = [], daysByProvider = {}, onRead } = {}) {
 	if (!profileId) return null;
 	// `providers` adds connectors the keyword gate missed but the fast guess
 	// (services/toolIntent) picked; `daysByProvider` lets the guess narrow one
@@ -283,8 +283,23 @@ async function buildContext(profileId, { message, days, audience, providers = []
 	const fetched = await Promise.all(
 		wanted.map((c) => {
 			const span = daysByProvider[c.PROVIDER] || days;
+			// Tells the avatar a real read is under way (services/activity).
+			// Observation only: it can neither delay nor fail the read.
+			let done = () => {};
+			try {
+				done = onRead?.(c.PROVIDER) || done;
+			} catch {
+				/* ignore */
+			}
 			return c
 				.buildContext(profileId, span ? { days: span } : {})
+				.finally(() => {
+					try {
+						done();
+					} catch {
+						/* ignore */
+					}
+				})
 				.catch((err) => {
 					// Every failure here is a link the user believes works —
 					// `wanted` is already filtered to active links — so each

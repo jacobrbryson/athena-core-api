@@ -20,6 +20,7 @@ const memory = require("../memory");
 const messageService = require("../message");
 const pool = require("../../helpers/db");
 const { createEvent } = require("./events");
+const { describeNow } = require("../clock");
 
 const TURNS_BEFORE_EXTRACT =
   Number(process.env.MEMORY_EXTRACT_EVERY_TURNS) || 3;
@@ -76,7 +77,8 @@ function checkShape(data) {
   return null;
 }
 
-function buildPrompt({ lines, knownFacts, audience }) {
+function buildPrompt({ lines, knownFacts, audience, now = new Date() }) {
+  const today = describeNow(now);
   const known = knownFacts.length
     ? knownFacts
         .map(
@@ -102,6 +104,8 @@ Rules:
 - Only what the person stated or clearly confirmed. Never facts about Athena, never guesses, never things only Athena said.
 - moments: at most 2 genuinely notable things that happened or were discussed — a plan made, a story told, a feeling shared, a decision, a milestone. Skip small talk and games. importance 1-10 (10 = life event).
 - forget: exact keys of known facts the person explicitly asked you to forget or said were wrong.
+- These lines were written on ${today.weekday} ${today.iso}. A memory outlives the conversation, so never store a relative day ("tonight", "tomorrow", "Friday", "next week"): work out the real date from today and write it in, e.g. "line dancing on Fri 2026-09-25". Read later, "Friday night" says nothing about which Friday.
+- A one-off plan or event with a date is a moment, never a fact. Facts are only for things that stay true.
 - Empty arrays are normal and correct for most conversations.
 ${audienceRules}
 
@@ -200,7 +204,14 @@ async function extractSession(
       task: "extract",
       audience,
       schema: EXTRACT_SCHEMA,
-      contents: buildPrompt({ lines, knownFacts, audience }),
+      // The conversation's own date, not the job's: a late extraction pass
+      // must still resolve "tomorrow" against the day it was said.
+      contents: buildPrompt({
+        lines,
+        knownFacts,
+        audience,
+        now: new Date(messages[messages.length - 1].created_at),
+      }),
       check: checkShape,
       temperature: 0.1,
     });

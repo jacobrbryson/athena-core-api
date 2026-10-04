@@ -92,6 +92,24 @@ describe("formatForPrompt honesty", () => {
 	test("ordinary chat with nothing relevant adds no block at all", () => {
 		expect(recallModule.formatForPrompt({ intent: false, items: [] })).toBeNull();
 	});
+
+	// "Line dancing Friday night" was recalled a week later as tonight's plan.
+	test("memories carry their weekday and age so a stale plan reads as past", () => {
+		const now = Date.parse("2026-10-02T23:00:00Z"); // Fri evening, Eastern
+		const block = recallModule.formatForPrompt(
+			{
+				intent: false,
+				items: [
+					{ type: "event", label: "conversation", title: "Plans", text: "Line dancing Friday night", when: new Date("2026-09-25T15:00:00Z") },
+					{ type: "fact", label: "interest", title: "hobby", text: "line dancing", when: new Date("2026-10-01T15:00:00Z") },
+				],
+			},
+			{ now, tz: "America/New_York" }
+		);
+		expect(block).toMatch(/Fri 2026-09-25, 7 days ago/);
+		expect(block).toMatch(/noted Thu 2026-10-01, yesterday/);
+		expect(block).toMatch(/if that day has already passed it is over/);
+	});
 });
 
 describe("vector index", () => {
@@ -321,6 +339,12 @@ describe("extraction safety", () => {
 		const p = extract.buildPrompt({ lines: ["[person] hi"], knownFacts: [], audience: "child" });
 		expect(p).toMatch(/THIS IS A CHILD/);
 		expect(p).toMatch(/NEVER store: other people's names, addresses/);
+	});
+
+	test("the prompt anchors relative days to the conversation's date", () => {
+		const p = extract.buildPrompt({ lines: ["[person] line dancing Friday night"], knownFacts: [], audience: "adult", now: new Date("2026-09-23T15:00:00Z") });
+		expect(p).toMatch(/written on Wednesday 2026-09-23/);
+		expect(p).toMatch(/never store a relative day/);
 	});
 
 	test("the prompt asks for only new or changed facts", () => {
