@@ -38,10 +38,9 @@
  * app, wrong for "within three miles of my house", and it was exactly those
  * calls the owner watched pile up while Athena said nothing (2026-09-21).
  *
- * So: every locatable call inside a watched radius is told, except
- *   - medical calls (someone else's private emergency; also redacted to 0,0
- *     most of the time anyway), and
- *   - the pure-noise service codes in QUIET_CODES.
+ * So: every locatable call inside a watched radius is told, medical calls
+ * included (owner, 2026-10-04), except the non-incidents in
+ * phoneAlerts.QUIET_CODES — drills, standby, unit moves.
  * `alertable` still feeds the level (see floorLevel): any serious call, or two
  * or more calls of any kind, is URGENT, and urgent is what breaks quiet hours.
  * A lone tree down at 2am waits for 6am; a fire, or a storm's worth of calls,
@@ -71,9 +70,6 @@ const SEEN_WINDOW_HOURS = 24;
 /** An incident nudge stays worth reading for this long. */
 const NUDGE_TTL_S = 3 * 60 * 60;
 
-/** Codes that are real dispatches but never news to a neighbour. */
-const QUIET_CODES = new Set(["LA", "PS", "IFT", "CPR", "ME", "MCI"]);
-const QUIET_CATEGORIES = new Set(["Medical"]);
 
 const bad = (message) => Object.assign(new Error(message), { status: 400 });
 
@@ -168,8 +164,7 @@ async function placesFor(profileId) {
 /** Is this call one a neighbour would want to hear about? */
 function worthTelling(incident) {
 	if (!incident.locatable) return false;
-	if (QUIET_CODES.has(incident.code)) return false;
-	if (incident.category && QUIET_CATEGORIES.has(incident.category)) return false;
+	if (phoneAlerts.QUIET_CODES.has(incident.code)) return false;
 	return true;
 }
 
@@ -333,6 +328,26 @@ function fallbackAssessment(hits = [], weather = []) {
 	return { level, headline, body: lines.join(" ").slice(0, 1000), assessedBy: "rules" };
 }
 
+/** A stored incident (incidentFrom's shape) as the {incident, nearest} hit everything here reads. */
+function asHit(item) {
+	if (!item || item.incident) return item;
+	return {
+		incident: {
+			id: item.id,
+			what: item.what,
+			category: item.category,
+			address: item.where,
+			units: item.units,
+			receivedAt: item.receivedAt ? new Date(item.receivedAt) : null,
+			alertable: item.serious === true,
+		},
+		nearest: {
+			miles: Number(item.miles) || 0,
+			place: item.place === "you" ? { name: "you", live: true } : { name: String(item.place || "home") },
+		},
+	};
+}
+
 /** The first distinctive word of each street, for checking the model named them. */
 function streetMarks(hits) {
 	return hits.map(
@@ -379,6 +394,9 @@ async function generateWithModel(prompt, marks = []) {
  * must go out whether or not a model is answering tonight.
  */
 async function assess(hits, { countyActive = null, generate = generateWithModel, weather = [] } = {}) {
+	// Phone-sourced calls arrive as stored incidents, not {incident, nearest}
+	// hits; the wording and street checks only read hits, and threw on them.
+	hits = (hits || []).map(asHit);
 	const fallback = fallbackAssessment(hits, weather);
 	if (!hits?.length && !weather.length) return fallback;
 	const floor = floorLevel(hits, weather);
@@ -701,10 +719,39 @@ async function checkProfile(
 }
 
 /**
+ * A call PulsePoint reported that cannot be put on a map: no address in the
+ * text, or one the geocoder could not find (or did not answer for). It is
+ * still told — in words, with no distance and no pin — because the phone has
+ * already cleared PulsePoint's own notification and the owner would rather
+ * hear too much than miss something (2026-10-04). Not added to the situation:
+ * the board and map only hold calls with a real position.
+ */
+async function tellUnplaced(profileId, parsed, { places, postedAt, why }) {
+	const at = postedAt ? new Date(postedAt) : new Date();
+	const hour = Number.isNaN(at.getTime()) ? new Date().toISOString().slice(0, 13) : at.toISOString().slice(0, 13);
+	const id = `pu:${createHash("sha1").update(`${parsed.text}|${hour}`).digest("hex").slice(0, 16)}`;
+	const where = parsed.address ? ` at ${parsed.address}` : "";
+	const told = await tell(profileId, {
+		dedupeKey: `ph:${id}`,
+		text: `PulsePoint: ${parsed.what}${where}. I couldn't place it on a map, so I can't tell how close it is — "${parsed.text.slice(0, 200)}"`,
+		urgent: !!parsed.serious,
+		facts: {
+			source: "pulsepoint-app",
+			unplaced: why,
+			incidentIds: [id],
+			what: parsed.what,
+			address: parsed.address || null,
+			places: publicPlaces(places),
+		},
+	});
+	return { told: told.written, unplaced: why, what: parsed.what, address: parsed.address || null, pushed: told.pushed };
+}
+
+/**
  * A notification PulsePoint's own app put on the owner's phone, forwarded by
  * the Athena app. Placed against the watched places and folded into the same
- * situation as everything else; nothing unrecognised or unplaceable is guessed
- * at.
+ * situation as everything else. A call that cannot be placed is never pinned
+ * on a guess, but it is still told in words (see tellUnplaced).
  *
  * Returns why it was ignored rather than throwing: the phone forwards whatever
  * it sees, and most of it will not be for us.
@@ -712,16 +759,35 @@ async function checkProfile(
 async function recordPhoneAlert(profileId, { title, text, postedAt, generate } = {}) {
 	const places = await placesFor(profileId);
 	if (!places.length) return { ignored: "no watched places" };
-	// A town for the geocoder, taken from a saved place's own address.
-	const region = (places.find((p) => p.address)?.address || "").split(",").slice(-2).join(",").trim() || null;
+	// Towns for the geocoder, since dispatch text rarely names one: where the
+	// phone is right now first, then every saved place's own town.
+	const here = places.find((p) => p.live);
+	const regions = [
+		...(here ? await phoneAlerts.regionsNear(here) : []),
+		...places.map((p) => (p.address || "").split(",").slice(-2).join(",").trim()),
+	];
 
-	const parsed = phoneAlerts.parse({ title, text, region });
+	const parsed = phoneAlerts.parse({ title, text, regions });
+	if (!parsed.ok && parsed.why === "no address") {
+		return tellUnplaced(profileId, parsed, { places, postedAt, why: "no address" });
+	}
 	if (!parsed.ok) return { ignored: parsed.why, text: parsed.text };
 
-	const point = await phoneAlerts.place(parsed.query);
-	if (!point) return { ignored: "could not place the address", what: parsed.what, address: parsed.address };
-
-	const matches = geo.placesNear(point, places, DEFAULT_RADIUS_MILES);
+	// The first guess that lands inside a ring wins. A street that exists in
+	// several of the towns tried is only told if one of them is near.
+	let point = null;
+	let matches = [];
+	for (const query of parsed.queries) {
+		const found = await phoneAlerts.place(query);
+		if (!found) continue;
+		point = point || found;
+		matches = geo.placesNear(found, places, DEFAULT_RADIUS_MILES);
+		if (matches.length) {
+			point = found;
+			break;
+		}
+	}
+	if (!point) return tellUnplaced(profileId, parsed, { places, postedAt, why: "could not place the address" });
 	if (!matches.length) return { ignored: "not near a watched place", what: parsed.what, address: parsed.address };
 
 	const incident = phoneAlerts.incidentFrom(parsed, point, matches[0], postedAt);

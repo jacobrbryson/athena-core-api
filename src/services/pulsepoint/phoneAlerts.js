@@ -24,8 +24,11 @@
  *   - and an alert EXPIRES on a timer (PHONE_ALERT_TTL_MS) rather than being
  *     cleared, because nothing will ever tell us it is over.
  *
- * Anything that cannot be recognised or placed is dropped rather than guessed
- * at. A wrong pin on an emergency map is worse than no pin.
+ * A call that cannot be placed is never pinned on a guess — a wrong pin on an
+ * emergency map is worse than no pin — but it is still told, in words, without
+ * a distance (owner, 2026-10-04: "I'd rather get too many alerts ... than to
+ * not be confident that it's working"). The phone clears PulsePoint's own
+ * notification, so anything dropped here reaches nobody.
  */
 const { createHash } = require("node:crypto");
 const { TABLE, lookup, isAlertable } = require("./calltypes");
@@ -41,9 +44,18 @@ const PHONE_ALERT_TTL_MS = 3 * 60 * 60 * 1000;
 const GEOCODE_CACHE_MS = 60 * 60 * 1000;
 const geocoded = new Map(); // address -> { at, point }
 
-/** Never news to a neighbour: someone's medical call, a drill, a unit move. */
-const QUIET_CODES = new Set(["LA", "PS", "IFT", "CPR", "ME", "MCI", "TRNG", "STBY", "MOVE"]);
-const QUIET_CATEGORIES = new Set(["Medical"]);
+/**
+ * Not incidents at all: a training exercise, a unit on standby, a unit move.
+ *
+ * Medical calls are told like any other (owner, 2026-10-04, after a medical
+ * emergency down the block went unmentioned). Narrowing this again is the
+ * owner's call, not a tidy-up.
+ */
+const QUIET_CODES = new Set(["TRNG", "STBY", "MOVE"]);
+
+/** Reverse-geocoding where the phone is, cached per ~1 km square. */
+const REGION_CACHE_MS = 6 * 60 * 60 * 1000;
+const regionCache = new Map(); // "lat,lon" rounded -> { at, regions }
 
 /** Longest names first: "Confirmed Structure Fire" must beat "Structure Fire". */
 const CALL_TYPES = [...TABLE].sort((a, b) => b.description.length - a.description.length);
@@ -100,22 +112,34 @@ function addressIn(text, callType) {
 
 /**
  * A notification -> what we can act on, or a reason we cannot.
- * `region` ("Troutman, NC") is appended when the text carries no town, which
- * dispatch notifications usually do not.
+ * When the text carries no town, which dispatch notifications usually do not,
+ * each of `regions` ("28677", "Statesville, NC", "Troutman, NC") is a guess
+ * to try, in order; `queries` lists them and `query` is the first. `region`
+ * is the single-guess form.
  */
-function parse({ title, text, region }) {
+function parse({ title, text, region, regions }) {
 	const whole = clean(`${clean(title)} ${clean(text)}`);
 	if (!whole) return { ok: false, why: "empty" };
 	const callType = callTypeIn(whole);
 	if (!callType) return { ok: false, why: "no recognised call type", text: whole };
-	// The same judgement the feed makes, plus the ones that are not emergencies
-	// at all: a training exercise or a unit move is not news to a neighbour.
-	if (QUIET_CODES.has(callType.id) || QUIET_CATEGORIES.has(callType.category)) {
+	// Not emergencies at all: a training exercise or a unit move.
+	if (QUIET_CODES.has(callType.id)) {
 		return { ok: false, why: "not worth telling", what: callType.description, text: whole };
 	}
 	const address = addressIn(whole, callType);
-	if (!address) return { ok: false, why: "no address", what: callType.description, text: whole };
+	if (!address) {
+		return {
+			ok: false,
+			why: "no address",
+			code: callType.id,
+			what: callType.description,
+			serious: isAlertable(callType.id),
+			text: whole,
+		};
+	}
 	const hasTown = /,\s*[A-Za-z .]+/.test(address) || /\b[A-Z]{2}\b/.test(address);
+	const guesses = [...new Set([...(regions || []), region].filter((r) => typeof r === "string" && r.trim()))];
+	const queries = hasTown || !guesses.length ? [address] : guesses.map((r) => `${address}, ${r}`);
 	return {
 		ok: true,
 		code: callType.id,
@@ -123,7 +147,9 @@ function parse({ title, text, region }) {
 		category: callType.category,
 		serious: isAlertable(callType.id),
 		address,
-		query: hasTown || !region ? address : `${address}, ${region}`,
+		query: queries[0],
+		queries,
+		text: whole,
 	};
 }
 
@@ -142,6 +168,25 @@ async function place(query) {
 	}
 	geocoded.set(key, { at: Date.now(), point });
 	return point;
+}
+
+/**
+ * The towns to try for an address near `point` (where the phone is): its ZIP,
+ * then its town. Cached, and empty — never thrown — when the lookup fails.
+ */
+async function regionsNear(point) {
+	if (!point) return [];
+	const key = `${Number(point.latitude).toFixed(2)},${Number(point.longitude).toFixed(2)}`;
+	const hit = regionCache.get(key);
+	if (hit && Date.now() - hit.at < REGION_CACHE_MS) return hit.regions;
+	try {
+		const regions = await geocode.regionsAt(point);
+		regionCache.set(key, { at: Date.now(), regions });
+		return regions;
+	} catch (error) {
+		console.warn("[phone-alert] could not find the town for the phone's position:", error.message);
+		return [];
+	}
 }
 
 /**
@@ -177,11 +222,16 @@ function expired(incident, now = Date.now()) {
 module.exports = {
 	PULSEPOINT_PACKAGE,
 	PHONE_ALERT_TTL_MS,
+	QUIET_CODES,
 	parse,
 	place,
+	regionsNear,
 	incidentFrom,
 	expired,
 	callTypeIn,
 	addressIn,
-	_resetCache: () => geocoded.clear(),
+	_resetCache: () => {
+		geocoded.clear();
+		regionCache.clear();
+	},
 };

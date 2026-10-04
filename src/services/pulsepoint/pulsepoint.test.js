@@ -115,9 +115,10 @@ describe("watch", () => {
 		expect(hits[0].incident.alertable).toBe(false);
 	});
 
-	test("medical calls and far calls are not", async () => {
+	test("medical calls near home are told; far calls are not", async () => {
 		const list = [at("m1", "ME", 35.6745, -80.9073), at("f1", "SF", 35.9, -80.9073)];
-		expect(await watch.nearbyFor(1, { list, places: [home] })).toHaveLength(0);
+		const hits = await watch.nearbyFor(1, { list, places: [home] });
+		expect(hits.map((h) => h.incident.id)).toEqual(["m1"]);
 	});
 
 	test("recent (closed) calls are not", async () => {
@@ -338,9 +339,15 @@ describe("phone alerts (PulsePoint's own notifications)", () => {
 		expect(phone.callTypeIn("Firearms seized at 12 Oak Dr")).toBeNull();
 	});
 
-	test("ignores what is not news to a neighbour: medical calls, drills", () => {
-		expect(phone.parse({ title: "Medical Emergency", text: "12 Oak Dr", region }).why).toBe("not worth telling");
+	test("medical calls are read like any other; drills are not news", () => {
+		expect(phone.parse({ title: "Medical Emergency", text: "12 Oak Dr", region })).toMatchObject({ ok: true, code: "ME" });
 		expect(phone.parse({ title: "Training", text: "12 Oak Dr", region }).why).toBe("not worth telling");
+	});
+
+	test("tries every town it is given, in order, when the text names none", () => {
+		const p = phone.parse({ title: "Medical Emergency", text: "200 S Center St", regions: ["28677", "Statesville, NC", "TROUTMAN, NC"] });
+		expect(p.queries).toEqual(["200 S Center St, 28677", "200 S Center St, Statesville, NC", "200 S Center St, TROUTMAN, NC"]);
+		expect(p.query).toBe("200 S Center St, 28677");
 	});
 
 	test("refuses to guess when there is no call type or no address", () => {
@@ -367,5 +374,75 @@ describe("phone alerts (PulsePoint's own notifications)", () => {
 		const incident = phone.incidentFrom(parsed, { latitude: 35.6865, longitude: -80.9031 }, { miles: 0.93, place: { name: "Home" } }, null);
 		expect(incident).toMatchObject({ what: "Vehicle Fire", miles: 0.9, place: "Home", serious: true, via: "phone" });
 		expect(incident.id.startsWith("ph:")).toBe(true);
+	});
+});
+
+describe("recordPhoneAlert (where the phone is, and calls that cannot be placed)", () => {
+	const db = require("../../helpers/db");
+	const geocode = require("./geocode");
+	const phone = require("./phoneAlerts");
+	const watch = require("./watch");
+	const home = { uuid: "h", name: "Home", address: "1 Home Rd, Troutman, NC", latitude: 35.6741, longitude: -80.9073, radius_miles: 3, enabled: 1 };
+	// Downtown Statesville, ~8 miles north of home: only "you" covers it.
+	const dinner = { latitude: 35.7826, longitude: -80.8873 };
+
+	function fakeDb({ live = true } = {}) {
+		const nudges = [];
+		db.query.mockImplementation(async (sql, params) => {
+			if (/FROM athena_watch_place/.test(sql)) return [[home]];
+			if (/FROM athena_location_sample/.test(sql)) return [live ? [{ ...dinner, observed_at: new Date() }] : []];
+			if (/INSERT IGNORE INTO athena_nudge/.test(sql)) {
+				nudges.push(params);
+				return [{ affectedRows: 1 }];
+			}
+			if (/INSERT/.test(sql) || /UPDATE/.test(sql) || /DELETE/.test(sql)) return [{ affectedRows: 1 }];
+			return [[]];
+		});
+		return nudges;
+	}
+
+	beforeEach(() => {
+		phone._resetCache();
+		jest.restoreAllMocks();
+		jest.spyOn(require("../push"), "deliverNudge").mockResolvedValue({ sent: 1 });
+		jest.spyOn(require("../push"), "sendToProfile").mockResolvedValue({ sent: 1 });
+	});
+
+	test("a Statesville street is looked up in Statesville, not the home town", async () => {
+		fakeDb();
+		jest.spyOn(geocode, "regionsAt").mockResolvedValue(["28677", "Statesville, NC"]);
+		const lookup = jest.spyOn(geocode, "lookup").mockImplementation(async (q) =>
+			q === "200 S Center St, 28677" ? [{ latitude: 35.7810, longitude: -80.8870 }] : []
+		);
+		const out = await watch.recordPhoneAlert(1, {
+			title: "Medical Emergency",
+			text: "200 S Center St",
+			generate: async () => { throw new Error("no model"); },
+		});
+		expect(lookup.mock.calls[0][0]).toBe("200 S Center St, 28677");
+		expect(out.incident).toMatchObject({ what: "Medical Emergency", place: "you" });
+		expect(out.told).toBe(true);
+	});
+
+	test("an address nobody can find is still told, without a distance", async () => {
+		const nudges = fakeDb();
+		jest.spyOn(geocode, "regionsAt").mockResolvedValue(["28677"]);
+		jest.spyOn(geocode, "lookup").mockResolvedValue([]);
+		const out = await watch.recordPhoneAlert(1, { title: "Medical Emergency", text: "9 Nowhere Ln" });
+		expect(out).toMatchObject({ told: true, unplaced: "could not place the address", what: "Medical Emergency" });
+		expect(nudges[0][5]).toMatch(/couldn't place it on a map/);
+	});
+
+	test("a reverse-lookup failure falls back to the saved places' towns", async () => {
+		fakeDb({ live: false });
+		jest.spyOn(geocode, "regionsAt").mockRejectedValue(new Error("down"));
+		const lookup = jest.spyOn(geocode, "lookup").mockResolvedValue([{ latitude: 35.68, longitude: -80.9073 }]);
+		const out = await watch.recordPhoneAlert(1, {
+			title: "Vehicle Fire",
+			text: "12 Oak Dr",
+			generate: async () => { throw new Error("no model"); },
+		});
+		expect(lookup.mock.calls[0][0]).toBe("12 Oak Dr, Troutman, NC");
+		expect(out.incident).toMatchObject({ place: "Home" });
 	});
 });

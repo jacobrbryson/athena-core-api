@@ -74,4 +74,36 @@ async function lookup(query) {
 	})).filter((m) => Number.isFinite(m.latitude) && Number.isFinite(m.longitude));
 }
 
-module.exports = { lookup };
+/**
+ * A point -> the towns to try when an address arrives without one: its ZIP
+ * ("28677") first, then its town and state ("Statesville, NC"). Dispatch text
+ * rarely names the town, and the town of a saved place is the wrong guess when
+ * the person is somewhere else — the Census geocoder finds nothing for a
+ * Statesville street asked about as if it were in Troutman.
+ *
+ * Empty when the lookup fails; callers fall back to their saved places.
+ */
+async function regionsAt(point) {
+	const latitude = Number(point?.latitude);
+	const longitude = Number(point?.longitude);
+	if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return [];
+	const layers = ["2020 Census ZIP Code Tabulation Areas", "Incorporated Places", "County Subdivisions", "States"];
+	const url =
+		"https://geocoding.geo.census.gov/geocoder/geographies/coordinates" +
+		`?x=${longitude}&y=${latitude}&benchmark=Public_AR_Current&vintage=Current_Current` +
+		`&layers=${encodeURIComponent(layers.join(","))}&format=json`;
+	const found = (await get(url))?.result?.geographies || {};
+	const first = (layer, field) => {
+		const value = Array.isArray(found[layer]) ? found[layer][0]?.[field] : null;
+		return typeof value === "string" && value.trim() ? value.trim() : null;
+	};
+	const zip = first(layers[0], "ZCTA5");
+	const town = first(layers[1], "BASENAME") || first(layers[2], "BASENAME");
+	const state = first(layers[3], "STUSAB");
+	const out = [];
+	if (zip) out.push(zip);
+	if (town && state) out.push(`${town}, ${state}`);
+	return out;
+}
+
+module.exports = { lookup, regionsAt };

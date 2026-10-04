@@ -20,7 +20,11 @@ sources feed this:
   clears PulsePoint's own notification from the tray, so the alert you get is
   mine; I work out where it is, and if it's within range of a watched place —
   or within three miles of where your phone is, if you've allowed location — I
-  send you a push myself. Medical calls, drills and unit moves are never raised.
+  send you a push myself. Medical calls are included; only drills, standby
+  and unit moves are left out. When the call doesn't name a town, I look the
+  street up in the town your phone is in first, then your saved places' towns.
+  If I can't put it on a map at all, I still tell you what PulsePoint said —
+  just without a distance.
 - **National Weather Service alerts** for each watched place, checked every 15
   minutes (every 5 for an hour after something comes up). A warning that is
   happening now is urgent; a watch is not.
@@ -64,9 +68,10 @@ notify you about the call types you care about. It also has:
 - **I still hear PulsePoint's own sound:** I clear its notification the moment
   I read it, but only PulsePoint's own notification setting (Silent) can stop
   the sound that plays before that.
-- **A call was on PulsePoint but I said nothing:** I drop anything I can't
-  place — an address I can't find, a call type I don't recognise — rather than
-  guess, and anything outside every watched radius.
+- **A call was on PulsePoint but I said nothing:** it was outside every
+  watched radius (three miles of where your phone is, if location is on), its
+  call type wasn't one I recognise, or it was a drill, standby or unit move.
+  A call I recognise but can't place still reaches you, marked as unplaced.
 - **The weather service can't be read:** I'll tell you once, and I'll say so if
   you ask about the weather.
 
