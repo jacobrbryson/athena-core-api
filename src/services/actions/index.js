@@ -234,7 +234,10 @@ async function propose(profileId, sessionId, raw, ctx = {}) {
 
 	let params;
 	try {
-		params = action.normalize(raw.params || {}, ctx);
+		// Awaited because a descriptor may need to look something up to vouch
+		// for a param (remind_at_place resolves a place against the person's
+		// own points of interest). profileId is the caller's, never the model's.
+		params = await action.normalize(raw.params || {}, { ...ctx, profileId });
 	} catch (err) {
 		// The interesting failure. A model that keeps proposing invalid params
 		// is a prompt bug, and this line is where it shows up.

@@ -34,11 +34,11 @@ with an editable question; you choose when to send it. What is waiting for
 your approval lives on the bell in the top bar, visible from any screen —
 there is no separate Notifications card any more.
 
-The Community card and page show what is happening around the places you
-watch for emergencies — nearby 911 calls and National Weather Service alerts,
-including the quiet ones that never became a banner — and the places you've
-told me about, like a school or a church. "Watched places" on the page opens
-the list where you add them. Family and
+The Community card shows what is happening around your points of interest —
+nearby 911 calls and National Weather Service alerts, including the quiet ones
+that never became a banner — and the next local event you've saved. The
+Community page is where you keep your points of interest, neighbors and local
+events (see Community). Family and
 Work show up to three saved memories about people, pets, or work, explicitly
 labeled as memories. Memories, photos, and connected apps have direct shortcuts
 too. My controls provide hover, press, and keyboard-focus feedback. I respect
@@ -86,8 +86,8 @@ the panel.
 Empty cards say what would fill them, with the button that does: Add a news
 page when you have none (and Fix this page when one stopped answering), Scan
 more on an empty Mail card, Tell her about them when I know no family, Tell
-her what you're working towards when there are no saved goals, Add a place to
-watch on a quiet Community card with no places, and Retry when memories,
+her what you're working towards when there are no saved goals, Add a point of
+interest on a Community card with no places, and Retry when memories,
 nearby activity, approvals or news failed to load. A Tell her button only
 starts our chat — nothing is saved until you say it.
 
@@ -134,7 +134,8 @@ in memory and are cleared on sign-in, sign-out, access errors, and updates.
   `../../db/migrations/0032_news_watch.up.sql`.
 - Work connectors: `../../src/services/connectors/work.js`.
 - Frontend: `../../../companion/src/components/Dashboard.tsx` (Community reads
-  `GET /api/v1/dashboard/alert`, the incident watcher's stored situation)
+  `GET /api/v1/dashboard/alert`, the incident watcher's stored situation, and
+  `GET /api/v1/dashboard/community` — see `community.md`)
 - Shell and preserved chat: `../../../companion/src/pages/CompanionConsole.tsx`
 - Styling: `../../../companion/src/dashboard.css`
 - Sidebar profile avatar: `../../../companion/src/components/ProfileAvatar.tsx`.

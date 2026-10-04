@@ -71,13 +71,18 @@ const SEEN_WINDOW_HOURS = 24;
 const NUDGE_TTL_S = 3 * 60 * 60;
 
 
+/** What a point of interest is to the person. Labels and icons live in the app. */
+const PLACE_KINDS = new Set(["home", "family", "neighborhood", "church", "school", "town", "work", "business", "park", "other"]);
+
 const bad = (message) => Object.assign(new Error(message), { status: 400 });
 
 function toPlace(row) {
 	return {
 		uuid: row.uuid,
 		name: row.name,
+		kind: row.kind || "other",
 		address: row.address || null,
+		notes: row.notes || null,
 		latitude: Number(row.latitude),
 		longitude: Number(row.longitude),
 		radiusMiles: Number(row.radius_miles) || DEFAULT_RADIUS_MILES,
@@ -88,7 +93,7 @@ function toPlace(row) {
 /** Every place this person has saved, enabled or not, for the API. */
 async function listPlaces(profileId) {
 	const [rows] = await pool.query(
-		`SELECT uuid, name, address, latitude, longitude, radius_miles, enabled
+		`SELECT uuid, name, kind, address, notes, latitude, longitude, radius_miles, enabled
 		 FROM athena_watch_place WHERE profile_id = ? ORDER BY name = 'Home' DESC, name`,
 		[profileId]
 	);
@@ -108,12 +113,18 @@ async function savePlace(profileId, input = {}) {
 	if (!Number.isFinite(radius) || radius <= 0 || radius > 50) throw bad("Radius must be between 0 and 50 miles.");
 	const address = typeof input.address === "string" && input.address.trim() ? input.address.trim().slice(0, 255) : null;
 	const enabled = input.enabled === false ? 0 : 1;
+	// What the place is to the person. Left out, an existing place keeps its
+	// kind and notes — a radius change from the list must not wipe them.
+	const kind = PLACE_KINDS.has(input.kind) ? input.kind : null;
+	const notesGiven = input.notes !== undefined;
+	const notes = typeof input.notes === "string" && input.notes.trim() ? input.notes.trim().slice(0, 500) : null;
 	await pool.query(
-		`INSERT INTO athena_watch_place (uuid, profile_id, name, address, latitude, longitude, radius_miles, enabled)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO athena_watch_place (uuid, profile_id, name, kind, address, notes, latitude, longitude, radius_miles, enabled)
+		 VALUES (?, ?, ?, COALESCE(?, 'other'), ?, ?, ?, ?, ?, ?)
 		 ON DUPLICATE KEY UPDATE address = VALUES(address), latitude = VALUES(latitude),
-		   longitude = VALUES(longitude), radius_miles = VALUES(radius_miles), enabled = VALUES(enabled)`,
-		[randomUUID(), profileId, name, address, point.latitude, point.longitude, radius, enabled]
+		   longitude = VALUES(longitude), radius_miles = VALUES(radius_miles), enabled = VALUES(enabled),
+		   kind = COALESCE(?, kind), notes = IF(?, VALUES(notes), notes)`,
+		[randomUUID(), profileId, name, kind, address, notes, point.latitude, point.longitude, radius, enabled, kind, notesGiven ? 1 : 0]
 	);
 	return listPlaces(profileId);
 }
@@ -1209,6 +1220,7 @@ module.exports = {
 	listPlaces,
 	savePlace,
 	removePlace,
+	PLACE_KINDS,
 	wording,
 	worthTelling,
 };

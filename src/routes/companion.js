@@ -51,6 +51,18 @@ router.post('/dashboard/incidents/test', requireAuth, express.json({ limit: '1kb
 // because a handset speaks for itself (same rule as location samples).
 router.post('/dashboard/incidents/phone-alert', requireAuthOrDevice, express.json({ limit: '8kb' }), require('../controllers/nearbyIncidents').phoneAlert);
 
+// Community: points of interest (the places above, with what they are),
+// neighbours and local events — typed by the person, read into chat.
+router.get('/dashboard/community', requireAuth, require('../controllers/community').overview);
+router.get('/dashboard/community/contacts', requireAuth, require('../controllers/community').searchContacts);
+router.get('/dashboard/community/contacts/at', requireAuth, require('../controllers/community').contactsAtAddress);
+router.post('/dashboard/community/neighbors', requireAuth, express.json({ limit: '4kb' }), require('../controllers/community').saveNeighbor);
+router.patch('/dashboard/community/neighbors/:uuid', requireAuth, express.json({ limit: '4kb' }), require('../controllers/community').updateNeighbor);
+router.delete('/dashboard/community/neighbors/:uuid', requireAuth, require('../controllers/community').removeNeighbor);
+router.post('/dashboard/community/events', requireAuth, express.json({ limit: '4kb' }), require('../controllers/community').saveEvent);
+router.patch('/dashboard/community/events/:uuid', requireAuth, express.json({ limit: '4kb' }), require('../controllers/community').updateEvent);
+router.delete('/dashboard/community/events/:uuid', requireAuth, require('../controllers/community').removeEvent);
+
 // "Right now": one suggestion for the gap in front of them, and the two lists
 // it is drawn from. The suggestion route reads; it never acts. Places are read
 // on Athena's rhythm like news pages, so there is no route for setting one.

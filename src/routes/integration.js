@@ -17,6 +17,7 @@ const {
 	getConnector,
 	startConnect,
 	handleCallback,
+	completeCallback,
 	disconnectConnector,
 } = require("../controllers/connectors");
 const { requireAuth } = require("../middleware/auth");
@@ -58,6 +59,9 @@ router.post(
 // Declared before requireAuth on purpose.
 // -------------------------------------------------------------------
 router.get("/:provider/callback", requireKnownProvider, handleCallback);
+// The shared Google callback: the companion page Google returns to posts the
+// query here (see completeCallback). Same rule — the state is the credential.
+router.post("/callback", express.json({ limit: "8kb" }), completeCallback);
 
 // -------------------------------------------------------------------
 // Everything below requires an authenticated Athena user.

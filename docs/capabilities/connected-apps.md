@@ -87,9 +87,22 @@ reach your calendar.
   exchange, one credential per granted member (`completeGroup`); a member
   whose live link is on another account is kept, not swapped. A single member's
   disconnect skips the upstream revoke while a sibling is linked (Google's
-  revoke kills the whole grant). It returns through the already-registered
-  `/integrations/google_calendar/callback` (`callbackVia`), which hands a
-  state issued for the group to `completeGroup` (`oauth.stateProvider`).
+  revoke kills the whole grant).
+- Shared Google callback (owner, 2026-10-04): when `OAUTH_GOOGLE_CALLBACK_URL`
+  is set, every Google flow — gmail, google_calendar, google_contacts and the
+  `google` group — uses that ONE redirect URI, a companion page
+  (`../../../companion/src/pages/OAuthCallback.tsx`, `/oauth/google/callback`)
+  that posts the query to public `POST /api/v1/integrations/callback`
+  (`completeCallback` in `src/controllers/connectors.js`). The flow is found
+  from the single-use state (`oauth.stateProvider`); a non-Google state is
+  refused unconsumed (`oauth.usesGoogleCallback`). The access boundary
+  (`src/middleware/access.js`) exempts exactly `POST /integrations/callback`,
+  as it does the GET callbacks; `access.test.js` pins that. Unset, each provider keeps
+  `<PUBLIC_API_BASE_URL>/integrations/<provider>/callback` and the group
+  returns through `/integrations/google_calendar/callback` (`callbackVia`).
+  Strava, Whoop, Jira and Slack always use their own GET callbacks. Prod value
+  is `_OAUTH_GOOGLE_CALLBACK_URL` in `../../cloudbuild.yaml`; it must be an
+  Authorized redirect URI on the Google OAuth client before it deploys.
 - Sign-in hand-off: `../../../companion/src/auth/AuthContext.tsx` starts the
   `google` group flow after a web sign-in (not Android), returning with
   `?from=signin`; the console only opens this panel if something was declined

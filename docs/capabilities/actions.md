@@ -29,6 +29,9 @@ Two things I can propose today:
   on your device.
 - **Save a fact** to my long-term memory, when you ask me to remember
   something specific.
+- **Set a place reminder** — "next time I'm at Missy's, remind me to…". See
+  [place-reminders.md](place-reminders.md); the card shows the address I'll
+  watch for, so you can catch the wrong place before it's set.
 
 If you get tired of approving the same thing, you can tell me to stop asking:
 tick **"Do this without asking me each time"** and I'll just do that one kind

@@ -134,6 +134,39 @@ describe("http layer", () => {
 		expect(mockInvalidate).not.toHaveBeenCalled();
 	});
 
+	it("does not flag the link when the API is disabled in the Cloud project", async () => {
+		// The People API answered every Google Contacts read this way until it
+		// was enabled (2026-10-04) — newer APIs put the reason in error.details,
+		// with no errors array — and each one flagged a healthy link as revoked.
+		global.fetch.mockResolvedValue(
+			apiResponse(
+				{
+					error: {
+						code: 403,
+						message: "People API has not been used in project 12367074465 before or it is disabled.",
+						status: "PERMISSION_DENIED",
+						details: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "SERVICE_DISABLED", domain: "googleapis.com" }],
+					},
+				},
+				{ ok: false, status: 403 }
+			)
+		);
+
+		const err = await strava.listActivities(PROFILE).catch((e) => e);
+		expect(err.code).toBe("provider_error");
+		expect(err.message).toMatch(/has not been used in project/);
+		expect(mockInvalidate).not.toHaveBeenCalled();
+	});
+
+	it("still flags the link on a 403 it cannot explain", async () => {
+		global.fetch.mockResolvedValue(
+			apiResponse({ error: { code: 403, status: "PERMISSION_DENIED", message: "Request had insufficient authentication scopes." } }, { ok: false, status: 403 })
+		);
+		const err = await strava.listActivities(PROFILE).catch((e) => e);
+		expect(isNotConnected(err)).toBe(true);
+		expect(mockInvalidate).toHaveBeenCalled();
+	});
+
 	it("does not flag the link when one calendar of many answers 403", async () => {
 		// A calendar the account may list but not read in detail says nothing
 		// about the grant, and the fan-out is wide enough to trip a rate limit

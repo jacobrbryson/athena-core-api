@@ -67,3 +67,10 @@ test("the existing public paths still pass", async () => {
 		next: true,
 	});
 });
+
+test("the shared Google callback is public as a POST to that exact path only", async () => {
+	await expect(run("/integrations/callback", { method: "POST" })).resolves.toEqual({ next: true });
+	await expect(run("/integrations/callback")).resolves.toMatchObject({ status: 401 });
+	await expect(run("/integrations/callback/extra", { method: "POST" })).resolves.toMatchObject({ status: 401 });
+	await expect(run("/integrations/google/connect", { method: "POST" })).resolves.toMatchObject({ status: 401 });
+});

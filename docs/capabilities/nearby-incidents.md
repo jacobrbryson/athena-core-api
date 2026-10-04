@@ -2,7 +2,7 @@
 id: nearby-incidents
 title: Nearby emergencies
 summary: I tell you when there's a 911 call or a serious weather warning close to the places you've asked me to watch.
-where: Athena's notifications (in-app, phone, browser, text), the alert banner, in conversation; places under your menu → Watched places
+where: Athena's notifications (in-app, phone, browser, text), the alert banner, in conversation; places on the Community page → Points of interest
 status: live
 surfaces: [companion]
 audiences: [adult]
@@ -40,10 +40,11 @@ server — on every device — until something new happens, which opens it again
 
 ## Where to find it
 
-Your menu → **Watched places**: add home, family homes or anywhere else by
-street address or your current location, each with its own radius, and pause
-any of them. The same panel offers notification access so the Athena app can
-read PulsePoint Respond's notifications; that's granted in Android settings and
+The **Community** page → **Points of interest**: add home, family homes, your
+church or anywhere else by street address or your current location, each with
+its own radius, and pause any of them. Further down the same page, **Emergency
+alerts on this phone** offers notification access so the Athena app can read
+PulsePoint Respond's notifications; that's granted in Android settings and
 you can revoke it there. PulsePoint Respond has to be installed and set to
 notify you about the call types you care about. It also has:
 
@@ -60,8 +61,8 @@ notify you about the call types you care about. It also has:
 ## When it doesn't work
 
 - **No 911 calls ever arrive:** check that PulsePoint Respond is installed and
-  notifying you, and that notification access for Athena is on (Watched places
-  shows its state). If Android says "Restricted setting" when you try to switch
+  notifying you, and that notification access for Athena is on (Community →
+  Emergency alerts on this phone shows its state). If Android says "Restricted setting" when you try to switch
   it on, open Athena's app info → ⋮ → Allow restricted settings, then try again
   — Android does that for apps not installed from the Play Store. Then press
   Test PulsePoint alert.
@@ -113,7 +114,9 @@ rules. Background calls are charged to `ATHENA_BACKGROUND_GOOGLE_ID`.
   "Got it", migration `../../db/migrations/0044_alert_ack.up.sql`),
   `athena_watch_place`.
 - Banner: `../../../companion/src/components/EmergencyBanner.tsx`; places:
-  `../../../companion/src/components/PlacesPanel.tsx`.
+  `../../../companion/src/components/Community.tsx` (points of interest, on the
+  Community page since 2026-10-04 — the Watched places drawer is gone); phone
+  setup and test alerts: `../../../companion/src/components/EmergencyAlertSetup.tsx`.
 - Tests: `../../src/services/pulsepoint/pulsepoint.test.js` — pure, no network;
   `testAlert.test.js` — the test path, mocked DB/push/geocoder.
 - History: the web board (`api.pulsepoint.org`, agency `EMS1681`) was polled

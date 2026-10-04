@@ -92,15 +92,26 @@ const NON_AUTH_403_REASONS = new Set([
 	"forbiddenfornonorganizer",
 	"notacalendaruser",
 	"requiredaccesslevel",
+	// The API is switched off in the Cloud project — a setup problem the
+	// owner fixes in the console, not the person withdrawing consent. The
+	// legacy shape says accessNotConfigured; newer APIs (People, for Google
+	// Contacts) say SERVICE_DISABLED in error.details, and are refused this
+	// way until enabled (2026-10-04: every Contacts lookup flagged the link).
+	"accessnotconfigured",
+	"service_disabled",
 ]);
 
 /** Every reason-ish string a provider's error body offers, lowercased. */
 function errorReasons(data) {
 	const error = (data && data.error) || {};
 	const list = Array.isArray(error.errors) ? error.errors : [];
+	// google.rpc details (ErrorInfo) carry the machine-readable reason on the
+	// newer Google APIs, which send no `errors` array at all.
+	const details = Array.isArray(error.details) ? error.details : [];
 	return [
 		...list.map((e) => e && e.reason),
 		...list.map((e) => e && e.domain),
+		...details.map((d) => d && d.reason),
 		error.status,
 		typeof data?.error === "string" ? data.error : null,
 	]

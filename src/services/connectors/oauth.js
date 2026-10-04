@@ -42,8 +42,19 @@ function httpError(message, status, code) {
 // Configuration
 // ---------------------------------------------------------------------------
 
+/**
+ * Google's flows: the members of the google group and the group itself. They
+ * share one OAuth client, so they can share one redirect URI.
+ */
+function usesGoogleCallback(providerId) {
+	return providerId === "google" || getGroup("google").members.includes(providerId);
+}
+
 /** Where the provider sends the browser back. Must match the app registration. */
 function redirectUri(providerId) {
+	if (config.OAUTH_GOOGLE_CALLBACK_URL && usesGoogleCallback(providerId)) {
+		return config.OAUTH_GOOGLE_CALLBACK_URL;
+	}
 	const base = config.PUBLIC_API_BASE_URL;
 	if (!base) {
 		throw httpError(
@@ -774,6 +785,7 @@ module.exports = {
 	disconnect,
 	purgeExpiredStates,
 	redirectUri,
+	usesGoogleCallback,
 	REAUTH_RETRY_COOLDOWN_MS,
 	clearReauthBackoff: () => reauthBackoff.clear(),
 	resolveReturnTarget,

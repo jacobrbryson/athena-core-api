@@ -89,7 +89,7 @@ const PUBLIC_COLUMNS = `uuid, trigger_id, urgency, text, status,
 	created_at, expires_at, delivered_at, facts`;
 
 /** Triggers that live outside the registry but still speak through nudges. */
-const EXTERNAL_LABELS = { nearby_incident: "Nearby emergency" };
+const EXTERNAL_LABELS = { nearby_incident: "Nearby emergency", place_reminder: "Reminder" };
 
 /**
  * The pins for an emergency nudge, so the app can draw each alert on a map:

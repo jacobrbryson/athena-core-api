@@ -31,7 +31,7 @@ If the phone says permission is needed, allow location for Athena in Android set
 
 ## Limits
 
-This first version reports while the Android app is running; it does not claim background location collection. Turning on location context does not turn on Initiative or create a notification by itself. The phone may also stop reporting when Android location services or its permission are off.
+The phone doesn't track you. It sends a position only at a few moments: when a PulsePoint call comes in, and when you arrive at a place you've set a place reminder for (see place-reminders.md). Turning on location context does not turn on Initiative or create a notification by itself. The phone may also stop reporting when Android location services or its permission are off.
 
 ## Under the hood
 

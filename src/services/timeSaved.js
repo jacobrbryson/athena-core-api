@@ -27,6 +27,7 @@ const MINUTES = {
   remember_fact: 0.5, // writing the note down yourself
   dismiss_email: 0, // hides a row in Athena's own list; Gmail is untouched
   look_through_camera: 0, // no fair hand-done equivalent to price yet
+  remind_at_place: 0, // nothing you'd do by hand that this replaces, so nothing to price
 };
 
 const labels = new Map(ACTIONS.map((a) => [a.id, a.label]));

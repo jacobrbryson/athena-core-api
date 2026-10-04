@@ -122,6 +122,7 @@ module.exports = (clients) => {
 	router.use("/actions", actionsRouter);
 	router.use("/initiative", initiativeRouter);
 	router.use("/location", locationRouter);
+	router.use("/place-reminders", require("./placeReminders"));
 	router.use("/heart", heartRateRouter);
 	// Twilio, which has no session and no device token. It authenticates by
 	// signing the request; the controller verifies that before anything else.

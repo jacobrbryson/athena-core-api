@@ -14,6 +14,8 @@ const actions = require("../services/actions");
 const initiative = require("../services/initiative");
 const nearbyIncidents = require("../services/pulsepoint/watch");
 const familyHealth = require("../services/familyHealth");
+const community = require("../services/community");
+const placeReminders = require("../services/placeReminders");
 const dreams = require("../services/dreams");
 const { audienceForSession } = require("../services/audience");
 const sessionParticipants = require("../services/sessionParticipant");
@@ -297,6 +299,36 @@ async function processAiResponse(session, message, clients, ctx = {}) {
             : healthBlock;
       } catch (e) {
         console.warn("[gemini] family health block failed:", e.message);
+      }
+    }
+
+    // Their community: points of interest, neighbours and local events from
+    // the Community page. The owner asked for her to always know these, so
+    // the block rides along every adult turn (capped in the service). Never
+    // fatal.
+    if (mayPropose) {
+      try {
+        const communityBlock = await community.promptBlock(session.profile_id);
+        if (communityBlock)
+          initiativeBlock = initiativeBlock
+            ? [initiativeBlock, communityBlock].join("\n\n")
+            : communityBlock;
+      } catch (e) {
+        console.warn("[gemini] community block failed:", e.message);
+      }
+    }
+
+    // Place reminders she has set ("next time I'm at Missy's..."), and whether
+    // location sharing is on so she never promises one that cannot fire.
+    if (mayPropose) {
+      try {
+        const reminderBlock = await placeReminders.promptBlock(session.profile_id);
+        if (reminderBlock)
+          initiativeBlock = initiativeBlock
+            ? [initiativeBlock, reminderBlock].join("\n\n")
+            : reminderBlock;
+      } catch (e) {
+        console.warn("[gemini] place reminder block failed:", e.message);
       }
     }
 

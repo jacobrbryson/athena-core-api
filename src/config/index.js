@@ -19,6 +19,12 @@ module.exports = {
 	// this and must match what is registered with each provider:
 	//   <PUBLIC_API_BASE_URL>/integrations/<provider>/callback
 	PUBLIC_API_BASE_URL: process.env.PUBLIC_API_BASE_URL || "",
+	// One redirect URI for every Google flow (Gmail, Calendar, Contacts and
+	// the sign-in group): a page on the companion app that hands the code to
+	// POST /integrations/callback. Unset, each provider keeps its own
+	// <PUBLIC_API_BASE_URL>/integrations/<provider>/callback. Must be
+	// registered on the Google OAuth client before it is set.
+	OAUTH_GOOGLE_CALLBACK_URL: process.env.OAUTH_GOOGLE_CALLBACK_URL || "",
 	// Origins the callback may send the browser back to. The first is the
 	// default. An empty list means local dev: the callback answers with JSON
 	// instead of redirecting. Anything not listed is rejected, so the public

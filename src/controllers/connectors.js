@@ -93,20 +93,15 @@ async function startConnect(req, res) {
  * comes from the single-use state alone. Ends in a redirect back to the app
  * when an allowlisted return target is configured, or JSON in local dev.
  */
-async function handleCallback(req, res) {
-	let provider = req.params.provider;
+/**
+ * Finish a flow for `provider` (a provider or a group id). Returns where the
+ * browser goes next — `redirect`, the allowlisted return target with the
+ * outcome appended — or, with no return target (local dev), a JSON `body`.
+ * Errors that know their return target come back as a redirect too: a failed
+ * callback is a browser navigation, not an API call.
+ */
+async function finishCallback(provider, callback) {
 	try {
-		const callback = {
-			code: req.query.code,
-			state: req.query.state,
-			error: req.query.error,
-			errorDescription: req.query.error_description,
-		};
-		// A group returns through a member's registered callback (see
-		// `callbackVia` in the registry). The state says which flow it was;
-		// completeGroup still consumes it scoped to the group.
-		const carried = groupCarriedBy(provider);
-		if (carried && (await oauth.stateProvider(callback.state)) === carried) provider = carried;
 		if (isGroup(provider)) {
 			const result = await oauth.completeGroup(provider, callback);
 			const outcome = {
@@ -117,37 +112,81 @@ async function handleCallback(req, res) {
 				kept: result.kept.join(","),
 				declined: result.declined.join(","),
 			};
-			if (result.redirectTo) return res.redirect(302, appendParams(result.redirectTo, outcome));
-			return res.json({ success: true, ...outcome });
+			if (result.redirectTo) return { redirect: appendParams(result.redirectTo, outcome) };
+			return { body: { success: true, ...outcome } };
 		}
 		const result = await oauth.complete(provider, callback);
 		if (result.redirectTo) {
-			return res.redirect(
-				302,
-				appendParams(result.redirectTo, { integration: provider, status: "connected" })
-			);
+			return { redirect: appendParams(result.redirectTo, { integration: provider, status: "connected" }) };
 		}
-		return res.json({
-			success: true,
-			provider,
-			connected: true,
-			link: result.credential,
-		});
+		return { body: { success: true, provider, connected: true, link: result.credential } };
 	} catch (err) {
-		// A failed callback is a browser navigation, not an API call: send the
-		// user back to the app with a reason rather than a JSON error page.
 		const status = Number.isInteger(err?.status) ? err.status : 500;
 		if (status >= 500) console.error("[connectors] callback", err);
 		if (err?.redirectTo) {
-			return res.redirect(
-				302,
-				appendParams(err.redirectTo, {
+			return {
+				redirect: appendParams(err.redirectTo, {
 					integration: provider,
 					status: "error",
 					reason: err.code || "failed",
-				})
-			);
+				}),
+			};
 		}
+		throw err;
+	}
+}
+
+const callbackFrom = (source) => ({
+	code: source.code,
+	state: source.state,
+	error: source.error,
+	errorDescription: source.error_description,
+});
+
+/** GET /integrations/:provider/callback — the provider redirects a browser here. */
+async function handleCallback(req, res) {
+	let provider = req.params.provider;
+	try {
+		const callback = callbackFrom(req.query);
+		// A group returns through a member's registered callback (see
+		// `callbackVia` in the registry). The state says which flow it was;
+		// completeGroup still consumes it scoped to the group.
+		const carried = groupCarriedBy(provider);
+		if (carried && (await oauth.stateProvider(callback.state)) === carried) provider = carried;
+		const done = await finishCallback(provider, callback);
+		if (done.redirect) return res.redirect(302, done.redirect);
+		return res.json(done.body);
+	} catch (err) {
+		return sendError(res, err, "Authorization failed");
+	}
+}
+
+/**
+ * POST /integrations/callback — the shared Google callback. Google sends the
+ * browser to one page on the companion app (config.OAUTH_GOOGLE_CALLBACK_URL)
+ * for every Google flow; that page posts the query here and navigates to the
+ * `redirect` it gets back.
+ *
+ * Public for the same reason the GET callback is: identity comes only from the
+ * single-use state. The state also names the flow, and only Google's flows may
+ * finish here — any other provider's state is refused (and left unconsumed),
+ * so this route can never complete a flow its redirect URI didn't start.
+ */
+async function completeCallback(req, res) {
+	res.set("Cache-Control", "no-store");
+	try {
+		const callback = callbackFrom(req.body || {});
+		const provider = await oauth.stateProvider(callback.state);
+		if (!provider || !oauth.usesGoogleCallback(provider)) {
+			return res.status(400).json({
+				success: false,
+				code: "state_invalid",
+				message: "That sign-in link has expired or was already used. Start again from Connected apps.",
+			});
+		}
+		const done = await finishCallback(provider, callback);
+		return res.json(done.redirect ? { success: true, redirect: done.redirect } : done.body);
+	} catch (err) {
 		return sendError(res, err, "Authorization failed");
 	}
 }
@@ -190,5 +229,6 @@ module.exports = {
 	getConnector,
 	startConnect,
 	handleCallback,
+	completeCallback,
 	disconnectConnector,
 };

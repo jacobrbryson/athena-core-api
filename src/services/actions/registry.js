@@ -34,6 +34,7 @@ const memory = require("../memory");
 const lookRequests = require("../lookRequests");
 const unsubscribe = require("../unsubscribe");
 const emailDraft = require("../emailDraft");
+const placeReminders = require("../placeReminders");
 
 /** A rejection that is the model's fault, not the person's or the server's. */
 function invalid(message) {
@@ -329,6 +330,62 @@ const ACTIONS = [
 				visibility: "private",
 			});
 			return { ref: saved?.uuid || null, detail: null };
+		},
+	},
+
+	// Place reminders (services/placeReminders.js), added on the owner's
+	// instruction 2026-10-04: "next time I'm at Missy's, remind me to ...".
+	// The card is the address check — it names the exact point that will be
+	// watched, resolved here rather than taken from the model.
+	{
+		id: "remind_at_place",
+		label: "Set a reminder for a place",
+		provider: null,
+		consentType: "action_authority",
+		// Removable from the Community page at any time, and it only ever
+		// sends the person a notification.
+		reversible: true,
+		standing: true,
+		describe:
+			"Set a reminder that fires when the person next arrives at a place — " +
+			'"next time I\'m at Missy\'s, remind me to ...", "whenever I\'m at church, ' +
+			'remind me ...". Before proposing, say back which place you mean and its ' +
+			"address from their points of interest, so they can correct you. Not for " +
+			"time-based reminders.",
+		params: {
+			place: "The point of interest's name exactly as listed in their community, e.g. \"Missy's\". Required unless address is given.",
+			address: "A US street address with town, only when the place is not one of their points of interest.",
+			place_name: "What to call an address-only place, e.g. \"Missy's\". Optional.",
+			reminder: "What to remind them, in a short sentence addressed to them, e.g. \"Bring back her casserole dish\". Required.",
+			repeats: '"next_visit" (default, fires once) or "every_visit" when they said whenever/every time.',
+		},
+
+		async normalize(raw = {}, ctx = {}) {
+			if (!ctx.profileId) throw invalid("A place reminder needs a person");
+			const reminder = str(raw.reminder, 300);
+			if (!reminder) throw invalid("A place reminder needs something to remind them");
+			const repeats = raw.repeats === undefined || raw.repeats === null || raw.repeats === "" ? "next_visit" : raw.repeats;
+			if (repeats !== "next_visit" && repeats !== "every_visit") {
+				throw invalid('Repeats must be "next_visit" or "every_visit"');
+			}
+			const place = await placeReminders.resolvePlace(ctx.profileId, raw);
+			return { ...place, reminder, repeats };
+		},
+
+		summarize(p) {
+			const when = p.repeats === "every_visit" ? "Every time" : "Next time";
+			const where = p.address ? `${p.place_name} (${p.address})` : p.place_name;
+			return `${when} you get to ${where}, remind you: "${p.reminder}"`.slice(0, 500);
+		},
+
+		async execute(profileId, params, ctx = {}) {
+			const { uuid, locationSharing } = await placeReminders.create(profileId, params, {
+				actionUuid: ctx.actionUuid || null,
+			});
+			return {
+				ref: uuid,
+				detail: locationSharing ? null : "Set, but location sharing is off, so it can't fire yet",
+			};
 		},
 	},
 

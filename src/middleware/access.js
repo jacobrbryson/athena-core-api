@@ -23,8 +23,15 @@ const publicPaths = new Set(["/modes", "/llm/manifest", "/devices/pair", "/auth/
 // state lookup is what actually authenticates the request.
 const publicPatterns = [/^\/integrations\/[A-Za-z0-9_-]{1,64}\/callback$/];
 
+// The shared Google callback (owner, 2026-10-04): Google returns the browser
+// to a companion page, which posts the query here. Same reason, same proof —
+// the single-use state — and the controller refuses any non-Google flow.
+// POST and this exact path only.
+const SHARED_CALLBACK = "/integrations/callback";
+
 function isPublicPath(req) {
 	if (publicPaths.has(req.path)) return true;
+	if (req.method === "POST" && req.path === SHARED_CALLBACK) return true;
 	return req.method === "GET" && publicPatterns.some((re) => re.test(req.path));
 }
 

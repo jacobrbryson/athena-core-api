@@ -71,7 +71,9 @@ and by the next morning everything I'd linked from your contacts is gone too.
   `gmail` and `google_calendar`. Group consent: `beginGroup` / `completeGroup`
   / `disconnectGroup` in `src/services/connectors/oauth.js`, routed from
   `src/controllers/connectors.js` (`/integrations/google/connect`,
-  returning through `/integrations/google_calendar/callback`,
+  returning through the shared Google callback page (see
+  `connected-apps.md`; `/integrations/google_calendar/callback` when it is
+  unset),
   `DELETE /integrations/google`).
 - Dreams: `src/services/dreams/dream.js` reads contacts for adults with an
   active link and mirrors them into the code-owned `_contact` table
