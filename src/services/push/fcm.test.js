@@ -59,3 +59,25 @@ describe("fcm.send", () => {
 		expect(body.message.data.uuid).toBe("7");
 	});
 });
+
+describe("fcm.send dataOnly (notification buttons)", () => {
+	let sent;
+	beforeEach(() => {
+		fcm.reset();
+		sent = null;
+		global.fetch = jest.fn(async (url, init) => {
+			sent = { url, init };
+			return { ok: true, status: 200, text: async () => "" };
+		});
+	});
+
+	test("carries no notification block, so the app draws it, with title/body/tag in data", async () => {
+		await fcm.send("device-token", { title: "Athena", body: "Tree down", data: { uuid: 7 }, collapseKey: "nudge-7", dataOnly: true });
+		expect(sent).not.toBeNull();
+		const body = JSON.parse(sent.init.body);
+		expect(body.message.notification).toBeUndefined();
+		expect(body.message.android.notification).toBeUndefined();
+		expect(body.message.data).toMatchObject({ uuid: "7", title: "Athena", body: "Tree down", tag: "nudge-7" });
+		expect(body.message.android.priority).toBe("high");
+	});
+});

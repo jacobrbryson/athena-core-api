@@ -97,7 +97,7 @@ async function authorized() {
  * an ordinary refusal: a dead handset must not be able to fail the pass that
  * was trying to reach five other people.
  */
-async function send(token, { title, body, data = {}, collapseKey } = {}) {
+async function send(token, { title, body, data = {}, collapseKey, dataOnly = false } = {}) {
 	let auth;
 	try {
 		auth = await authorized();
@@ -106,26 +106,34 @@ async function send(token, { title, body, data = {}, collapseKey } = {}) {
 	}
 	if (!auth) return { ok: false, dead: false, reason: "not_configured" };
 
+	const tag = collapseKey || "athena";
+	// Every value must be a string: FCM rejects the whole message otherwise,
+	// and a nudge uuid arriving as a number is the obvious way to trip that.
+	const strings = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, String(v)]));
 	const message = {
-		message: {
-			token,
-			notification: { title, body },
-			// Every value must be a string: FCM rejects the whole message
-			// otherwise, and a nudge uuid arriving as a number is the obvious
-			// way to trip that.
-			data: Object.fromEntries(
-				Object.entries(data).map(([k, v]) => [k, String(v)])
-			),
-			android: {
-				// A later nudge replaces an earlier unread one rather than
-				// stacking. The interruption budget already decided the person
-				// should hear from her at most this often; a pile of
-				// notifications would quietly undo that.
-				collapseKey: collapseKey || "athena",
-				priority: "high",
-				notification: { tag: collapseKey || "athena" },
-			},
-		},
+		message: dataOnly
+			? {
+					// No `notification` block: Android would draw that itself and
+					// never run the app, which is the only place the Acknowledge /
+					// Remind me in 15 buttons can come from. The app draws it from
+					// these fields (AthenaPushService). High priority so it is
+					// delivered — and the app woken — at once, even in Doze.
+					token,
+					data: { ...strings, title: String(title), body: String(body), tag },
+					android: { collapseKey: tag, priority: "high" },
+				}
+			: {
+					token,
+					notification: { title, body },
+					data: strings,
+					android: {
+						// Per nudge (see push/index.js deliverNudge): a redelivery
+						// of the same one replaces it, two different ones stack.
+						collapseKey: tag,
+						priority: "high",
+						notification: { tag },
+					},
+				},
 	};
 
 	const controller = new AbortController();

@@ -32,6 +32,13 @@ me open to hear it — and this browser can be one of the places I reach, so a
 closed tab isn't the same as me having nothing to say. You can also verify a
 phone number for text messages in the same panel.
 
+**On an Android phone, each notification has two buttons.** "Acknowledge"
+clears it and tells me you've seen it — for an emergency alert that buries
+those calls for good, the same as "Got it" on the banner. "Remind me in 15"
+clears it and brings the same notification back in about fifteen minutes;
+that happens on the phone, so it works without signal. Both need the app
+version from 2026-10-04 or later.
+
 **You can check any of that without waiting for me to have something to say.**
 There's a button that sends you a test notification, and it tells you which of
 your devices it actually arrived on and what the others said when they refused.

@@ -36,12 +36,22 @@ const webpush = require("./webpush");
 const sms = require("./sms");
 
 /** Providers we can actually deliver to. A device may only register these. */
-const PROVIDERS = new Set(["fcm", "webpush", "twilio"]);
+const PROVIDERS = new Set(["fcm", "fcm-actions", "webpush", "twilio"]);
 
 /** Platforms with a real push story. */
 const PUSHABLE_PLATFORMS = new Set(["android", "car", "web", "sms"]);
 
-const TRANSPORTS = { fcm, webpush, twilio: sms };
+/**
+ * "fcm-actions": an Android app new enough to draw Athena's notifications
+ * itself, with Acknowledge / Remind me in 15 buttons (2026-10-04). It gets a
+ * data-only message, so its own code always runs. An older app registers plain
+ * "fcm" and keeps the system-drawn notification — a data-only push would show
+ * it nothing at all — so the switch happens per phone, as each one updates.
+ */
+const ANDROID_ACTIONS = "fcm-actions";
+const fcmActions = { send: (token, message) => fcm.send(token, { ...message, dataOnly: true }) };
+
+const TRANSPORTS = { fcm, [ANDROID_ACTIONS]: fcmActions, webpush, twilio: sms };
 
 /**
  * The provider a platform is allowed to register.
@@ -58,6 +68,12 @@ const PROVIDER_FOR_PLATFORM = {
 	// reach you — even though nothing about it is a device.
 	sms: "twilio",
 };
+
+/** The provider this platform may hold: its pinned one, or the actions variant an Android app can ask for. */
+function providerFor(platform, requested) {
+	if (platform === "android" && requested === ANDROID_ACTIONS) return ANDROID_ACTIONS;
+	return PROVIDER_FOR_PLATFORM[platform] || requested;
+}
 
 function failure(message, status, code) {
 	return Object.assign(new Error(message), { status, code });
@@ -82,7 +98,7 @@ function failure(message, status, code) {
  * decides the provider — see PROVIDER_FOR_PLATFORM.
  */
 async function registerToken(deviceId, token, { provider = "fcm", platform = null } = {}) {
-	const resolved = PROVIDER_FOR_PLATFORM[platform] || provider;
+	const resolved = providerFor(platform, provider);
 	if (!PROVIDERS.has(resolved)) {
 		throw failure("Unsupported push provider", 400, "bad_provider");
 	}
@@ -393,7 +409,7 @@ async function reachableDevices(profileId) {
 		// failing it would tick the failure counter and eventually look like a
 		// handset problem. Web rows predating the webpush transport are the
 		// real case: they carry `fcm` because that was the only provider.
-		if (PROVIDER_FOR_PLATFORM[row.platform] !== row.push_provider) {
+		if (providerFor(row.platform, row.push_provider) !== row.push_provider) {
 			console.warn(
 				`[push] device ${row.id} is ${row.platform} but registered ${row.push_provider}; skipping`
 			);

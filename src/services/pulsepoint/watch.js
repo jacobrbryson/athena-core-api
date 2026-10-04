@@ -523,6 +523,28 @@ async function acknowledge(profileId, key) {
 }
 
 /**
+ * "Acknowledge" on an emergency push: buries the calls and warnings that push
+ * was about, exactly as "Got it" on the banner would. Unlike the banner there
+ * is no stale-key question — the push names its own items (facts.incidentIds),
+ * and those are precisely what the person read. Any other nudge buries nothing.
+ */
+async function acknowledgeNudge(profileId, nudgeUuid) {
+	const [rows] = await pool.query(
+		"SELECT trigger_id, facts FROM athena_nudge WHERE uuid = ? AND profile_id = ? LIMIT 1",
+		[String(nudgeUuid || ""), profileId]
+	);
+	const row = rows[0];
+	if (!row || row.trigger_id !== TRIGGER_ID) return { buried: 0 };
+	const ids = (parseJson(row.facts)?.incidentIds || []).filter((id) => typeof id === "string" && id);
+	if (!ids.length) return { buried: 0 };
+	await pool.query(
+		`INSERT IGNORE INTO athena_alert_ack_item (profile_id, item_id) VALUES ${ids.map(() => "(?, ?)").join(", ")}`,
+		ids.flatMap((id) => [profileId, id.slice(0, 128)])
+	);
+	return { buried: ids.length };
+}
+
+/**
  * The situation minus everything acknowledged — what the banner, the chat
  * prompt, the dashboard and the incident list show. When anything was taken
  * out, the wording is rebuilt by the rules from what is left (the stored
@@ -1311,6 +1333,7 @@ module.exports = {
 	getSituation,
 	visibleSituation,
 	acknowledge,
+	acknowledgeNudge,
 	sourcesHealth,
 	isDue,
 	rhythmFor,

@@ -130,6 +130,40 @@ async function lookupAddress(req, res) {
 }
 
 /**
+ * "Acknowledge" on a phone notification (2026-10-04): POST
+ * /dashboard/notifications/:uuid/ack, from the Android app's notification
+ * button with its device token.
+ *
+ * Buries what an emergency push was about (watch.acknowledgeNudge — the same
+ * forever as "Got it"), and records the nudge as engaged: the person read it
+ * and said so. Never as "dismissed", which is "not now" and would teach the
+ * trigger's score that the alert was unwanted.
+ */
+async function acknowledgePush(req, res) {
+  res.set('Cache-Control', 'no-store');
+  let profileId = null;
+  if (req.user?.kind === 'device') profileId = req.user.profileId;
+  else {
+    const actor = await requireAdultActor(req, res);
+    if (!actor) return;
+    profileId = actor.profileId;
+  }
+  const uuid = String(req.params.uuid || '').slice(0, 36);
+  try {
+    const out = await watch.acknowledgeNudge(profileId, uuid);
+    let status = null;
+    try {
+      status = (await require('../services/initiative').react(profileId, uuid, 'engaged')).status;
+    } catch {
+      // Already reacted to, expired, or not a nudge of theirs: nothing to record.
+    }
+    return res.json({ success: true, ...out, status });
+  } catch (err) {
+    return fail(res, err);
+  }
+}
+
+/**
  * A notification the PulsePoint app put on the owner's phone, forwarded by the
  * Athena app. Device-authenticated only: a phone speaks for itself here, the
  * same rule as location samples.
@@ -184,4 +218,4 @@ async function testAlert(req, res) {
   }
 }
 
-module.exports = { listPlaces, savePlace, removePlace, nearby, alert, acknowledgeAlert, lookupAddress, phoneAlert, testAlert };
+module.exports = { listPlaces, savePlace, removePlace, nearby, alert, acknowledgeAlert, acknowledgePush, lookupAddress, phoneAlert, testAlert };

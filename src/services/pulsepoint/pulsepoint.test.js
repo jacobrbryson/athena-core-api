@@ -535,3 +535,24 @@ describe('"Got it" buries an alert forever (owner, 2026-10-04)', () => {
 		expect(shown.incidents).toHaveLength(1);
 	});
 });
+
+describe("Acknowledge on an emergency push", () => {
+	const db = require("../../helpers/db");
+	const watch = require("./watch");
+
+	test("buries exactly the calls that push named", async () => {
+		const buried = [];
+		db.query.mockImplementation(async (sql, params) => {
+			if (/FROM athena_nudge/.test(sql)) return [[{ trigger_id: "nearby_incident", facts: JSON.stringify({ incidentIds: ["ph:a", "w:b"] }) }]];
+			if (/INSERT IGNORE INTO athena_alert_ack_item/.test(sql)) buried.push(...params.filter((_, i) => i % 2 === 1));
+			return [[]];
+		});
+		expect(await watch.acknowledgeNudge(1, "n-1")).toEqual({ buried: 2 });
+		expect(buried).toEqual(["ph:a", "w:b"]);
+	});
+
+	test("any other nudge buries nothing", async () => {
+		db.query.mockImplementation(async (sql) => (/FROM athena_nudge/.test(sql) ? [[{ trigger_id: "place_reminder", facts: "{}" }]] : [[]]));
+		expect(await watch.acknowledgeNudge(1, "n-2")).toEqual({ buried: 0 });
+	});
+});

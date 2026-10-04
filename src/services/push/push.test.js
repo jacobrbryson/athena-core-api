@@ -396,3 +396,22 @@ describe("a browser registering itself", () => {
 		expect(params).toContain(PROFILE);
 	});
 });
+
+describe("notification buttons (fcm-actions, 2026-10-04)", () => {
+	test("an Android app that asks for fcm-actions gets it", async () => {
+		const out = await push.registerToken(7, "a".repeat(140), { provider: "fcm-actions", platform: "android" });
+		expect(out.provider).toBe("fcm-actions");
+	});
+
+	test("nothing but Android may hold it — a browser or a car stays on its pinned provider", async () => {
+		expect((await push.registerToken(7, "a".repeat(140), { provider: "fcm-actions", platform: "car" })).provider).toBe("fcm");
+	});
+
+	test("an fcm-actions phone is sent a data-only message; a plain fcm phone is not", async () => {
+		db({ devices: [deviceRow({ push_provider: "fcm-actions" }), deviceRow({ id: 8, uuid: "dev-2", push_provider: "fcm" })] });
+		const out = await push.sendToProfile(PROFILE, { title: "Athena", body: "hi" });
+		expect(out.sent).toBe(2);
+		expect(fcm.send.mock.calls[0][1]).toMatchObject({ dataOnly: true });
+		expect(fcm.send.mock.calls[1][1].dataOnly).toBeUndefined();
+	});
+});

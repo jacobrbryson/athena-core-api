@@ -41,6 +41,8 @@ router.post('/dashboard/news/check', requireAuth, require('../controllers/dashbo
 router.get('/dashboard/incidents', requireAuth, require('../controllers/nearbyIncidents').nearby);
 router.get('/dashboard/alert', requireAuth, require('../controllers/nearbyIncidents').alert);
 router.post('/dashboard/alert/ack', requireAuth, express.json({ limit: '2kb' }), require('../controllers/nearbyIncidents').acknowledgeAlert);
+// "Acknowledge" on a phone notification — the Android app, with its device token.
+router.post('/dashboard/notifications/:uuid/ack', requireAuthOrDevice, express.json({ limit: '1kb' }), require('../controllers/nearbyIncidents').acknowledgePush);
 router.get('/dashboard/incidents/places', requireAuth, require('../controllers/nearbyIncidents').listPlaces);
 router.put('/dashboard/incidents/places', requireAuth, express.json({ limit: '4kb' }), require('../controllers/nearbyIncidents').savePlace);
 router.delete('/dashboard/incidents/places/:uuid', requireAuth, require('../controllers/nearbyIncidents').removePlace);
