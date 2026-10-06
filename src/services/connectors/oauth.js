@@ -695,6 +695,10 @@ async function invalidate(profileId, providerId, detail) {
 	const provider = getProvider(providerId);
 	const linked = await credentials.status(profileId, provider.id);
 	if (!linked) return false;
+	// A personal API token is not an OAuth grant: a 401 here means this request
+	// carried it down the wrong path (an OAuth call), not that it was revoked,
+	// and markNeedsReauth would wipe a token only the owner can re-issue.
+	if (linked.kind === "api_key") return false;
 	await credentials.markNeedsReauth(linked.uuid, { actor: "connector", detail });
 	return true;
 }

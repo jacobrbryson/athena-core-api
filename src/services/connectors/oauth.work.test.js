@@ -3,7 +3,7 @@ process.env.INTEGRATION_REDIRECT_ALLOWLIST = 'https://app.example.com';
 jest.mock('../../helpers/db', () => ({ query: jest.fn() }));
 jest.mock('../secrets', () => ({ getSecret: jest.fn(async () => 'test-secret') }));
 jest.mock('../consent', () => ({ hasConsent: jest.fn(async () => true) }));
-jest.mock('../credentials', () => ({ put: jest.fn(), get: jest.fn(), updateTokens: jest.fn(), markNeedsReauth: jest.fn(), STATUS_NEEDS_REAUTH: 'needs_reauth' }));
+jest.mock('../credentials', () => ({ put: jest.fn(), get: jest.fn(), updateTokens: jest.fn(), markNeedsReauth: jest.fn(), status: jest.fn(), STATUS_NEEDS_REAUTH: 'needs_reauth' }));
 const pool = require('../../helpers/db');
 const credentials = require('../credentials');
 const oauth = require('./oauth');
@@ -46,6 +46,14 @@ test('Jira token exchange uses JSON and the existing state-derived profile', asy
   expect(request.headers['Content-Type']).toBe('application/json');
   expect(JSON.parse(request.body)).toMatchObject({ code: 'code', grant_type: 'authorization_code' });
   expect(credentials.put).toHaveBeenCalledWith(expect.objectContaining({ profileId: 42, provider: 'jira' }));
+});
+test('a 401 never flags (and so never wipes) a personal API-token credential, but still flags OAuth ones', async () => {
+  credentials.status.mockResolvedValue({ uuid: 'jira-token', kind: 'api_key' });
+  expect(await oauth.invalidate(42, 'jira', 'provider returned 401')).toBe(false);
+  expect(credentials.markNeedsReauth).not.toHaveBeenCalled();
+  credentials.status.mockResolvedValue({ uuid: 'jira-oauth', kind: 'oauth2' });
+  expect(await oauth.invalidate(42, 'jira', 'provider returned 401')).toBe(true);
+  expect(credentials.markNeedsReauth).toHaveBeenCalledWith('jira-oauth', expect.any(Object));
 });
 test('Jira and Slack grants have no write scopes; Gmail carries modify for the email-triage action layer', () => {
   expect(getProvider('gmail').scopes).toEqual(['https://www.googleapis.com/auth/gmail.readonly', 'https://www.googleapis.com/auth/gmail.modify']);
