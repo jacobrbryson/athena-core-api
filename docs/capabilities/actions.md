@@ -20,6 +20,12 @@ happens until you tap **Approve**. If you tap **No**, or leave it, nothing
 happens at all. I genuinely cannot skip that step — it isn't restraint on my
 part, it's how I'm built.
 
+The card stays in the conversation where I proposed it. While it's the last
+thing in the chat it's open; once we've talked on, it folds to a single line.
+A small counter in the message box (like "2 ↑") shows how many unanswered cards
+have folded — tap it to scroll up and open the next one, and keep tapping to
+move through them. Nothing is approved by a folded card; you open it first.
+
 Two things I can propose today:
 
 - **Add a calendar event** to your own Google Calendar.
