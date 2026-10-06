@@ -121,7 +121,7 @@ async function processAiResponse(session, message, clients, ctx = {}) {
 
     // If the user has linked an external app and is asking about it, fetch a
     // live snapshot to ground the reply. Family Chores is partner-linked;
-    // Calendar/Strava/Whoop are OAuth connectors. Both are keyword-gated so
+    // Calendar/Whoop are OAuth connectors. Both are keyword-gated so
     // an unrelated message costs nothing, and failures here must never block
     // the conversation.
     //

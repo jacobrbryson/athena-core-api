@@ -1,4 +1,5 @@
 const { providerGet } = require('./http');
+const jiraApiToken = require('./jiraApiToken');
 
 // Gmail used to live here (a "Work" card loader) but has its own dashboard
 // section and its own connector module now — see ./gmail.js. Reading and
@@ -6,6 +7,8 @@ const { providerGet } = require('./http');
 // gives a provider, so it isn't folded into `loaders`.
 
 async function jira(profileId) {
+  const apiToken = await jiraApiToken.forProfile(profileId);
+  if (apiToken) return jiraApiToken.readIssues(apiToken);
   const resources = await providerGet(profileId, 'jira', '/oauth/token/accessible-resources');
   const sites = (Array.isArray(resources) ? resources : []).filter(r => r.scopes?.includes('read:jira-work')).slice(0, 5);
   const results = await Promise.all(sites.map(async site => {
@@ -14,15 +17,19 @@ async function jira(profileId) {
         query: { jql: 'assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC', maxResults: 10, fields: 'summary,status,project,updated,duedate' },
         invalidateOnAuthFailure: false,
       });
-      return { issues: (result.issues || []).map(issue => ({
+      return { more: !!result.nextPageToken || result.isLast === false, issues: (result.issues || []).map(issue => ({
         key: issue.key, title: issue.fields?.summary || issue.key, status: issue.fields?.status?.name,
+        // 'new' | 'indeterminate' | 'done' — what "In Progress" means in any workflow.
+        statusCategory: issue.fields?.status?.statusCategory?.key,
         project: issue.fields?.project?.name, updated: issue.fields?.updated, due: issue.fields?.duedate,
         site: site.name, url: `${site.url}/browse/${encodeURIComponent(issue.key)}`,
       })) };
     } catch { return { error: true, issues: [] }; }
   }));
   if (results.length && results.every(r => r.error)) throw new Error('Jira unavailable');
-  return { issues: results.flatMap(r => r.issues).slice(0, 25), partial: results.some(r => r.error) || resources.length > sites.length };
+  const issues = results.flatMap(r => r.issues);
+  // `capped`: Jira has more than this read returned, so a count is a floor.
+  return { issues: issues.slice(0, 25), partial: results.some(r => r.error) || resources.length > sites.length, capped: issues.length > 25 || results.some(r => r.more) };
 }
 
 async function slack(profileId) {

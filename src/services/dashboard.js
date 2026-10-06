@@ -4,7 +4,6 @@ const credentials = require('./credentials');
 const consent = require('./consent');
 const calendar = require('./connectors/googleCalendar');
 const whoop = require('./connectors/whoop');
-const strava = require('./connectors/strava');
 const integration = require('./integration');
 const chores = require('./familyChores');
 const work = require('./connectors/work');
@@ -68,7 +67,7 @@ async function getDashboard(profileId, user) {
     if (health && !healthConsent) return section('consent_required');
     return read(fn);
   }
-  const [calendarData, recovery, sleep, strain, activity, familyChores, jira, slack, emailTriageData, familyHealthData] = await Promise.all([
+  const [calendarData, recovery, sleep, strain, familyChores, jira, slack, emailTriageData, familyHealthData] = await Promise.all([
     provider('google_calendar', async () => {
       const result = await calendar.collectEvents(profileId, { days: 7, maxResults: 25 });
       const timeZone = calendar.displayTimeZone(result.calendars);
@@ -77,10 +76,14 @@ async function getDashboard(profileId, user) {
       const today = `${date.year}-${date.month}-${date.day}`;
       // Keep ongoing events, discard events that already ended. All-day end
       // dates are exclusive calendar dates, not UTC timestamps.
-      const events = result.events.filter(e => e.allDay
+      const notOver = e => e.allDay
         ? (e.end || e.start) > today || (!e.end && e.start === today)
-        : new Date(e.end || e.start).getTime() > Date.now());
-      return { events, timeZone, days: 7 };
+        : new Date(e.end || e.start).getTime() > Date.now();
+      const events = result.events.filter(notOver);
+      // Where the person is working ("Home 7-4"), kept apart from the events so
+      // the Work banner can read it and no card mistakes it for a meeting.
+      const workingLocations = (result.workingLocations || []).filter(notOver);
+      return { events, workingLocations, timeZone, days: 7 };
     }),
     // Recovery and cycles reach back a fortnight, not a week: the resting
     // heart rate and HRV they carry only mean anything against a baseline, and
@@ -90,7 +93,6 @@ async function getDashboard(profileId, user) {
     provider('whoop', () => whoop.listRecovery(profileId, { days: 14, limit: 14 }), true),
     provider('whoop', () => whoop.listSleep(profileId, { days: 7, limit: 7 }), true),
     provider('whoop', () => whoop.listCycles(profileId, { days: 14, limit: 14 }), true),
-    provider('strava', async () => ({ activities: await strava.listActivities(profileId, { days: 7, perPage: 30 }), days: 7 }), true),
     (async () => {
       try {
         const status = await integration.getStatus(user, integration.PROVIDER_FAMILY_CHORES);
@@ -121,7 +123,7 @@ async function getDashboard(profileId, user) {
     // read itself fails.
     read(async () => ({ active: await familyHealth.activeFor(profileId) })),
   ]);
-  const result = { calendar: calendarData, recovery, sleep, strain, activity, familyChores, jira, slack, emailTriage: emailTriageData, familyHealth: familyHealthData };
+  const result = { calendar: calendarData, recovery, sleep, strain, familyChores, jira, slack, emailTriage: emailTriageData, familyHealth: familyHealthData };
   for (const [id, entry] of snapshots) if (Date.now() - entry.at >= CACHE_TTL_MS) snapshots.delete(id);
   if (snapshots.size >= 128) snapshots.delete(snapshots.keys().next().value);
   snapshots.set(profileId, { at: Date.now(), data: result });

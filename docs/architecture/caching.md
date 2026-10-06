@@ -11,7 +11,7 @@
    coalescing and invalidation. This is server-data caching, so it does not
    require replacing the existing React state with Redux.
 
-The feature covers Calendar, WHOOP, Strava, Gmail, Jira and Slack reads through
+The feature covers Calendar, WHOOP, Gmail, Jira and Slack reads through
 an explicit path allowlist. Calendar's old account-insensitive list cache was
 replaced by this shared cache. Family Chores, Guardian mission state, chat,
 actions, identity, access decisions and initiative are not newly cached.
@@ -36,7 +36,6 @@ source actually changes:
 | --- | --- | --- |
 | WHOOP recovery, sleep, profile | 6 hours | scored once a day; signed webhooks clear it on a new score |
 | WHOOP cycles, workouts | 1 hour | strain accrues all day; workouts are also webhook-cleared |
-| Strava | 30 minutes | activities land after a ride, not continuously |
 | Google Calendar | 5 minutes | matches the dashboard poll |
 | Jira | 2 minutes | |
 | Slack | 1 minute | |
@@ -46,7 +45,7 @@ source actually changes:
 
 WHOOP lookback boundaries round down to six hours (at most six hours of extra
 lookback against a lookback in days) so the query key holds as long as the
-cache may; Strava's round down to 30 minutes for the same reason.
+cache may.
 Calendar keeps its existing local-day windows. Query parameters otherwise
 retain their exact meaning. Card timing signals change as minutes pass, so a
 ten-minute maximum does not imply every ordering remains reusable that long.

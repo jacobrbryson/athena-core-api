@@ -37,20 +37,20 @@ beforeEach(() => decodeUserToken.mockReturnValue(null));
 test("the connector OAuth callback is public — the provider redirects a browser here with no session", async () => {
 	// Regression: the callback used to 401 with "Sign in required", which the
 	// proxy relayed into the address bar instead of the 302 back to the app.
-	for (const provider of ["google_calendar", "strava", "whoop"]) {
+	for (const provider of ["google_calendar", "whoop"]) {
 		await expect(run(`/integrations/${provider}/callback`)).resolves.toEqual({ next: true });
 	}
 });
 
 test("only the callback is public under /integrations", async () => {
-	for (const path of ["/integrations", "/integrations/strava", "/integrations/strava/connect"]) {
+	for (const path of ["/integrations", "/integrations/whoop", "/integrations/whoop/connect"]) {
 		await expect(run(path)).resolves.toMatchObject({ status: 401 });
 	}
 });
 
 test("the callback exemption is GET-only", async () => {
 	await expect(
-		run("/integrations/strava/callback", { method: "POST" })
+		run("/integrations/whoop/callback", { method: "POST" })
 	).resolves.toMatchObject({ status: 401 });
 });
 

@@ -25,6 +25,7 @@ router.get('/system/time-saved', requireAuth, require('../controllers/system').t
 router.get('/dreams', requireAuth, require('../controllers/dreams').list);
 router.get('/dreams/latest', requireAuth, require('../controllers/dreams').latest);
 router.get('/dreams/questions', requireAuth, require('../controllers/dreams').questions);
+router.post('/dreams/questions/:uuid/dismiss', requireAuth, require('../controllers/dreams').dismissQuestion);
 router.get('/dreams/:uuid', requireAuth, require('../controllers/dreams').night);
 router.get('/dreams/:uuid/image', requireAuth, require('../controllers/dreams').picture);
 // News: the watch list is the person's, the interval is Athena's. There is no
@@ -56,6 +57,7 @@ router.post('/dashboard/incidents/phone-alert', requireAuthOrDevice, express.jso
 // Community: points of interest (the places above, with what they are),
 // neighbours and local events — typed by the person, read into chat.
 router.get('/dashboard/community', requireAuth, require('../controllers/community').overview);
+router.get('/dashboard/community/calendar', requireAuth, require('../controllers/community').calendar);
 router.get('/dashboard/community/contacts', requireAuth, require('../controllers/community').searchContacts);
 router.get('/dashboard/community/contacts/at', requireAuth, require('../controllers/community').contactsAtAddress);
 router.post('/dashboard/community/neighbors', requireAuth, express.json({ limit: '4kb' }), require('../controllers/community').saveNeighbor);
@@ -101,6 +103,13 @@ router.post('/dashboard/email/:uuid/dismiss', requireAuth, express.json({ limit:
 // dashboard summary's `familyHealth` source; these two are the only writes.
 router.post('/dashboard/health/family', requireAuth, express.json({ limit: '4kb' }), require('../controllers/familyHealth').report);
 router.patch('/dashboard/health/family/:uuid/resolve', requireAuth, express.json({ limit: '1kb' }), require('../controllers/familyHealth').resolve);
+
+// Family card: children's birthdays from the family profiles, and the Google
+// Contact (if any) linked to each remembered family member. Contact search is
+// the community one — same address book, same endpoint.
+router.get('/dashboard/family/people', requireAuth, require('../controllers/familyPeople').overview);
+router.put('/dashboard/family/people/:factUuid/contact', requireAuth, express.json({ limit: '1kb' }), require('../controllers/familyPeople').link);
+router.delete('/dashboard/family/people/:factUuid/contact', requireAuth, require('../controllers/familyPeople').unlink);
 
 // Public: the on-device model manifest carries no secrets, and devices poll it
 // before (and after) pairing.

@@ -20,7 +20,7 @@ again ("and tomorrow?"); after that I go back to waiting for my name.
 It's built for being on the move — a run, a ride — so my answers are short and
 spoken: no lists, nothing you'd need to look at.
 
-When your question needs your calendar, WHOOP, Strava, email or heart rate, I
+When your question needs your calendar, WHOOP, email or heart rate, I
 say so straight away — "Let me check your calendar, hmm…" — while I read it,
 then answer. The first time a particular line comes up it's silent while the
 phone saves my voice for it; after that it plays instantly.

@@ -20,7 +20,6 @@ const REQUEST_TIMEOUT_MS = 12000;
 const CACHEABLE_READS = {
 	google_calendar: /^\/(?:users\/me\/calendarList|calendars\/[^/]+\/events)$/,
 	whoop: /^\/v2\/(?:user\/profile\/basic|recovery|activity\/(?:sleep|workout)|cycle)$/,
-	strava: /^\/athlete\/activities$/,
 	gmail: /^\/users\/me\/(?:profile|messages(?:\/[^/]+)?)$/,
 	jira: /^\/(?:oauth\/token\/accessible-resources|ex\/jira\/[^/]+\/rest\/api\/3\/search\/jql)$/,
 	slack: /^\/(?:auth\.test|search\.messages)$/,
@@ -33,7 +32,6 @@ const MINUTE = 60_000;
 // is the complaint, not the saving.
 const CACHE_TTL_MS = {
 	whoop: path => (/^\/v2\/(?:recovery|activity\/sleep|user\/profile\/basic)$/.test(path) ? 6 * 60 * MINUTE : 60 * MINUTE),
-	strava: () => 30 * MINUTE,
 	google_calendar: () => 5 * MINUTE,
 	jira: () => 2 * MINUTE,
 	slack: () => MINUTE,

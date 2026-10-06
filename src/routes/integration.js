@@ -73,7 +73,7 @@ router.use(requireAuth);
 router.get("/family-chores", getFamilyChoresStatus);
 router.delete("/family-chores", disconnectFamilyChores);
 
-// Generic OAuth connectors (Google Calendar, Strava, Whoop). Each acts only
+// Generic OAuth connectors (Google Calendar, Whoop). Each acts only
 // on the caller's own profile — never a profile id taken from the request.
 router.get("/", listConnectors);
 router.post(

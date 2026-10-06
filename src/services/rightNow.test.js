@@ -3,9 +3,6 @@ jest.mock('./dashboard', () => ({ cachedDashboard: jest.fn(), getDashboard: jest
 jest.mock('./places', () => ({ list: jest.fn(), MAX_PLACES: 25 }));
 jest.mock('./homeProjects', () => ({ list: jest.fn() }));
 jest.mock('./weather', () => ({ forecast: jest.fn() }));
-jest.mock('./connectors/strava', () => ({ listActivities: jest.fn() }));
-jest.mock('./consent', () => ({ hasConsentForProfile: jest.fn() }));
-jest.mock('./credentials', () => ({ list: jest.fn() }));
 jest.mock('./pulsepoint/watch', () => ({ listPlaces: jest.fn() }));
 jest.mock('../helpers/db', () => ({ query: jest.fn() }));
 jest.mock('./readCache', () => ({ read: (_opts, load) => load(), hash: (parts) => JSON.stringify(parts).length.toString(), invalidate: jest.fn() }));
@@ -15,9 +12,6 @@ const dashboard = require('./dashboard');
 const places = require('./places');
 const homeProjects = require('./homeProjects');
 const weather = require('./weather');
-const strava = require('./connectors/strava');
-const consent = require('./consent');
-const credentials = require('./credentials');
 const incidents = require('./pulsepoint/watch');
 const pool = require('../helpers/db');
 const rightNow = require('./rightNow');
@@ -49,8 +43,6 @@ beforeEach(() => {
   places.list.mockResolvedValue([]);
   homeProjects.list.mockResolvedValue([]);
   weather.forecast.mockResolvedValue(null);
-  credentials.list.mockResolvedValue([]);
-  consent.hasConsentForProfile.mockResolvedValue(false);
   incidents.listPlaces.mockResolvedValue([]);
   pool.query.mockResolvedValue([[]]);
 });
@@ -62,7 +54,6 @@ const WEDNESDAY_MORNING = new Date('2026-09-23T14:00:00Z');
 /** The same Wednesday at 10pm: dark, and nobody wants a ticket. */
 const WEDNESDAY_NIGHT = new Date('2026-09-24T02:00:00Z');
 
-const rides = (daysBack) => daysBack.map((d) => ({ type: 'Ride', name: 'Morning ride', start: daysAgo(d) }));
 
 describe('openWindow', () => {
   it('runs to the next timed event', () => {
@@ -87,34 +78,6 @@ describe('openWindow', () => {
 
   it('is open-ended when nothing is scheduled', () => {
     expect(rightNow.openWindow([]).freeMinutes).toBeNull();
-  });
-});
-
-describe('rhythmFor', () => {
-  const sundays = (weeks) =>
-    Array.from({ length: weeks }, (_, i) => {
-      const at = new Date();
-      at.setDate(at.getDate() - at.getDay() - i * 7);
-      return { type: 'MountainBikeRide', name: 'Trail ride', start: at.toISOString() };
-    });
-
-  it('counts a weekly habit and notices it has not happened this week', () => {
-    const matcher = rightNow.matcherFor('mountain biking');
-    // Skip the current week so the most recent ride is eight days back.
-    const rhythm = rightNow.rhythmFor(sundays(9).slice(1), matcher);
-    expect(rhythm.activity).toBe('mountain biking');
-    expect(rhythm.perWeek).toBeGreaterThan(0.5);
-    expect(rhythm.thisWeek).toBe(0);
-    expect(rhythm.daysSince).toBeGreaterThanOrEqual(6);
-  });
-
-  it('does not claim a usual day from two rides', () => {
-    const matcher = rightNow.matcherFor('mountain biking');
-    expect(rightNow.rhythmFor(sundays(2), matcher).usualDay).toBeNull();
-  });
-
-  it('is null for an activity with no history', () => {
-    expect(rightNow.rhythmFor([{ type: 'Run', start: daysAgo(2) }], rightNow.matcherFor('mountain biking'))).toBeNull();
   });
 });
 
@@ -157,13 +120,6 @@ describe('placeCandidates', () => {
     expect(ruledOut[0].reason).toMatch(/on the ground/);
   });
 
-  it('scores an overdue habit above one already kept this week', () => {
-    const overdue = new Map([['mountain biking', { activity: 'mountain biking', perWeek: 1, thisWeek: 0, daysSince: 9, isUsualDayToday: true }]]);
-    const kept = new Map([['mountain biking', { activity: 'mountain biking', perWeek: 1, thisWeek: 2, daysSince: 1, isUsualDayToday: false }]]);
-    const high = rightNow.placeCandidates([park()], window, new Map(), overdue).candidates[0].score;
-    const low = rightNow.placeCandidates([park()], window, new Map(), kept).candidates[0].score;
-    expect(high).toBeGreaterThan(low);
-  });
 });
 
 describe('projectCandidates', () => {
@@ -190,7 +146,7 @@ describe('getRightNow', () => {
   it('asks for nothing when there is nothing to suggest', async () => {
     const result = await rightNow.getRightNow(7, {});
     expect(result.lead).toBeNull();
-    expect(result.reason).toMatch(/Connect Strava/);
+    expect(result.reason).toMatch(/Tell me a goal/);
     expect(llm.generateJson).not.toHaveBeenCalled();
   });
 
@@ -259,71 +215,6 @@ describe('getRightNow', () => {
     expect(result.lead).toBeNull();
     expect(result.reason).toMatch(/Piano lessons/);
   });
-
-  it('never reads Strava without an active link and health consent', async () => {
-    places.list.mockResolvedValue([park()]);
-    credentials.list.mockResolvedValue([{ provider: 'strava', status: 'active' }]);
-    consent.hasConsentForProfile.mockResolvedValue(false);
-    llm.generateJson.mockRejectedValue(new Error('offline'));
-
-    await rightNow.getRightNow(7, {});
-    expect(strava.listActivities).not.toHaveBeenCalled();
-  });
-
-  it('reads Strava once the link and consent are both there', async () => {
-    places.list.mockResolvedValue([park()]);
-    credentials.list.mockResolvedValue([{ provider: 'strava', status: 'active' }]);
-    consent.hasConsentForProfile.mockResolvedValue(true);
-    strava.listActivities.mockResolvedValue([{ type: 'MountainBikeRide', name: 'Trail ride', start: daysAgo(8) }]);
-    llm.generateJson.mockRejectedValue(new Error('offline'));
-
-    await rightNow.getRightNow(7, {});
-    expect(strava.listActivities).toHaveBeenCalledWith(7, expect.objectContaining({ days: 90 }));
-  });
-});
-
-describe('allRhythms', () => {
-  it('counts a mountain bike ride once, not also as cycling', () => {
-    const list = [
-      { type: 'MountainBikeRide', name: 'Trails', start: daysAgo(3) },
-      { type: 'Ride', name: 'Road loop', start: daysAgo(4) },
-    ];
-    const rhythms = rightNow.allRhythms(list);
-    expect(rhythms.get('mountain biking').count).toBe(1);
-    expect(rhythms.get('cycling').count).toBe(1);
-  });
-});
-
-describe('habitCandidates', () => {
-  const window = { freeMinutes: null, busyWith: null, nextEvent: null };
-  const due = new Map([['cycling', { activity: 'cycling', perWeek: 1.5, thisWeek: 0, daysSince: 8, isUsualDayToday: false, usualDay: null }]]);
-  const opts = { daylight: true, coveredByPlace: new Set() };
-
-  it('offers a habit that is due, with no place needed', () => {
-    const { candidates } = rightNow.habitCandidates(due, window, null, opts);
-    expect(candidates[0]).toMatchObject({ id: 'habit:cycling', kind: 'habit', title: 'Cycling' });
-  });
-
-  it('leaves it to the saved place when one already carries the habit', () => {
-    const { candidates } = rightNow.habitCandidates(due, window, null, { ...opts, coveredByPlace: new Set(['cycling']) });
-    expect(candidates).toHaveLength(0);
-  });
-
-  it('rules an outdoor habit out in the rain, and says so', () => {
-    const wet = { outdoorOutlook: 'wet', now: { shortForecast: 'Light Rain' } };
-    const { candidates, ruledOut } = rightNow.habitCandidates(due, window, wet, opts);
-    expect(candidates).toHaveLength(0);
-    expect(ruledOut[0].reason).toMatch(/light rain/);
-  });
-
-  it('does not suggest a ride after dark', () => {
-    expect(rightNow.habitCandidates(due, window, null, { ...opts, daylight: false }).candidates).toHaveLength(0);
-  });
-
-  it('stays quiet about a habit already kept this week', () => {
-    const kept = new Map([['cycling', { activity: 'cycling', perWeek: 1, thisWeek: 1, daysSince: 1, isUsualDayToday: true }]]);
-    expect(rightNow.habitCandidates(kept, window, null, opts).candidates).toHaveLength(0);
-  });
 });
 
 describe('goalCandidates', () => {
@@ -365,34 +256,6 @@ describe('restCandidate', () => {
 });
 
 describe('getRightNow with no lists at all', () => {
-  const stravaOn = (activities) => {
-    credentials.list.mockResolvedValue([{ provider: 'strava', status: 'active' }]);
-    consent.hasConsentForProfile.mockResolvedValue(true);
-    strava.listActivities.mockResolvedValue(activities);
-  };
-
-  it('suggests the habit Strava already knows about', async () => {
-    jest.useFakeTimers({ now: WEDNESDAY_MORNING, doNotFake: ['nextTick', 'setImmediate'] });
-    stravaOn(rides([9, 16, 23, 30, 37, 44]));
-    llm.generateJson.mockRejectedValue(new Error('offline'));
-
-    const result = await rightNow.getRightNow(7, {});
-    expect(result.lead).toMatchObject({ kind: 'habit', activity: 'cycling' });
-    expect(result.headline).toMatch(/cycling/);
-  });
-
-  it('checks the weather at home for it', async () => {
-    jest.useFakeTimers({ now: WEDNESDAY_MORNING, doNotFake: ['nextTick', 'setImmediate'] });
-    stravaOn(rides([9, 16, 23, 30, 37, 44]));
-    incidents.listPlaces.mockResolvedValue([{ name: 'Home', latitude: 35.5, longitude: -80.8, enabled: true }]);
-    weather.forecast.mockResolvedValue({ outdoorOutlook: 'wet', now: { shortForecast: 'Thunderstorms' } });
-
-    const result = await rightNow.getRightNow(7, {});
-    expect(weather.forecast).toHaveBeenCalledWith(35.5, -80.8);
-    expect(result.lead).toBeNull();
-    expect(result.reason).toMatch(/thunderstorms/);
-  });
-
   it('falls back to a goal they told Athena about', async () => {
     pool.query.mockResolvedValue([[{ uuid: 'g1', memory_key: 'learn_spanish', memory_value: 'Conversational by summer', updated_at: daysAgo(1) }]]);
     llm.generateJson.mockRejectedValue(new Error('offline'));
@@ -401,9 +264,9 @@ describe('getRightNow with no lists at all', () => {
     expect(result.lead).toMatchObject({ kind: 'goal', title: 'Learn spanish' });
   });
 
-  it('leads with rest on a red recovery, ahead of a due habit', async () => {
+  it('leads with rest on a red recovery, ahead of an open place', async () => {
     jest.useFakeTimers({ now: WEDNESDAY_MORNING, doNotFake: ['nextTick', 'setImmediate'] });
-    stravaOn(rides([9, 16, 23, 30, 37, 44]));
+    places.list.mockResolvedValue([park()]);
     dashboard.getDashboard.mockResolvedValue({
       calendar: { status: 'ready', data: { events: [], timeZone: 'America/New_York' } },
       recovery: { data: [{ state: 'SCORED', recovery_score: 18 }] },
@@ -412,7 +275,7 @@ describe('getRightNow with no lists at all', () => {
 
     const result = await rightNow.getRightNow(7, {});
     expect(result.lead.kind).toBe('rest');
-    expect(result.alternates[0].kind).toBe('habit');
+    expect(result.alternates[0].kind).toBe('place');
   });
 
   it('offers an in-progress ticket on a weekday morning, and not at night', async () => {

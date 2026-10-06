@@ -20,6 +20,11 @@ I only look when what you said is plausibly about your schedule. You don't have
 to say "calendar" — "anything going on tonight?" or "what am I doing tomorrow?"
 is enough, and "tonight" means today's calendar, not tomorrow's.
 
+I also notice the Working location you set in Google Calendar ("Home", "Office",
+or a place you named). I keep it apart from your schedule — it says where you
+are, not that you're in a meeting — so it never shows up as an appointment and
+never counts as a clash with anything else.
+
 I can't go and look something up partway through a reply. If your calendar
 isn't in front of me for what you asked, I'll say so rather than promise to
 check.

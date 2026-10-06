@@ -13,7 +13,7 @@
  *   revokeUrl            best-effort revocation on disconnect (null if none)
  *   revokeMethod/Body    how this provider wants a revocation expressed
  *   scopes               requested scopes
- *   scopeSeparator       " " for most; Strava accepts comma
+ *   scopeSeparator       " " for most; some providers accept comma
  *   clientIdSecret       app-level secret name holding the client id
  *   clientSecretSecret   app-level secret name holding the client secret
  *   pkce                 send a PKCE challenge (defence in depth for a
@@ -194,34 +194,6 @@ const PROVIDERS = {
 		rotatesRefreshToken: false,
 		apiBase: env("GOOGLE_PEOPLE_API_BASE", "https://people.googleapis.com/v1"),
 		identify: googleIdentity,
-	},
-
-	// -----------------------------------------------------------------
-	// Strava
-	// -----------------------------------------------------------------
-	strava: {
-		id: "strava",
-		label: "Strava",
-		authorizeUrl: env("STRAVA_AUTHORIZE_URL", "https://www.strava.com/oauth/authorize"),
-		tokenUrl: env("STRAVA_TOKEN_URL", "https://www.strava.com/oauth/token"),
-		// /oauth/revoke supersedes /oauth/deauthorize as of June 2026.
-		revokeUrl: env("STRAVA_REVOKE_URL", "https://www.strava.com/oauth/revoke"),
-		revokeMethod: "POST",
-		revokeBody: (token) => ({ access_token: token }),
-		scopes: ["read", "activity:read"],
-		scopeSeparator: ",",
-		clientIdSecret: "STRAVA_CLIENT_ID",
-		clientSecretSecret: "STRAVA_CLIENT_SECRET",
-		pkce: false,
-		authorizeParams: { approval_prompt: "auto" },
-		tokenAuth: "body",
-		// Workout data is health data about a Guardian.
-		consentType: "health_data",
-		// Strava issues a new refresh token on every refresh. Failing to store
-		// it silently breaks the link at the next expiry.
-		rotatesRefreshToken: true,
-		apiBase: env("STRAVA_API_BASE", "https://www.strava.com/api/v3"),
-		identify: identityFromField("athlete", "id", ["firstname", "lastname"]),
 	},
 
 	// -----------------------------------------------------------------

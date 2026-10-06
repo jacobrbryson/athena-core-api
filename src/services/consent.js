@@ -13,7 +13,7 @@ const CONSENT_TYPES = new Set([
 	"privacy_policy",
 	"ai_disclosure",
 	"terms_of_service",
-	// Gate on linking a health provider (Strava, Whoop). Deliberately NOT in
+	// Gate on linking a health provider (Whoop). Deliberately NOT in
 	// the `required` list in getConsentSnapshot: it is opt-in for families who
 	// connect one, not a precondition for using Athena at all.
 	"health_data",

@@ -22,6 +22,8 @@ const { providerGet, providerRequest, isNotConnected } = require("./http");
 
 const PROVIDER = "google_calendar";
 const MAX_EVENTS = 25;
+const WORKING_LOCATION_HEADROOM = 10;
+const MAX_WORKING_LOCATIONS = 20;
 // A guard against pathological accounts (dozens of subscribed calendars), not
 // a product limit. freeBusy also caps out at 50 calendars per request.
 const MAX_CALENDARS = 20;
@@ -143,10 +145,14 @@ const startMs = (event) => {
  * failing is not, and rethrows rather than passing an empty schedule off as
  * "nothing scheduled".
  */
-async function collectEvents(profileId, { days = 7, maxResults = MAX_EVENTS } = {}) {
+async function collectEvents(profileId, { days = 7, maxResults = MAX_EVENTS, cap = MAX_EVENTS } = {}) {
 	const calendars = await calendarsOrPrimary(profileId);
 	const { timeMin, timeMax } = window(days, new Date(), displayTimeZone(calendars));
-	const limit = Math.min(Number(maxResults) || MAX_EVENTS, MAX_EVENTS);
+	// `cap` is the ceiling on how many events come back. The default keeps the
+	// chat prompt and the dashboard summary small; a caller that filters the
+	// list itself (the community calendar) asks for a wider read so a busy week
+	// of meetings can't push the events it wants off the end.
+	const limit = Math.min(Number(maxResults) || cap, cap);
 
 	const results = await Promise.all(
 		calendars.map((calendar) =>
@@ -160,7 +166,9 @@ async function collectEvents(profileId, { days = 7, maxResults = MAX_EVENTS } = 
 						timeMax,
 						singleEvents: "true",
 						orderBy: "startTime",
-						maxResults: limit,
+						// Headroom: working-location events are fetched too and set aside
+						// below, and must not crowd real events out.
+						maxResults: limit + WORKING_LOCATION_HEADROOM,
 					},
 					// One calendar out of twenty answering 403 says something about
 					// that calendar, not about the account's grant — and this call
@@ -187,12 +195,20 @@ async function collectEvents(profileId, { days = 7, maxResults = MAX_EVENTS } = 
 	const failure = results.find((r) => r.error);
 	if (failure && results.every((r) => r.error)) throw failure.error;
 
-	const events = results
+	const all = results
 		.flatMap((r) => r.events || [])
-		.sort((a, b) => startMs(a) - startMs(b))
-		.slice(0, limit);
+		.sort((a, b) => startMs(a) - startMs(b));
 
-	return { events, calendars };
+	// Working-location events ("Home 7-4") say where the person is, not what they
+	// are doing. Left in the list they would read as an all-morning meeting that
+	// overlaps everything else, to the dashboard, the chat prompt and the
+	// initiative triggers alike — so they are returned on their own.
+	const events = all.filter((e) => e.eventType !== "workingLocation").slice(0, limit);
+	const workingLocations = all
+		.filter((e) => e.eventType === "workingLocation")
+		.slice(0, MAX_WORKING_LOCATIONS);
+
+	return { events, calendars, workingLocations };
 }
 
 /** Upcoming events across every readable calendar, oldest first. */
@@ -275,6 +291,19 @@ function mergeIntervals(intervals) {
 	return merged;
 }
 
+/** Google's own structured field first, the title the person typed last. */
+function workingLocationLabel(item) {
+	const props = item.workingLocationProperties || {};
+	if (props.type === "homeOffice") return "Home";
+	const named =
+		props.officeLocation?.label ||
+		props.customLocation?.label ||
+		props.officeLocation?.buildingId;
+	if (named) return String(named);
+	if (props.type === "officeLocation") return "Office";
+	return item.summary || "Working";
+}
+
 function normalizeEvent(item, calendar = null) {
 	// All-day events carry `date`; timed ones carry `dateTime`.
 	const start = item.start?.dateTime || item.start?.date || null;
@@ -291,6 +320,12 @@ function normalizeEvent(item, calendar = null) {
 		location: item.location || null,
 		status: item.status || null,
 		attendees: Array.isArray(item.attendees) ? item.attendees.length : 0,
+		// 'default', 'outOfOffice', 'focusTime', 'workingLocation', ...
+		eventType: item.eventType || "default",
+		// For a working-location event, where: "Home", "Office", or the label the
+		// person gave a custom place.
+		workingLocation:
+			item.eventType === "workingLocation" ? workingLocationLabel(item) : null,
 		calendar: calendar ? calendar.name : null,
 		// Whose calendar it came from matters for a shared one ("that's on the
 		// family calendar, not yours"), but saying it for the user's own is noise.

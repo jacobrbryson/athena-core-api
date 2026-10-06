@@ -27,6 +27,18 @@ const latest = (req, res) => guarded(req, res, async () => ({ dream: await log.l
 const questions = (req, res) =>
 	guarded(req, res, async (actor) => ({ questions: await log.questionsFor(actor.profileId) }), { questions: [] });
 
+const dismissQuestion = (req, res) => {
+	if (!/^[0-9a-f-]{36}$/i.test(String(req.params.uuid || ""))) {
+		return res.status(400).json({ success: false, message: "Unknown question" });
+	}
+	return guarded(
+		req,
+		res,
+		async (actor) => ({ dismissed: await require("../services/dreams/questions").dismissForProfile(actor.profileId, req.params.uuid) }),
+		{ dismissed: false }
+	);
+};
+
 async function night(req, res) {
 	if (!/^[0-9a-f-]{36}$/i.test(String(req.params.uuid || ""))) {
 		return res.status(400).json({ success: false, message: "Unknown dream" });
@@ -69,4 +81,4 @@ async function picture(req, res) {
 	}
 }
 
-module.exports = { list, latest, night, questions, picture };
+module.exports = { list, latest, night, questions, dismissQuestion, picture };

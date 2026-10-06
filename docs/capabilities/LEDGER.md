@@ -1,12 +1,27 @@
 # Capability ledger
 
+- 2026-10-06 — The Community card and page list calendar events from the next
+  seven days that mention your community (the town and distinctive names from
+  your points of interest), worded like "Soccer practice tomorrow night";
+  nothing is tied to one town — `community.md` (status: partial)
+
+- 2026-10-06 — Family card reads children's birthdays from the family profiles,
+  and each remembered family member can be linked to a Google Contact (Family
+  page → Link contact) so their birthday, photo and phone come from the address
+  book — `companion-dashboard.md` (status: partial)
+
+- 2026-10-06 — The Family card is now one row per person: who's sick, upcoming
+  birthdays, calendar events naming them, and nudges to update me when I
+  haven't heard about someone in three weeks or barely know them; Add someone
+  is always there — `companion-dashboard.md` (status: partial)
+
 - 2026-09-29 — Dream pictures can be opened: tap or click the painting on the
   dashboard card or the Dreams page to see it whole and full-screen instead of
   cropped beside the story — `dreaming.md` (status: partial)
 
 - 2026-09-29 — Hands-free says what it's checking: ask about your schedule,
   sleep, rides, email or heart rate and she answers at once with "Let me check
-  your calendar, hmm…" (or WHOOP, Strava…) while she reads it, then gives the
+  your calendar, hmm…" (or WHOOP…) while she reads it, then gives the
   answer without repeating herself. Each line is silent the first time while
   the phone saves her voice for it. Adults. Needs the next APK —
   `hands-free.md` (status: partial)
@@ -325,3 +340,11 @@ See [`README.md`](README.md) for the full contract.
 - 2026-10-04 — Actions from chat work again: the reply schema now names every action parameter, so Gemini stops sending empty proposals (every chat-proposed calendar event, camera look, remembered fact and place reminder since 09-20 had been rejected). If a proposal still fails, her reply now says so instead of claiming it is set — `actions.md` (status: live)
 - 2026-10-04 — Place reminders: the arrival circle is now about 300 m (was 150 m), including reminders already set, because address lookups can miss a rural house by that much — `place-reminders.md` (status: partial)
 - 2026-10-04 — Notifications on Android: every notification has "Acknowledge" (clears it and tells me; buries an emergency alert's calls for good) and "Remind me in 15" (brings it back in about fifteen minutes, on the phone). The app now draws its own notifications from data-only pushes; older app versions keep the plain notification — `initiative.md`, `nearby-incidents.md` (status: partial)
+- 2026-10-06 — The top-bar bell is now Notifications: approvals you can approve or decline on the spot, plus the questions her dreaming is holding, with one badge for both (Actions & permissions moved one tap inside it). New "What Athena knows" page in the name menu lists each linked account, what she reads from it, whether she can change anything, and when she last read it. Health card leads with GO/REST/WARNING and hides the numbers behind a tap; Calendar leads with what's on now or next and a countdown; on a phone every card folds to one headline — `companion-dashboard.md`, `what-athena-knows.md` (status: live)
+- 2026-10-06 — Work banner on the Dashboard: while the Working location in Google Calendar (e.g. "Home 7am–4pm") covers now, a strip across the top says where you're working, until when, and the meeting you're in or the next one and how long until it; nothing shows on a day off or under an Out of office. Working locations are also kept out of your schedule, so they no longer read as meetings or clashes — `companion-dashboard.md`, `google-calendar.md` (status: live)
+- 2026-10-06 — Strava is gone: it is no longer a connected app, the dashboard has no Activities card or Strava line, and I can't read workout history from it any more (WHOOP still covers recovery, sleep and strain). Right now no longer mentions a riding or running habit — `connected-apps.md`, `right-now.md`, `companion-dashboard.md` (status: live)
+- 2026-10-06 — Jira can be added to an account with a personal API token for its work site (no authorization screen); the owner's account has it — `jira.md` (status: partial)
+- 2026-10-06 — The Work banner now carries a Jira chip: how many open issues are assigned to you ("10+" when capped), the one you touched last, and how many are overdue or due today; tapping it opens Work. Hidden when Jira isn't connected or can't be read — `companion-dashboard.md` (status: live)
+- 2026-10-06 — The Health card on the Dashboard now shows the last seven days of recovery and of sleep as bars under the GO/REST/WARNING verdict, instead of empty space; the Work banner and Jira chip got tidier spacing — `companion-dashboard.md` (status: live)
+- 2026-10-06 — The Work banner now shows the Jira ticket you have in progress between where you're working and your next meeting (tap to open it in Jira); while you're in a meeting the meeting comes first and the ticket follows. "In progress" follows Jira's own status grouping, and the Jira chip's "+" now appears only when Jira really has more than I read — `companion-dashboard.md` (status: live)
+- 2026-10-06 — Questions I'm holding from my dreaming, shown in the Notifications bell, now have an "Already answered" link so you can close one yourself instead of waiting for the next dream to notice your answer — `dreaming.md` (status: live)

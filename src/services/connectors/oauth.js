@@ -213,7 +213,7 @@ function basicAuth(clientId, clientSecret) {
 
 /**
  * Normalize the many shapes of a token response into what credentials.put()
- * wants. Strava reports absolute `expires_at` (epoch seconds); most report
+ * wants. Some providers report absolute `expires_at` (epoch seconds); most report
  * relative `expires_in`.
  */
 function normalizeTokens(body) {
@@ -567,7 +567,7 @@ async function disconnectGroup(actor, groupId, { actorLabel = "user" } = {}) {
 
 /**
  * Two requests noticing the same expiry would both refresh; with a provider
- * that rotates refresh tokens (Strava, Whoop) the slower one then writes a
+ * that rotates refresh tokens (Whoop) the slower one then writes a
  * token the provider has already invalidated. Collapsing them per process
  * removes that within an instance. Across instances the compare-and-set in
  * credentials still leaves the link usable, but this is the cheap 90%.

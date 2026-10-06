@@ -54,7 +54,7 @@ In the Android app: the **⋯ menu** → **Phone & car** → **Heart rate**.
 ## When it doesn't work
 
 - **"I can't find your band" / "didn't accept the connection".** A band usually
-  allows one connection at a time. If Strava, Peloton or another app is
+  allows one connection at a time. If Peloton or another app is
   connected to it, disconnect it there. Check Heart Rate Broadcast is still on
   in the WHOOP app and the band is close to the phone. I keep retrying while
   it's switched on.
@@ -76,7 +76,7 @@ In the Android app: the **⋯ menu** → **Phone & car** → **Heart rate**.
   ride or run you started.
 - I never keep individual readings, only minute summaries, and only for 30 days
   (you can shorten it). Turning sharing off deletes them.
-- While I hold the band, Strava or Peloton can't connect to it. Stop it in the
+- While I hold the band, Peloton or another app can't connect to it. Stop it in the
   app or from the notification to hand it back.
 - After a phone restart it waits for you to open the app before reconnecting.
 

@@ -18,7 +18,7 @@ function answers(nouls, window = "later_today") {
 
 beforeEach(() => {
 	jest.clearAllMocks();
-	connectorContext.linkedProviders.mockResolvedValue(new Set(["google_calendar", "whoop", "strava"]));
+	connectorContext.linkedProviders.mockResolvedValue(new Set(["google_calendar", "whoop"]));
 	heartRate.getPref.mockResolvedValue({ enabled: true });
 	connectorContext.relevantConnectors.mockReturnValue([]);
 	heartRate.matches.mockReturnValue(false);
@@ -26,7 +26,7 @@ beforeEach(() => {
 
 describe("guess", () => {
 	it("hears 'anything going on tonight?' as a calendar question about tonight", async () => {
-		llm.decide.mockResolvedValue(answers({ calendar: 0.94, whoop: 0.02, strava: 0.01, heart_rate: 0.01 }));
+		llm.decide.mockResolvedValue(answers({ calendar: 0.94, whoop: 0.02, heart_rate: 0.01 }));
 		const g = await intent.guess("Do I have anything going on tonight?", { profileId: PROFILE, audience: "adult" });
 		expect(g.fetch).toEqual(["calendar"]);
 		expect(g.announce).toEqual(["calendar"]);
@@ -39,7 +39,7 @@ describe("guess", () => {
 		llm.decide.mockResolvedValue(answers({}));
 		await intent.guess("how did I sleep?", { profileId: PROFILE, audience: "adult" });
 		const asked = Object.keys(llm.decide.mock.calls[0][0].questions);
-		expect(asked.sort()).toEqual(["calendar", "heart_rate", "strava", "whoop", "whoop_also", "window"].sort());
+		expect(asked.sort()).toEqual(["calendar", "heart_rate", "whoop", "whoop_also", "window"].sort());
 		expect(asked).not.toContain("email");
 	});
 
@@ -51,24 +51,24 @@ describe("guess", () => {
 	});
 
 	it("fetches on a hunch but only announces what it is sure of", async () => {
-		llm.decide.mockResolvedValue(answers({ calendar: 0.5, whoop: 0.9, strava: 0.8, heart_rate: 0.1 }));
+		llm.decide.mockResolvedValue(answers({ calendar: 0.5, whoop: 0.9, heart_rate: 0.1 }));
 		const g = await intent.guess("was that ride too hard?", { profileId: PROFILE, audience: "adult" });
-		expect(g.fetch).toEqual(["calendar", "whoop", "strava"]);
-		expect(g.announce).toEqual(["whoop", "strava"]);
-		expect(g.filler.text).toBe("Let me check WHOOP and Strava, hmm…");
+		expect(g.fetch).toEqual(["calendar", "whoop"]);
+		expect(g.announce).toEqual(["whoop"]);
+		expect(g.filler.text).toBe("Let me check WHOOP, hmm…");
 	});
 
 	it("names at most the two likeliest sources, but still fetches them all", async () => {
-		connectorContext.linkedProviders.mockResolvedValue(new Set(["google_calendar", "gmail", "whoop", "strava"]));
-		llm.decide.mockResolvedValue(answers({ calendar: 0.75, email: 0.8, whoop: 0.95, strava: 0.9, heart_rate: 0.9 }));
+		connectorContext.linkedProviders.mockResolvedValue(new Set(["google_calendar", "gmail", "whoop"]));
+		llm.decide.mockResolvedValue(answers({ calendar: 0.75, email: 0.92, whoop: 0.95, heart_rate: 0.9 }));
 		const g = await intent.guess("give me the full rundown", { profileId: PROFILE, audience: "adult" });
-		expect(g.fetch.sort()).toEqual(["calendar", "email", "heart_rate", "strava", "whoop"]);
-		expect(g.announce.sort()).toEqual(["heart_rate", "strava", "whoop"]);
-		expect(g.filler.text).toBe("Let me check WHOOP and Strava, and I'll grab your heart rate off the band too…");
+		expect(g.fetch.sort()).toEqual(["calendar", "email", "heart_rate", "whoop"]);
+		expect(g.announce.sort()).toEqual(["email", "heart_rate", "whoop"]);
+		expect(g.filler.text).toBe("Let me check your email and WHOOP, and I'll grab your heart rate off the band too…");
 	});
 
 	it("announces nothing — and says nothing — when nothing is likely", async () => {
-		llm.decide.mockResolvedValue(answers({ calendar: 0.05, whoop: 0.05, strava: 0.05, heart_rate: 0.05 }, "unspecified"));
+		llm.decide.mockResolvedValue(answers({ calendar: 0.05, whoop: 0.05, heart_rate: 0.05 }, "unspecified"));
 		const g = await intent.guess("tell me a story about dragons", { profileId: PROFILE, audience: "adult" });
 		expect(g.fetch).toEqual([]);
 		expect(g.filler).toBeNull();
@@ -105,12 +105,12 @@ describe("guess", () => {
 
 describe("fillerLine", () => {
 	it("is deterministic whatever the order, so each combination is one clip", () => {
-		expect(intent.fillerLine(["strava", "whoop"])).toEqual(intent.fillerLine(["whoop", "strava"]));
+		expect(intent.fillerLine(["email", "whoop"])).toEqual(intent.fillerLine(["whoop", "email"]));
 	});
 
 	it("adds the heart-rate clause after the checks", () => {
-		expect(intent.fillerLine(["whoop", "strava", "heart_rate"]).text).toBe(
-			"Let me check WHOOP and Strava, and I'll grab your heart rate off the band too…"
+		expect(intent.fillerLine(["whoop", "email", "heart_rate"]).text).toBe(
+			"Let me check your email and WHOOP, and I'll grab your heart rate off the band too…"
 		);
 		expect(intent.fillerLine(["heart_rate"]).text).toBe("Let me grab your heart rate, hmm…");
 	});
@@ -132,9 +132,9 @@ describe("extraGrounding", () => {
 		expect(intent.extraGrounding(guessed(["calendar"]), "what's on my calendar?")).toBeNull();
 	});
 
-	it("does not narrow WHOOP or Strava history to the calendar window", () => {
-		const extra = intent.extraGrounding(guessed(["whoop", "strava", "heart_rate"]), "was that too much?");
-		expect(extra.providers).toEqual(["whoop", "strava"]);
+	it("does not narrow WHOOP history to the calendar window", () => {
+		const extra = intent.extraGrounding(guessed(["whoop", "heart_rate"]), "was that too much?");
+		expect(extra.providers).toEqual(["whoop"]);
 		expect(extra.daysByProvider).toEqual({});
 		expect(extra.heartRate).toBe(true);
 	});

@@ -1,6 +1,5 @@
 const googleCalendar = require("./googleCalendar");
 const gmail = require("./gmail");
-const strava = require("./strava");
 const whoop = require("./whoop");
 const { isNotConnected } = require("./http");
 const { getProvider } = require("./registry");
@@ -16,7 +15,7 @@ const credentials = require("../credentials");
  *                     path where the model picks the query itself.
  *
  * Both are keyword-gated first, so a message about dinner never costs a
- * Strava round trip. A provider the user has NOT linked is skipped silently —
+ * WHOOP round trip. A provider the user has NOT linked is skipped silently —
  * there is nothing to say about it.
  *
  * A provider the user HAS linked and that then fails is NOT skipped silently.
@@ -27,7 +26,7 @@ const credentials = require("../credentials");
  * contents and a reason for not having them.
  */
 
-const CONNECTORS = [googleCalendar, gmail, strava, whoop, ...require('./work').connectors];
+const CONNECTORS = [googleCalendar, gmail, whoop, ...require('./work').connectors];
 
 /** Connectors whose keyword gate the message trips. */
 function relevantConnectors(message) {

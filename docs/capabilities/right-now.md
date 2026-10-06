@@ -17,14 +17,11 @@ home, and I put **one** suggestion at the top of your dashboard, with a second
 one of a different kind underneath it.
 
 For a place, I read its own web page on a rhythm and keep what it says: open or
-closed, today's hours, and whether those hours depend on the weather. If you
-have Strava linked and you've said yes to health data, I also know what you
-actually do — that you ride most Sundays, that you haven't yet this week — and
-that's usually the reason I'll give you. Where a place has weather-dependent
+closed, today's hours, and whether those hours depend on the weather. Where a place has weather-dependent
 hours and I know where it is, I check the forecast for that spot.
 
 Everything I claim is shown with the thing it came from: the closing time, the
-distance you typed, the habit, the sky. If I can't reach a model I'll still
+distance you typed, the sky. If I can't reach a model I'll still
 rank your own lists and tell you so.
 
 ## Where to find it
@@ -52,13 +49,12 @@ bottom of the dashboard — opens the two lists:
 - **The block isn't there at all.** That's on purpose: I only show it when
   the moment matters — you're in something on the calendar, something starts
   within 15 minutes, or my suggestion is tied to right now (low recovery, a
-  place that's open now, the day your habit usually happens, something due
+  place that's open now, something due
   today or marked high priority). A goal worth mulling on a quiet afternoon
   doesn't earn the top of your page, so I leave it off; ask me in chat and
   I'll still tell you what I'd do with the time.
-- **I don't mention your habits.** I only know them if Strava is connected and
-  health data is consented. Without that I still use the hours, the weather and
-  your calendar.
+- **I don't mention your habits.** I don't read your workout history, so I
+  work from the hours, the weather and your calendar.
 
 ## Limits
 
@@ -92,6 +88,6 @@ bottom of the dashboard — opens the two lists:
 - Notes: `openNow` is three-valued and `null` must never render as open — that
   rule is enforced in `placeCandidates`, not in the prompt. The model only ever
   chooses between candidate ids built here; an id it invents fails the check and
-  the deterministic ranking ships instead. Strava is read for 90 days (the
-  dashboard's own read is 7) and only after an active link AND health consent.
+  the deterministic ranking ships instead. Strava, and with it
+  the activity-habit candidates, was removed on 2026-10-06.
   The mock at `../../../companion/mock/client.ts` carries the full worked example.

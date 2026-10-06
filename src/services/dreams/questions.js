@@ -112,6 +112,20 @@ async function resolve(id, { status, answer }) {
 	return { affectedRows: res.affectedRows };
 }
 
+/**
+ * The person closing their own question from the bell — they answered it in
+ * chat (or just don't want it asked). Scoped to their profile; the dream still
+ * learns what was said from the conversation itself.
+ */
+async function dismissForProfile(profileId, uuid) {
+	const [res] = await pool.query(
+		`UPDATE athena_dream_question SET status = 'dismissed', answered_at = NOW()
+     WHERE uuid = ? AND profile_id = ? AND status = 'pending'`,
+		[uuid, profileId]
+	);
+	return res.affectedRows > 0;
+}
+
 async function answeredFor(profileIds) {
 	if (!profileIds.length) return [];
 	const [rows] = await pool.query(
@@ -145,6 +159,7 @@ module.exports = {
 	markOffered,
 	offeredWithTranscripts,
 	resolve,
+	dismissForProfile,
 	answeredFor,
 	expireStale,
 	prune,

@@ -262,8 +262,7 @@ const FUNCTION_DECLARATIONS = [
 		description:
 			"Whoop strain: per-workout strain scores and daily overall strain. Use " +
 			'for "how hard did I go", "what was my strain", or load questions. ' +
-			"Strain is Whoop's cardiovascular load scale (0-21), not distance — for " +
-			"distance or pace use the Strava tools instead.",
+			"Strain is Whoop's cardiovascular load scale (0-21), not distance or pace.",
 		parameters: {
 			type: "OBJECT",
 			properties: {

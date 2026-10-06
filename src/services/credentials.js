@@ -7,7 +7,7 @@ const { withTransaction } = require("./parent-helpers");
  * Per-user credential store for third-party integrations.
  *
  * Holds the credentials an Athena user grants directly — Google Calendar,
- * Strava, Whoop, a user's own API key — encrypted at rest under the rotating
+ * Whoop, a user's own API key — encrypted at rest under the rotating
  * keyring (helpers/crypto.js). The OAuth dance that produces them, and the
  * refresh-on-use logic, live in the connector layer (Phase 3); this module is
  * only storage, and it is deliberately dull.
@@ -299,7 +299,7 @@ async function updateTokens(
 /**
  * Mark a credential unusable without deleting it — the refresh token was
  * rejected, or the user revoked access at the provider. The row stays so the
- * UI can say "reconnect Strava" rather than silently showing nothing.
+ * UI can say "reconnect Whoop" rather than silently showing nothing.
  */
 async function markNeedsReauth(uuid, { actor = "connector", detail } = {}) {
 	return withTransaction(async (conn) => {
@@ -451,6 +451,7 @@ async function get(profileId, provider, { externalAccountId, actor = "athena" } 
 		needsRefresh: expired && !!refreshToken,
 		scopes: row.scopes ? row.scopes.split(/\s+/).filter(Boolean) : [],
 		externalAccountId: row.external_account_id || null,
+		displayName: row.display_name || null,
 	};
 }
 

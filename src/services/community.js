@@ -41,6 +41,7 @@ const watch = require("./pulsepoint/watch");
 const news = require("./news");
 const clock = require("./clock");
 const googleContacts = require("./connectors/googleContacts");
+const googleCalendar = require("./connectors/googleCalendar");
 
 const MAX_NEIGHBORS = 200;
 const MAX_EVENTS = 200;
@@ -522,6 +523,55 @@ function localTerms(places) {
 
 const escapeRe = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/** A calendar read this wide is for filtering, not showing: enough to hold a busy fortnight. */
+const CALENDAR_READ_CAP = 250;
+
+/**
+ * Things people go to together: a game, a recital, a 5K. A kid's "softball
+ * game" never names the town, so these come back too and the companion keeps
+ * the ones that involve someone in the person's family (it knows who they
+ * are; this read doesn't). Mirrors OUTING in companion communityCalendar.ts.
+ */
+const OUTING = /\b(games?|practices?|tournaments?|scrimmages?|tryouts?|recitals?|concerts?|performances?|rehearsals?|fairs?|festivals?|parades?|5k|10k|races?|fundraisers?|suppers?|banquets?|ceremon(?:y|ies))\b/i;
+
+/**
+ * Upcoming calendar events that mention the person's community: the town in
+ * each point of interest's address, or a distinctive place name, found in an
+ * event's title, location or calendar. Read straight from Google with a wide
+ * cap rather than taken from the dashboard summary, which keeps only the 25
+ * soonest events of every calendar together — on a busy week that is all
+ * meetings, and Saturday's games are never reached. Read-only. `connected` is
+ * false when Google Calendar isn't linked, so the page can say so rather than
+ * show an empty list.
+ */
+async function calendarEvents(profileId, { days = 7 } = {}) {
+	const places = await watch.listPlaces(profileId);
+	const terms = localTerms(places).map((t) => ({ ...t, re: new RegExp(`\\b${escapeRe(t.term)}\\b`, "i") }));
+	let read;
+	try {
+		read = await googleCalendar.collectEvents(profileId, { days, maxResults: CALENDAR_READ_CAP, cap: CALENDAR_READ_CAP });
+	} catch (err) {
+		if (err && err.code === "not_connected") return { connected: false, terms: terms.map((t) => t.term), events: [] };
+		throw err;
+	}
+	// Same rule as the dashboard summary: what already ended is gone, and an
+	// all-day event's end is an exclusive calendar date, not a timestamp.
+	const timeZone = googleCalendar.displayTimeZone(read.calendars);
+	const parts = Object.fromEntries(
+		new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" })
+			.formatToParts(new Date())
+			.map((p) => [p.type, p.value])
+	);
+	const today = `${parts.year}-${parts.month}-${parts.day}`;
+	const notOver = (e) =>
+		e.allDay ? (e.end || e.start) > today || (!e.end && e.start === today) : new Date(e.end || e.start).getTime() > Date.now();
+	const events = read.events.filter(notOver).filter((e) => {
+		const text = `${e.title || ""} ${e.location || ""} ${e.calendar || ""}`;
+		return terms.some((t) => t.re.test(text)) || OUTING.test(e.title || "");
+	});
+	return { connected: true, terms: terms.map((t) => t.term), events };
+}
+
 /** Headlines from the person's own reading list that mention their places. */
 function pickLocal(items, places, limit = 12) {
 	const terms = localTerms(places).map((t) => ({ ...t, re: new RegExp(`\\b${escapeRe(t.term)}\\b`, "i") }));
@@ -643,6 +693,8 @@ module.exports = {
 	saveNeighbor,
 	removeNeighbor,
 	searchContacts,
+	calendarEvents,
+	contactsFor,
 	contactsAtAddress,
 	streetKey,
 	listEvents,

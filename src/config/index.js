@@ -13,7 +13,7 @@ module.exports = {
 	// secret is picked up sooner; longer = fewer Secret Manager calls.
 	SECRET_CACHE_TTL_MS: process.env.SECRET_CACHE_TTL_MS || "",
 
-	// --- Outbound OAuth connectors (Google Calendar, Strava, Whoop) ---
+	// --- Outbound OAuth connectors (Google Calendar, Whoop) ---
 	// Public base URL of the API as the BROWSER sees it — the proxy, not
 	// core_api, which is invoker-only. OAuth redirect URIs are built from
 	// this and must match what is registered with each provider:

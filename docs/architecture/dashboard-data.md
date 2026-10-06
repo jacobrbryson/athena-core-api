@@ -37,7 +37,6 @@ Workspace admins may need to approve Gmail/Slack/Jira app access.
 - Calendar: up to 25 upcoming/ongoing events in seven days, using the calendar's
   timezone and date-only semantics for all-day events.
 - WHOOP: up to seven recent recovery, sleep and cycle records; failures isolated.
-- Strava: up to 30 recent activities in seven days.
 - Family Chores: up to 25 of the credential owner's linked player's chores today.
 - Gmail: five unread inbox messages, headers only; no send or modify endpoint.
 - Slack: five recent mention search results visible to the authenticated user.

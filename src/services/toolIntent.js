@@ -71,14 +71,6 @@ const SOURCES = [
 			"slept, or how tired or rested they are?",
 	},
 	{
-		id: "strava",
-		provider: "strava",
-		say: "Strava",
-		question:
-			"Would answering this need the person's Strava history — runs, rides, " +
-			"workouts they logged, distances, pace or training volume?",
-	},
-	{
 		id: "heart_rate",
 		provider: null,
 		say: null, // spoken as its own clause, see fillerLine
@@ -135,7 +127,7 @@ function buildQuestions(sources) {
 	return questions;
 }
 
-/** "your calendar", "WHOOP and Strava", "your calendar, WHOOP and Strava". */
+/** "your calendar", "WHOOP and heart rate", "your calendar, WHOOP and email". */
 function joinNames(names) {
 	if (names.length <= 1) return names[0] || "";
 	return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
@@ -196,7 +188,7 @@ async function guess(message, { profileId, audience, sources } = {}) {
 	}
 	const fetch = pool.map((s) => s.id).filter((id) => scores[id] >= FETCH_AT);
 	// At most two named sources in the line (the likeliest), plus the heart-rate
-	// clause: "let me check your calendar, your email, WHOOP and Strava" is not
+	// clause: "let me check your calendar, your email, WHOOP and heart rate" is not
 	// a filler, it's a speech. Everything in `fetch` is still read.
 	const sure = fetch.filter((id) => scores[id] >= SPEAK_AT);
 	const named = sure
@@ -235,7 +227,7 @@ function extraGrounding(guessed, message) {
 	const heart = guessed.fetch.includes("heart_rate") && !heartRate.matches(message);
 	if (!providers.length && !heart) return null;
 	// Only the calendar is about the future; the guess's window means nothing
-	// to WHOOP or Strava history, which keep their own defaults.
+	// to WHOOP history, which keeps its own default.
 	const daysByProvider = providers.includes("google_calendar")
 		? { google_calendar: guessed.days }
 		: {};

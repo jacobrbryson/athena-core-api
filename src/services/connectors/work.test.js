@@ -1,4 +1,5 @@
 jest.mock('./http', () => ({ providerGet: jest.fn() }));
+jest.mock("./jiraApiToken", () => ({ forProfile: jest.fn().mockResolvedValue(null), readIssues: jest.fn() }));
 const { providerGet } = require('./http');
 const work = require('./work');
 beforeEach(() => jest.resetAllMocks());
@@ -26,4 +27,15 @@ test('Slack searches mentions for the authenticated user, not a supplied user id
 test('Slack HTTP-200 API failures are not treated as empty success', async () => {
   providerGet.mockResolvedValueOnce({ ok: true, user_id: 'U42' }).mockResolvedValueOnce({ ok: false, error: 'missing_scope' });
   await expect(work.slack(42)).rejects.toThrow();
+});
+test("Jira carries each issue's status category and says when there is more than it read", async () => {
+  const issue = (key, cat) => ({ key, fields: { summary: key, project: { name: 'P' }, status: { name: 'Anything', statusCategory: { key: cat } } } });
+  providerGet.mockResolvedValueOnce([{ id: 'one', name: 'Site', url: 'https://site.atlassian.net', scopes: ['read:jira-work'] }]);
+  providerGet.mockResolvedValueOnce({ issues: [issue('A-1', 'indeterminate'), issue('A-2', 'new')], nextPageToken: 'more' });
+  const capped = await work.jira(42);
+  expect(capped.issues.map(i => i.statusCategory)).toEqual(['indeterminate', 'new']);
+  expect(capped.capped).toBe(true);
+  providerGet.mockResolvedValueOnce([{ id: 'one', name: 'Site', url: 'https://site.atlassian.net', scopes: ['read:jira-work'] }]);
+  providerGet.mockResolvedValueOnce({ issues: [issue('A-1', 'new')], isLast: true });
+  expect((await work.jira(42)).capped).toBe(false);
 });

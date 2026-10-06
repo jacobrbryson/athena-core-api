@@ -18,7 +18,6 @@ const mockList = jest.fn();
 jest.mock("../credentials", () => ({ list: mockList }));
 
 const googleCalendar = require("./googleCalendar");
-const strava = require("./strava");
 const whoop = require("./whoop");
 const context = require("./context");
 const { buildUrl, isNotConnected } = require("./http");
@@ -51,7 +50,6 @@ beforeEach(() => {
 	mockAccessToken.mockResolvedValue("live-token");
 	mockList.mockResolvedValue([
 		{ provider: "google_calendar", status: "active" },
-		{ provider: "strava", status: "active" },
 		{ provider: "whoop", status: "active" },
 	]);
 	global.fetch = jest.fn();
@@ -102,11 +100,11 @@ describe("http layer", () => {
 
 	it("flags the link when the provider rejects a token we thought was live", async () => {
 		global.fetch.mockResolvedValue(apiResponse({}, { ok: false, status: 401 }));
-		const err = await strava.listActivities(PROFILE).catch((e) => e);
+		const err = await whoop.getProfile(PROFILE).catch((e) => e);
 		expect(isNotConnected(err)).toBe(true);
 		expect(mockInvalidate).toHaveBeenCalledWith(
 			PROFILE,
-			"strava",
+			"whoop",
 			expect.stringContaining("401")
 		);
 	});
@@ -128,7 +126,7 @@ describe("http layer", () => {
 			)
 		);
 
-		const err = await strava.listActivities(PROFILE).catch((e) => e);
+		const err = await whoop.listRecovery(PROFILE).catch((e) => e);
 		expect(err.code).toBe("provider_error");
 		expect(err.message).toMatch(/Rate Limit Exceeded/);
 		expect(mockInvalidate).not.toHaveBeenCalled();
@@ -152,7 +150,7 @@ describe("http layer", () => {
 			)
 		);
 
-		const err = await strava.listActivities(PROFILE).catch((e) => e);
+		const err = await whoop.listRecovery(PROFILE).catch((e) => e);
 		expect(err.code).toBe("provider_error");
 		expect(err.message).toMatch(/has not been used in project/);
 		expect(mockInvalidate).not.toHaveBeenCalled();
@@ -162,7 +160,7 @@ describe("http layer", () => {
 		global.fetch.mockResolvedValue(
 			apiResponse({ error: { code: 403, status: "PERMISSION_DENIED", message: "Request had insufficient authentication scopes." } }, { ok: false, status: 403 })
 		);
-		const err = await strava.listActivities(PROFILE).catch((e) => e);
+		const err = await whoop.getProfile(PROFILE).catch((e) => e);
 		expect(isNotConnected(err)).toBe(true);
 		expect(mockInvalidate).toHaveBeenCalled();
 	});
@@ -184,7 +182,7 @@ describe("http layer", () => {
 		global.fetch.mockResolvedValue(
 			apiResponse({ message: "Rate Limit Exceeded" }, { ok: false, status: 429 })
 		);
-		const err = await strava.listActivities(PROFILE).catch((e) => e);
+		const err = await whoop.listRecovery(PROFILE).catch((e) => e);
 		expect(err.code).toBe("provider_error");
 		expect(err.message).toMatch(/Rate Limit Exceeded/);
 		expect(mockInvalidate).not.toHaveBeenCalled();
@@ -230,6 +228,47 @@ describe("google calendar", () => {
 			attendees: 2,
 		});
 		expect(events[1]).toMatchObject({ title: "Holiday", allDay: true });
+	});
+
+	it("returns working-location events apart from the schedule", async () => {
+		// "Home 7am-4pm" is where the person is, not a meeting: in the list it
+		// would overlap everything and trip the clash and about-to-start nudges.
+		global.fetch.mockResolvedValueOnce(calendarList("Mine")).mockResolvedValue(
+			apiResponse({
+				items: [
+					{
+						summary: "Home",
+						eventType: "workingLocation",
+						workingLocationProperties: { type: "homeOffice", homeOffice: {} },
+						start: { dateTime: "2026-09-14T11:00:00Z" },
+						end: { dateTime: "2026-09-14T20:00:00Z" },
+					},
+					{
+						summary: "Standup",
+						start: { dateTime: "2026-09-14T13:00:00Z" },
+						end: { dateTime: "2026-09-14T13:15:00Z" },
+					},
+					{
+						summary: "HQ",
+						eventType: "workingLocation",
+						workingLocationProperties: { type: "officeLocation", officeLocation: { label: "Main office" } },
+						start: { date: "2026-09-15" },
+						end: { date: "2026-09-16" },
+					},
+				],
+			})
+		);
+		const { events, workingLocations } = await googleCalendar.collectEvents(PROFILE);
+		expect(events.map((e) => e.title)).toEqual(["Standup"]);
+		expect(events[0].eventType).toBe("default");
+		expect(workingLocations.map((e) => e.workingLocation)).toEqual(["Home", "Main office"]);
+		expect(workingLocations[0]).toMatchObject({ eventType: "workingLocation", allDay: false });
+		expect(workingLocations[1].allDay).toBe(true);
+		// Athena's own prompt never lists the location as an appointment either.
+		global.fetch.mockResolvedValueOnce(calendarList("Mine")).mockResolvedValue(
+			apiResponse({ items: [{ summary: "Home", eventType: "workingLocation", start: { dateTime: "2026-09-14T11:00:00Z" } }] })
+		);
+		expect(await googleCalendar.buildContext(PROFILE)).toMatch(/nothing scheduled/);
 	});
 
 	it("reads every calendar and merges them in start order", async () => {
@@ -451,56 +490,6 @@ describe("google calendar", () => {
 	});
 });
 
-describe("strava", () => {
-	it("filters by an epoch-seconds lower bound", async () => {
-		jest.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-19T12:00:29Z'));
-		global.fetch.mockResolvedValue(apiResponse([]));
-		await strava.listActivities(PROFILE, { days: 7 });
-		const after = Number(lastUrl().searchParams.get("after"));
-		const expected = Math.floor((Date.now() - 7 * 86400_000) / 1000);
-		expect(expected - after).toBe(29); // bounded widening for the 30s cache window
-	});
-
-	it("converts metres to miles and keeps the raw value", async () => {
-		global.fetch.mockResolvedValue(
-			apiResponse([
-				{ name: "Morning Run", sport_type: "Run", distance: 8046.72, moving_time: 2400 },
-			])
-		);
-		const [activity] = await strava.listActivities(PROFILE);
-		expect(activity.distance_mi).toBe(5);
-		expect(activity.distance_m).toBe(8047);
-	});
-
-	it("totals a window and breaks it down by sport", () => {
-		const { totals, bySport } = strava.summarize([
-			{ type: "Run", distance_mi: 5, moving_time_s: 2400, elevation_gain_m: 50 },
-			{ type: "Run", distance_mi: 3, moving_time_s: 1500, elevation_gain_m: 20 },
-			{ type: "Ride", distance_mi: 20, moving_time_s: 3600, elevation_gain_m: 200 },
-		]);
-		expect(totals).toEqual({
-			count: 3,
-			distance_mi: 28,
-			moving_time_s: 7500,
-			elevation_gain_m: 270,
-		});
-		expect(bySport.Run).toMatchObject({ count: 2, distance_mi: 8 });
-		expect(bySport.Ride).toMatchObject({ count: 1, distance_mi: 20 });
-	});
-
-	it("returns totals rather than a list for the totals tool", async () => {
-		global.fetch.mockResolvedValue(
-			apiResponse([{ sport_type: "Run", distance: 1609.344, moving_time: 600 }])
-		);
-		const result = await strava.executeTool("get_strava_totals", { days: 7 }, {
-			profileId: PROFILE,
-		});
-		expect(result.totals.count).toBe(1);
-		expect(result.totals.distance_mi).toBe(1);
-		expect(result).not.toHaveProperty("activities");
-	});
-});
-
 describe("whoop", () => {
 	it("reads recovery from the v2 collection with a start bound", async () => {
 		global.fetch.mockResolvedValue(apiResponse({ records: [] }));
@@ -610,10 +599,9 @@ describe("keyword gates", () => {
 		["do I have anything going on tonight?", ["google_calendar"]],
 		["what am I doing this weekend?", ["google_calendar"]],
 		["any plans tomorrow?", ["google_calendar"]],
-		["how far did I run this week?", ["strava"]],
 		["what was my recovery this morning?", ["whoop"]],
 		["how did I sleep last night?", ["whoop"]],
-		["did my training affect my recovery?", ["strava", "whoop"]],
+		["did my training affect my recovery?", ["whoop"]],
 		["what should we have for dinner?", []],
 		["tell me a story about dragons", []],
 	];
@@ -634,40 +622,40 @@ describe("keyword gates", () => {
 
 describe("context aggregation", () => {
 	it("only queries providers the user has actually linked", async () => {
-		mockList.mockResolvedValue([{ provider: "strava", status: "active" }]);
-		global.fetch.mockResolvedValue(apiResponse([]));
+		mockList.mockResolvedValue([{ provider: "whoop", status: "active" }]);
+		global.fetch.mockResolvedValue(apiResponse({ records: [] }));
 
 		const text = await context.buildContext(PROFILE, {
-			message: "how was my run and what's on my calendar?",
+			message: "how was my recovery and what's on my calendar?",
 		});
-		// Only the linked provider is actually called...
-		expect(global.fetch).toHaveBeenCalledTimes(1);
-		expect(text).toMatch(/Strava/);
+		// Only the linked provider is actually called (recovery and sleep)...
+		expect(global.fetch).toHaveBeenCalledTimes(2);
+		expect(text).toMatch(/Whoop/);
 		// ...but the unlinked one is still accounted for, rather than left to
 		// the model's imagination.
 		expect(text).toMatch(/Google Calendar: NOT connected/);
 	});
 
 	it("reads a provider the fast guess picked even when no keyword matched", async () => {
-		mockList.mockResolvedValue([{ provider: "strava", status: "active" }]);
-		global.fetch.mockResolvedValue(apiResponse([]));
+		mockList.mockResolvedValue([{ provider: "whoop", status: "active" }]);
+		global.fetch.mockResolvedValue(apiResponse({ records: [] }));
 
 		const text = await context.buildContext(PROFILE, {
 			message: "was that too much for me?",
-			providers: ["strava"],
-			daysByProvider: { strava: 3 },
+			providers: ["whoop"],
+			daysByProvider: { whoop: 3 },
 		});
-		expect(global.fetch).toHaveBeenCalledTimes(1);
-		expect(text).toMatch(/Strava: no activities recorded in the last 3 days/);
+		expect(global.fetch).toHaveBeenCalledTimes(2);
+		expect(text).toMatch(/Whoop: no data recorded in the last 3 days/);
 	});
 
 	it("never calls a revoked link, and says it needs reconnecting", async () => {
-		mockList.mockResolvedValue([{ provider: "strava", status: "needs_reauth" }]);
+		mockList.mockResolvedValue([{ provider: "whoop", status: "needs_reauth" }]);
 
 		const text = await context.buildContext(PROFILE, {
-			message: "how far did I run?",
+			message: "how was my recovery?",
 		});
-		expect(text).toMatch(/Strava: linked, but the connection is no longer authorized/);
+		expect(text).toMatch(/Whoop: linked, but the connection is no longer authorized/);
 		expect(text).toMatch(/reconnected/);
 		// Not the first-time-setup wording: they did link it once.
 		expect(text).not.toMatch(/has not linked the account yet/);
@@ -675,15 +663,17 @@ describe("context aggregation", () => {
 	});
 
 	it("keeps one provider's block when another fails", async () => {
-		global.fetch
-			.mockResolvedValueOnce(apiResponse([{ sport_type: "Run", distance: 1609.344, moving_time: 600 }]))
-			.mockRejectedValue(new Error("whoop is down"));
+		global.fetch.mockImplementation(async (url) => {
+			if (String(url).includes("whoop")) throw new Error("whoop is down");
+			if (String(url).includes("calendarList")) return calendarList("Mine");
+			return apiResponse({ items: [] });
+		});
 
 		const text = await context.buildContext(PROFILE, {
-			message: "how was my run and my recovery?",
+			message: "what's on my calendar today and how was my recovery?",
 		});
-		expect(text).toMatch(/Strava/);
-		// The Strava data block survives, and Whoop contributes a failure
+		expect(text).toMatch(/Google Calendar/);
+		// The calendar block survives, and Whoop contributes a failure
 		// notice rather than nothing — but no Whoop DATA block.
 		expect(text).not.toMatch(/Whoop —/);
 		expect(text).toMatch(/Whoop: linked, but temporarily unreachable/);
@@ -849,7 +839,6 @@ describe("context aggregation", () => {
 			mockList.mockResolvedValue([]);
 			const text = await ask();
 			expect(text).not.toMatch(/Whoop/);
-			expect(text).not.toMatch(/Strava/);
 		});
 	});
 

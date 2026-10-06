@@ -2,7 +2,6 @@ jest.mock('./credentials', () => ({ list: jest.fn() }));
 jest.mock('./consent', () => ({ hasConsentForProfile: jest.fn() }));
 jest.mock('./connectors/googleCalendar', () => ({ collectEvents: jest.fn(), displayTimeZone: () => 'America/New_York' }));
 jest.mock('./connectors/whoop', () => ({ listRecovery: jest.fn(), listSleep: jest.fn(), listCycles: jest.fn() }));
-jest.mock('./connectors/strava', () => ({ listActivities: jest.fn() }));
 jest.mock('./integration', () => ({ getStatus: jest.fn(), getUsableCredentials: jest.fn(), PROVIDER_FAMILY_CHORES: 'family_chores' }));
 jest.mock('./familyChores', () => ({ getChoresToday: jest.fn() }));
 jest.mock('./connectors/work', () => ({ jira: jest.fn(), slack: jest.fn() }));

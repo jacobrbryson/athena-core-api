@@ -13,7 +13,7 @@ triggers: [connect, connected, connection, link, linked, unlink, disconnect, int
 
 I can link to accounts you already have and read from them during our
 conversation — so "what's on tomorrow?" gets a real answer instead of a guess.
-Right now that's **Google** (Gmail, Calendar and Contacts), **Strava**,
+Right now that's **Google** (Gmail, Calendar and Contacts),
 **Whoop**, **Jira** and **Slack**. Family Chores links differently (from the
 Family Chores side).
 
@@ -25,7 +25,7 @@ Three things are always true of a connected app:
 
 - **I only read.** I never create, edit, or delete anything in your accounts.
 - **I only look when it's relevant.** A message about dinner never touches
-  Strava. I check an app when what you said is plausibly about it.
+  WHOOP. I check an app when what you said is plausibly about it.
 - **You can cut it off at any time.** Disconnecting deletes the stored
   credential outright.
 
@@ -41,14 +41,14 @@ button. Gmail, Calendar and Contacts sit together on one **Google** card:
 approval entirely.
 
 Connecting sends you to that company's own sign-in page to approve it — I never
-see or ask for your password. Strava and Whoop are health data, so the first
+see or ask for your password. Whoop is health data, so the first
 time you'll be asked to agree to that separately before the sign-in opens.
 
 ## When it doesn't work
 
 - **"Not connected" when you know you connected it.** The link was probably
   revoked at the other end — changing a password or removing access in your
-  Google or Strava account settings kills it. Reconnect from the same panel.
+  Google or WHOOP account settings kills it. Reconnect from the same panel.
 - **It connected, but I still can't see anything.** Usually the account you
   approved isn't the one holding the data. Disconnect, reconnect, and watch
   which account the sign-in page offers.
@@ -100,7 +100,7 @@ reach your calendar.
   as it does the GET callbacks; `access.test.js` pins that. Unset, each provider keeps
   `<PUBLIC_API_BASE_URL>/integrations/<provider>/callback` and the group
   returns through `/integrations/google_calendar/callback` (`callbackVia`).
-  Strava, Whoop, Jira and Slack always use their own GET callbacks. Prod value
+  Whoop, Jira and Slack always use their own GET callbacks. Prod value
   is `_OAUTH_GOOGLE_CALLBACK_URL` in `../../cloudbuild.yaml`; it must be an
   Authorized redirect URI on the Google OAuth client before it deploys.
 - Sign-in hand-off: `../../../companion/src/auth/AuthContext.tsx` starts the

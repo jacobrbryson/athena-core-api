@@ -6,8 +6,8 @@ process.env.JWT_SECRET = "test-jwt-secret";
 process.env.PUBLIC_API_BASE_URL = "https://api.athena.test/api/v1";
 process.env.INTEGRATION_REDIRECT_ALLOWLIST =
 	"https://app.athena.test,https://guardians.athena.test";
-process.env.STRAVA_CLIENT_ID = "strava-client";
-process.env.STRAVA_CLIENT_SECRET = "strava-secret";
+process.env.EXAMPLEAPP_CLIENT_ID = "exampleapp-client";
+process.env.EXAMPLEAPP_CLIENT_SECRET = "exampleapp-secret";
 process.env.GOOGLE_OAUTH_CLIENT_ID = "google-client";
 process.env.GOOGLE_OAUTH_CLIENT_SECRET = "google-secret";
 
@@ -34,7 +34,37 @@ const mockHasConsent = jest.fn();
 jest.mock("../consent", () => ({ hasConsent: mockHasConsent }));
 
 const oauth = require("./oauth");
-const { PROVIDER_IDS } = require("./registry");
+const { PROVIDER_IDS, PROVIDERS } = require("./registry");
+
+// A fixture provider that exercises the framework paths WHOOP and Google do
+// not: comma-joined scopes, absolute `expires_at`, no PKCE, and an upstream
+// revoke endpoint.
+PROVIDERS.exampleapp = {
+	id: "exampleapp",
+	label: "Example App",
+	authorizeUrl: "https://www.example.test/oauth/authorize",
+	tokenUrl: "https://www.example.test/oauth/token",
+	revokeUrl: "https://www.example.test/oauth/revoke",
+	revokeMethod: "POST",
+	revokeBody: (token) => ({ access_token: token }),
+	scopes: ["read", "activity:read"],
+	scopeSeparator: ",",
+	clientIdSecret: "EXAMPLEAPP_CLIENT_ID",
+	clientSecretSecret: "EXAMPLEAPP_CLIENT_SECRET",
+	pkce: false,
+	authorizeParams: { approval_prompt: "auto" },
+	tokenAuth: "body",
+	consentType: "health_data",
+	rotatesRefreshToken: true,
+	apiBase: "https://www.example.test/api",
+	identify: (tokens) =>
+		tokens?.athlete
+			? {
+					externalAccountId: String(tokens.athlete.id),
+					displayName: [tokens.athlete.firstname, tokens.athlete.lastname].filter(Boolean).join(" "),
+				}
+			: null,
+};
 
 const ACTOR = { profileId: 42, googleId: "google-42" };
 
@@ -88,7 +118,7 @@ beforeEach(() => {
 	consumeAffected = 1;
 	wireDb();
 	mockHasConsent.mockResolvedValue(true);
-	mockCredentials.put.mockResolvedValue({ provider: "strava", status: "active" });
+	mockCredentials.put.mockResolvedValue({ provider: "exampleapp", status: "active" });
 	// Module-level state, and the fixtures share credential uuids: without this
 	// a test that backs off leaks that into the next one.
 	oauth.clearReauthBackoff();
@@ -101,21 +131,21 @@ afterEach(() => jest.restoreAllMocks());
 
 describe("begin", () => {
 	it("builds an authorize URL with the registered redirect URI", async () => {
-		const { authorize_url } = await oauth.begin(ACTOR, "strava");
+		const { authorize_url } = await oauth.begin(ACTOR, "exampleapp");
 		const url = new URL(authorize_url);
 
-		expect(url.origin + url.pathname).toBe("https://www.strava.com/oauth/authorize");
-		expect(url.searchParams.get("client_id")).toBe("strava-client");
+		expect(url.origin + url.pathname).toBe("https://www.example.test/oauth/authorize");
+		expect(url.searchParams.get("client_id")).toBe("exampleapp-client");
 		expect(url.searchParams.get("response_type")).toBe("code");
 		expect(url.searchParams.get("redirect_uri")).toBe(
-			"https://api.athena.test/api/v1/integrations/strava/callback"
+			"https://api.athena.test/api/v1/integrations/exampleapp/callback"
 		);
 		expect(url.searchParams.get("state")).toBeTruthy();
 	});
 
-	it("joins Strava scopes with commas and Google's with spaces", async () => {
-		const strava = new URL((await oauth.begin(ACTOR, "strava")).authorize_url);
-		expect(strava.searchParams.get("scope")).toBe("read,activity:read");
+	it("joins Example App scopes with commas and Google's with spaces", async () => {
+		const exampleapp = new URL((await oauth.begin(ACTOR, "exampleapp")).authorize_url);
+		expect(exampleapp.searchParams.get("scope")).toBe("read,activity:read");
 
 		const google = new URL((await oauth.begin(ACTOR, "google_calendar")).authorize_url);
 		expect(google.searchParams.get("scope").split(" ")).toContain("openid");
@@ -132,12 +162,12 @@ describe("begin", () => {
 		expect(google.searchParams.get("code_challenge_method")).toBe("S256");
 		expect(google.searchParams.get("code_challenge")).toMatch(/^[\w-]{43}$/);
 
-		const strava = new URL((await oauth.begin(ACTOR, "strava")).authorize_url);
-		expect(strava.searchParams.get("code_challenge")).toBeNull();
+		const exampleapp = new URL((await oauth.begin(ACTOR, "exampleapp")).authorize_url);
+		expect(exampleapp.searchParams.get("code_challenge")).toBeNull();
 	});
 
 	it("stores the state hashed, never the state itself", async () => {
-		const { authorize_url } = await oauth.begin(ACTOR, "strava");
+		const { authorize_url } = await oauth.begin(ACTOR, "exampleapp");
 		const state = stateFrom(authorize_url);
 		expect(stateRows).toHaveLength(1);
 		expect(stateRows[0].state_hash).toMatch(/^[0-9a-f]{64}$/);
@@ -167,9 +197,9 @@ describe("begin", () => {
 	});
 
 	it("reports a provider that is not configured on this server", async () => {
-		delete process.env.STRAVA_CLIENT_SECRET;
-		await expect(oauth.begin(ACTOR, "strava")).rejects.toMatchObject({ status: 503 });
-		process.env.STRAVA_CLIENT_SECRET = "strava-secret";
+		delete process.env.EXAMPLEAPP_CLIENT_SECRET;
+		await expect(oauth.begin(ACTOR, "exampleapp")).rejects.toMatchObject({ status: 503 });
+		process.env.EXAMPLEAPP_CLIENT_SECRET = "exampleapp-secret";
 	});
 
 	it("rejects an unknown provider", async () => {
@@ -177,7 +207,7 @@ describe("begin", () => {
 	});
 
 	it("requires an authenticated actor", async () => {
-		await expect(oauth.begin(null, "strava")).rejects.toMatchObject({ status: 401 });
+		await expect(oauth.begin(null, "exampleapp")).rejects.toMatchObject({ status: 401 });
 	});
 });
 
@@ -203,7 +233,7 @@ describe("return-target allowlist", () => {
 });
 
 describe("complete", () => {
-	async function startFlow(provider = "strava") {
+	async function startFlow(provider = "exampleapp") {
 		const { authorize_url } = await oauth.begin(ACTOR, provider, {
 			redirectTo: "https://app.athena.test/settings",
 		});
@@ -223,19 +253,19 @@ describe("complete", () => {
 			})
 		);
 
-		const result = await oauth.complete("strava", { code: "auth-code", state });
+		const result = await oauth.complete("exampleapp", { code: "auth-code", state });
 
 		const [url, init] = global.fetch.mock.calls[0];
-		expect(url).toBe("https://www.strava.com/oauth/token");
+		expect(url).toBe("https://www.example.test/oauth/token");
 		const sent = new URLSearchParams(init.body);
 		expect(sent.get("grant_type")).toBe("authorization_code");
 		expect(sent.get("code")).toBe("auth-code");
-		expect(sent.get("client_secret")).toBe("strava-secret");
+		expect(sent.get("client_secret")).toBe("exampleapp-secret");
 
 		expect(mockCredentials.put).toHaveBeenCalledWith(
 			expect.objectContaining({
 				profileId: 42,
-				provider: "strava",
+				provider: "exampleapp",
 				accessToken: "at-1",
 				refreshToken: "rt-1",
 				externalAccountId: "99",
@@ -246,13 +276,13 @@ describe("complete", () => {
 		expect(result.redirectTo).toBe("https://app.athena.test/settings");
 	});
 
-	it("converts Strava's absolute expires_at into a Date", async () => {
+	it("converts Example App's absolute expires_at into a Date", async () => {
 		const state = await startFlow();
 		const epoch = Math.floor(Date.now() / 1000) + 21600;
 		global.fetch.mockResolvedValue(
 			tokenResponse({ access_token: "at", expires_at: epoch, athlete: { id: 1 } })
 		);
-		await oauth.complete("strava", { code: "c", state });
+		await oauth.complete("exampleapp", { code: "c", state });
 		const stored = mockCredentials.put.mock.calls[0][0];
 		expect(stored.expiresAt).toBeInstanceOf(Date);
 		expect(Math.floor(stored.expiresAt.getTime() / 1000)).toBe(epoch);
@@ -270,17 +300,17 @@ describe("complete", () => {
 	it("refuses a state that was already consumed", async () => {
 		const state = await startFlow();
 		consumeAffected = 0; // the guarded UPDATE matched nothing
-		await expect(oauth.complete("strava", { code: "c", state })).rejects.toMatchObject({
+		await expect(oauth.complete("exampleapp", { code: "c", state })).rejects.toMatchObject({
 			code: "state_invalid",
 		});
 		expect(global.fetch).not.toHaveBeenCalled();
 	});
 
 	it("refuses a missing state, and a state issued for another provider", async () => {
-		await expect(oauth.complete("strava", { code: "c" })).rejects.toMatchObject({
+		await expect(oauth.complete("exampleapp", { code: "c" })).rejects.toMatchObject({
 			code: "state_missing",
 		});
-		const state = await startFlow("strava");
+		const state = await startFlow("exampleapp");
 		consumeAffected = 0; // the UPDATE filters on provider
 		await expect(
 			oauth.complete("google_calendar", { code: "c", state })
@@ -295,7 +325,7 @@ describe("complete", () => {
 				status: 400,
 			})
 		);
-		await expect(oauth.complete("strava", { code: "c", state })).rejects.toMatchObject({
+		await expect(oauth.complete("exampleapp", { code: "c", state })).rejects.toMatchObject({
 			message: "Code is expired",
 		});
 		expect(mockCredentials.put).not.toHaveBeenCalled();
@@ -304,7 +334,7 @@ describe("complete", () => {
 	it("burns the state and carries the return target when the user declines", async () => {
 		const state = await startFlow();
 		const err = await oauth
-			.complete("strava", { state, error: "access_denied" })
+			.complete("exampleapp", { state, error: "access_denied" })
 			.catch((e) => e);
 		expect(err.code).toBe("access_denied");
 		expect(err.redirectTo).toBe("https://app.athena.test/settings");
@@ -323,13 +353,13 @@ describe("accessToken", () => {
 			refreshToken: "rt",
 			expired: false,
 		});
-		expect(await oauth.accessToken(42, "strava")).toBe("still-good");
+		expect(await oauth.accessToken(42, "exampleapp")).toBe("still-good");
 		expect(global.fetch).not.toHaveBeenCalled();
 	});
 
 	it("returns null when nothing is linked", async () => {
 		mockCredentials.get.mockResolvedValue(null);
-		expect(await oauth.accessToken(42, "strava")).toBeNull();
+		expect(await oauth.accessToken(42, "exampleapp")).toBeNull();
 	});
 
 	it("refreshes an expired token and persists the rotated refresh token", async () => {
@@ -347,12 +377,12 @@ describe("accessToken", () => {
 			})
 		);
 
-		expect(await oauth.accessToken(42, "strava")).toBe("at-new");
+		expect(await oauth.accessToken(42, "exampleapp")).toBe("at-new");
 
 		const sent = new URLSearchParams(global.fetch.mock.calls[0][1].body);
 		expect(sent.get("grant_type")).toBe("refresh_token");
 		expect(sent.get("refresh_token")).toBe("rt-old");
-		// Strava rotates on every refresh; dropping the new one kills the link.
+		// Example App rotates on every refresh; dropping the new one kills the link.
 		expect(mockCredentials.updateTokens).toHaveBeenCalledWith(
 			"cred-1",
 			expect.objectContaining({ accessToken: "at-new", refreshToken: "rt-new" })
@@ -371,9 +401,9 @@ describe("accessToken", () => {
 		);
 
 		const results = await Promise.all([
-			oauth.accessToken(42, "strava"),
-			oauth.accessToken(42, "strava"),
-			oauth.accessToken(42, "strava"),
+			oauth.accessToken(42, "exampleapp"),
+			oauth.accessToken(42, "exampleapp"),
+			oauth.accessToken(42, "exampleapp"),
 		]);
 
 		expect(results).toEqual(["at-new", "at-new", "at-new"]);
@@ -390,7 +420,7 @@ describe("accessToken", () => {
 			tokenResponse({ error: "invalid_grant" }, { ok: false, status: 400 })
 		);
 
-		expect(await oauth.accessToken(42, "strava")).toBeNull();
+		expect(await oauth.accessToken(42, "exampleapp")).toBeNull();
 		expect(mockCredentials.markNeedsReauth).toHaveBeenCalledWith(
 			"cred-1",
 			expect.objectContaining({ detail: "invalid_grant" })
@@ -407,7 +437,7 @@ describe("accessToken", () => {
 			tokenResponse({ message: "bad gateway" }, { ok: false, status: 502 })
 		);
 
-		await expect(oauth.accessToken(42, "strava")).rejects.toMatchObject({
+		await expect(oauth.accessToken(42, "exampleapp")).rejects.toMatchObject({
 			code: "refresh_failed",
 		});
 		expect(mockCredentials.markNeedsReauth).not.toHaveBeenCalled();
@@ -419,7 +449,7 @@ describe("accessToken", () => {
 			refreshToken: null,
 			expired: true,
 		});
-		expect(await oauth.accessToken(42, "strava")).toBeNull();
+		expect(await oauth.accessToken(42, "exampleapp")).toBeNull();
 		expect(mockCredentials.markNeedsReauth).toHaveBeenCalled();
 		expect(global.fetch).not.toHaveBeenCalled();
 	});
@@ -439,7 +469,7 @@ describe("accessToken", () => {
 			tokenResponse({ access_token: "at-revived", expires_in: 3600 })
 		);
 
-		expect(await oauth.accessToken(42, "strava")).toBe("at-revived");
+		expect(await oauth.accessToken(42, "exampleapp")).toBe("at-revived");
 		expect(mockCredentials.updateTokens).toHaveBeenCalledWith(
 			"cred-flagged",
 			expect.objectContaining({ accessToken: "at-revived" })
@@ -458,11 +488,11 @@ describe("accessToken", () => {
 			tokenResponse({ error: "invalid_grant" }, { ok: false, status: 400 })
 		);
 
-		expect(await oauth.accessToken(42, "strava")).toBeNull();
+		expect(await oauth.accessToken(42, "exampleapp")).toBeNull();
 		expect(global.fetch).toHaveBeenCalledTimes(1);
 
 		// Inside the cooldown, answered without a second round trip.
-		expect(await oauth.accessToken(42, "strava")).toBeNull();
+		expect(await oauth.accessToken(42, "exampleapp")).toBeNull();
 		expect(global.fetch).toHaveBeenCalledTimes(1);
 	});
 });
@@ -470,21 +500,21 @@ describe("accessToken", () => {
 describe("disconnect", () => {
 	it("revokes upstream, then clears locally", async () => {
 		mockCredentials.get.mockResolvedValue({ uuid: "c", accessToken: "at" });
-		mockCredentials.revoke.mockResolvedValue({ provider: "strava", revoked: true });
+		mockCredentials.revoke.mockResolvedValue({ provider: "exampleapp", revoked: true });
 		global.fetch.mockResolvedValue(tokenResponse({}));
 
-		const result = await oauth.disconnect(ACTOR, "strava");
-		expect(global.fetch.mock.calls[0][0]).toBe("https://www.strava.com/oauth/revoke");
+		const result = await oauth.disconnect(ACTOR, "exampleapp");
+		expect(global.fetch.mock.calls[0][0]).toBe("https://www.example.test/oauth/revoke");
 		expect(new URLSearchParams(global.fetch.mock.calls[0][1].body).get("access_token")).toBe("at");
-		expect(result).toEqual({ provider: "strava", revoked: true, revoked_upstream: true });
+		expect(result).toEqual({ provider: "exampleapp", revoked: true, revoked_upstream: true });
 	});
 
 	it("still clears locally when the provider's revocation fails", async () => {
 		mockCredentials.get.mockResolvedValue({ uuid: "c", accessToken: "at" });
-		mockCredentials.revoke.mockResolvedValue({ provider: "strava", revoked: true });
+		mockCredentials.revoke.mockResolvedValue({ provider: "exampleapp", revoked: true });
 		global.fetch.mockRejectedValue(new Error("network down"));
 
-		const result = await oauth.disconnect(ACTOR, "strava");
+		const result = await oauth.disconnect(ACTOR, "exampleapp");
 		expect(result.revoked).toBe(true);
 		expect(result.revoked_upstream).toBe(false);
 	});

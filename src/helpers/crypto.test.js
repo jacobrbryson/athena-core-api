@@ -43,9 +43,9 @@ describe("with a keyring configured", () => {
 	beforeEach(() => useKeyring({ active: "k2", keys: { k1: KEY_A, k2: KEY_B } }));
 
 	it("encrypts under the active key and round-trips", async () => {
-		const payload = await encrypt("strava-refresh-token");
+		const payload = await encrypt("whoop-refresh-token");
 		expect(payload.startsWith("v2:k2:")).toBe(true);
-		expect(await decrypt(payload)).toBe("strava-refresh-token");
+		expect(await decrypt(payload)).toBe("whoop-refresh-token");
 	});
 
 	it("reports the active key id", async () => {

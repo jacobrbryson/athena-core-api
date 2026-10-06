@@ -45,7 +45,6 @@ describe("redirectUri", () => {
 		for (const id of ["gmail", "google_calendar", "google_contacts", "google"]) {
 			expect(oauth.redirectUri(id)).toBe("https://app.athena.test/oauth/google/callback");
 		}
-		expect(oauth.redirectUri("strava")).toBe("https://api.athena.test/api/v1/integrations/strava/callback");
 		expect(oauth.redirectUri("whoop")).toBe("https://api.athena.test/api/v1/integrations/whoop/callback");
 	});
 });
@@ -71,7 +70,7 @@ describe("POST /integrations/callback", () => {
 	});
 
 	it("refuses another provider's state without consuming it", async () => {
-		oauth.stateProvider.mockResolvedValue("strava");
+		oauth.stateProvider.mockResolvedValue("whoop");
 		const r = res();
 		await completeCallback({ body: { code: "c", state: "s" } }, r);
 		expect(r.statusCode).toBe(400);
@@ -99,7 +98,7 @@ describe("GET /integrations/:provider/callback still works", () => {
 	it("redirects the browser as before", async () => {
 		oauth.complete.mockResolvedValue({ redirectTo: "https://app.athena.test/", credential: {} });
 		const r = res();
-		await handleCallback({ params: { provider: "strava" }, query: { code: "c", state: "s" } }, r);
-		expect(r.redirect).toHaveBeenCalledWith(302, "https://app.athena.test/?integration=strava&status=connected");
+		await handleCallback({ params: { provider: "whoop" }, query: { code: "c", state: "s" } }, r);
+		expect(r.redirect).toHaveBeenCalledWith(302, "https://app.athena.test/?integration=whoop&status=connected");
 	});
 });

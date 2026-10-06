@@ -1,10 +1,12 @@
 jest.mock("../helpers/db", () => ({ query: jest.fn() }));
 jest.mock("./news", () => ({ getNews: jest.fn() }));
 jest.mock("./connectors/googleContacts", () => ({ listContacts: jest.fn() }));
+jest.mock("./connectors/googleCalendar", () => ({ collectEvents: jest.fn(), displayTimeZone: jest.fn(() => "America/New_York") }));
 
 const db = require("../helpers/db");
 const news = require("./news");
 const googleContacts = require("./connectors/googleContacts");
+const googleCalendar = require("./connectors/googleCalendar");
 const community = require("./community");
 
 const HOME = {
@@ -273,5 +275,63 @@ describe("Google Contacts links", () => {
 		expect(block).toContain("The Hendersons (152 Rushing Water Ln) [Bill Henderson, Carol Henderson — in their Google Contacts]");
 		expect(block).toContain("- Maria Lopez (140 Rushing Water Ln) [in their Google Contacts]");
 		expect(googleContacts.listContacts).not.toHaveBeenCalled();
+	});
+});
+
+describe("calendarEvents", () => {
+	const soon = (days, hour) => new Date(Date.now() + days * 86_400_000 + hour * 3_600_000).toISOString();
+	const event = (title, extra = {}) => ({ id: title, title, start: soon(1, 0), end: soon(1, 1), allDay: false, location: null, calendar: "Personal", eventType: "default", ...extra });
+
+	it("reads wide, so a busy week of meetings cannot crowd out the games", async () => {
+		mockDb();
+		const meetings = Array.from({ length: 40 }, (_, i) => event(`Meeting ${i}`, { start: soon(0, i % 8 + 1), end: soon(0, i % 8 + 2) }));
+		googleCalendar.collectEvents.mockResolvedValue({
+			calendars: [],
+			events: [...meetings, event("Troutman soccer practice"), event("Troutman Rec game", { start: soon(4, 0), end: soon(4, 1) })],
+		});
+		const out = await community.calendarEvents(1);
+		expect(googleCalendar.collectEvents).toHaveBeenCalledWith(1, { days: 7, maxResults: 250, cap: 250 });
+		expect(out.connected).toBe(true);
+		expect(out.terms).toContain("Troutman");
+		expect(out.events.map((e) => e.title)).toEqual(["Troutman soccer practice", "Troutman Rec game"]);
+	});
+
+	it("matches the location and the calendar a shared event is on, and skips what already ended", async () => {
+		mockDb();
+		googleCalendar.collectEvents.mockResolvedValue({
+			calendars: [],
+			events: [
+				event("Practice", { location: "Troutman Park, Troutman, NC" }),
+				event("Game", { calendar: "Troutman Youth Soccer" }),
+				event("Troutman early run", { start: soon(0, -5), end: soon(0, -4) }),
+				event("Dentist"),
+			],
+		});
+		const out = await community.calendarEvents(1);
+		expect(out.events.map((e) => e.title)).toEqual(["Practice", "Game"]);
+	});
+
+	it("also returns games, practices and the like, so the companion can keep the ones that involve family", async () => {
+		mockDb({ places: [{ ...HOME, address: null, name: "Home" }] });
+		googleCalendar.collectEvents.mockResolvedValue({
+			calendars: [],
+			events: [event("Skylar softball game", { start: soon(0, 5), end: soon(0, 7) }), event("Ashlynn therapy"), event("Standup")],
+		});
+		const out = await community.calendarEvents(1);
+		expect(out.terms).toEqual([]);
+		expect(out.events.map((e) => e.title)).toEqual(["Skylar softball game"]);
+	});
+
+	it("says so when Google Calendar is not connected, rather than returning an empty list", async () => {
+		mockDb();
+		googleCalendar.collectEvents.mockRejectedValue(Object.assign(new Error("none"), { code: "not_connected" }));
+		const out = await community.calendarEvents(1);
+		expect(out).toMatchObject({ connected: false, events: [] });
+	});
+
+	it("lets any other failure through", async () => {
+		mockDb();
+		googleCalendar.collectEvents.mockRejectedValue(new Error("boom"));
+		await expect(community.calendarEvents(1)).rejects.toThrow("boom");
 	});
 });

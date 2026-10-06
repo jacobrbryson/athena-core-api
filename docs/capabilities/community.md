@@ -35,6 +35,19 @@ all of it in mind whenever we talk:
   next year's. I'll mention one when it genuinely fits, like when you're
   planning a free Saturday.
 
+The Community card and page also show what's on your Google Calendar in the next
+seven days that mentions your community — "Soccer practice tomorrow night",
+"Games Saturday", "5K Saturday night". I work out what counts as your community
+from your points of interest: the town in each place's address, and a place's own
+name when it's distinctive. I match those against the event's title, its
+location and the calendar it sits on. I read your calendar for this on its own,
+widely, so a week crowded with meetings doesn't push the games and the 5K out of
+view. Games, practices, recitals, 5Ks and the like also count when they're for
+someone in your family — "Softball game tonight · Skylar" — even if the event
+never names the town. Nothing is tied to one town: add a point of
+interest somewhere else and its events show up too. I only read the calendar for
+this; I don't add or change anything on it.
+
 I never fill these lists by guessing: nothing is added from your contacts,
 email or location history on its own — a suggested contact is only linked
 when you pick it. If you tell me about a new neighbor or event in

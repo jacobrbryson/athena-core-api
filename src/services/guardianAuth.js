@@ -26,7 +26,7 @@ async function resolveLinkedProfileId(email) {
  *
  * The login response carries linked_profile_id for the client's convenience,
  * but the client must never be believed about it — it selects whose memories
- * and whose connected accounts (calendar, Strava, Whoop) Athena reads. This
+ * and whose connected accounts (calendar, Whoop) Athena reads. This
  * re-derives it from the guardian id inside the verified session token, so a
  * forged body cannot point Athena at someone else's profile.
  *

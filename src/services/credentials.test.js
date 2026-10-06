@@ -39,7 +39,7 @@ function row(over = {}) {
 		id: 7,
 		uuid: "uuid-existing",
 		profile_id: 42,
-		provider: "strava",
+		provider: "whoop",
 		kind: "oauth2",
 		external_account_id: "athlete-1",
 		display_name: "Ross",
@@ -88,7 +88,7 @@ describe("put", () => {
 
 		await credentials.put({
 			profileId: 42,
-			provider: "strava",
+			provider: "whoop",
 			externalAccountId: "athlete-1",
 			accessToken: "plain-access",
 			refreshToken: "plain-refresh",
@@ -143,7 +143,7 @@ describe("put", () => {
 		respondWith([[row({ status: "revoked" })], [row()]]);
 		await credentials.put({
 			profileId: 42,
-			provider: "strava",
+			provider: "whoop",
 			externalAccountId: "athlete-1",
 			accessToken: "a",
 		});
@@ -157,13 +157,13 @@ describe("put", () => {
 		respondWith([[], [row()]]);
 		await credentials.put({
 			profileId: 42,
-			provider: "strava",
+			provider: "whoop",
 			accessToken: "a",
 			actor: "oauth-callback",
 		});
 		const [audit] = sqlLog(/INSERT INTO user_credential_audit/);
 		expect(audit.params).toEqual(
-			expect.arrayContaining([42, "strava", "linked", "oauth-callback"])
+			expect.arrayContaining([42, "whoop", "linked", "oauth-callback"])
 		);
 	});
 
@@ -171,7 +171,7 @@ describe("put", () => {
 		respondWith([[], [row({ access_token_enc: "v2:k1:x", refresh_token_enc: "v2:k1:y" })]]);
 		const result = await credentials.put({
 			profileId: 42,
-			provider: "strava",
+			provider: "whoop",
 			accessToken: "a",
 		});
 		expect(result).not.toHaveProperty("accessToken");
@@ -185,7 +185,7 @@ describe("put", () => {
 			credentials.put({ profileId: 42, provider: "facebook", accessToken: "a" })
 		).rejects.toThrow(/Unsupported credential provider/);
 		await expect(
-			credentials.put({ profileId: 42, provider: "strava", accessToken: "" })
+			credentials.put({ profileId: 42, provider: "whoop", accessToken: "" })
 		).rejects.toThrow(/accessToken is required/);
 		expect(sqlLog(/INSERT INTO user_credential\b/)).toHaveLength(0);
 	});
@@ -200,14 +200,14 @@ describe("get", () => {
 		});
 		respondWith([[stored]]);
 
-		const cred = await credentials.get(42, "strava", { actor: "strava-tool" });
+		const cred = await credentials.get(42, "whoop", { actor: "whoop-tool" });
 		expect(cred.accessToken).toBe("live-access");
 		expect(cred.refreshToken).toBe("live-refresh");
 		expect(cred.expired).toBe(false);
 
 		expect(sqlLog(/UPDATE user_credential SET last_used_at/)).toHaveLength(1);
 		const [audit] = sqlLog(/INSERT INTO user_credential_audit/);
-		expect(audit.params).toEqual(expect.arrayContaining(["read", "strava-tool"]));
+		expect(audit.params).toEqual(expect.arrayContaining(["read", "whoop-tool"]));
 	});
 
 	it("flags a credential that is expired but refreshable", async () => {
@@ -221,7 +221,7 @@ describe("get", () => {
 				}),
 			],
 		]);
-		const cred = await credentials.get(42, "strava");
+		const cred = await credentials.get(42, "whoop");
 		expect(cred.expired).toBe(true);
 		expect(cred.needsRefresh).toBe(true);
 	});
@@ -241,7 +241,7 @@ describe("get", () => {
 			],
 		]);
 
-		const cred = await credentials.get(42, "strava");
+		const cred = await credentials.get(42, "whoop");
 		expect(cred.accessToken).toBeNull();
 		expect(cred.refreshToken).toBe("refresh");
 		expect(cred.expired).toBe(true);
@@ -251,7 +251,7 @@ describe("get", () => {
 
 	it("returns null when neither token is left", async () => {
 		respondWith([[row({ access_token_enc: null, refresh_token_enc: null })]]);
-		expect(await credentials.get(42, "strava")).toBeNull();
+		expect(await credentials.get(42, "whoop")).toBeNull();
 	});
 
 	it("treats a token inside the expiry skew as expired", async () => {
@@ -264,20 +264,20 @@ describe("get", () => {
 				}),
 			],
 		]);
-		expect((await credentials.get(42, "strava")).expired).toBe(true);
+		expect((await credentials.get(42, "whoop")).expired).toBe(true);
 	});
 
 	it("returns null for a revoked or missing credential", async () => {
 		respondWith([[row({ status: "revoked", access_token_enc: null })], []]);
-		expect(await credentials.get(42, "strava")).toBeNull();
-		expect(await credentials.get(42, "strava")).toBeNull();
+		expect(await credentials.get(42, "whoop")).toBeNull();
+		expect(await credentials.get(42, "whoop")).toBeNull();
 		expect(sqlLog(/UPDATE user_credential SET last_used_at/)).toHaveLength(0);
 	});
 
 	it("audits and throws credential_unreadable when the ciphertext cannot be read", async () => {
 		// What a key pruned too early, or a host with no keyring, looks like.
 		respondWith([[row({ access_token_enc: "v2:k9:aaa:bbb:ccc" })]]);
-		await expect(credentials.get(42, "strava")).rejects.toMatchObject({
+		await expect(credentials.get(42, "whoop")).rejects.toMatchObject({
 			code: "credential_unreadable",
 		});
 		const [audit] = sqlLog(/INSERT INTO user_credential_audit/);
@@ -286,7 +286,7 @@ describe("get", () => {
 
 	it("leaves an unreadable credential intact so the key can come back", async () => {
 		respondWith([[row({ access_token_enc: "v2:k9:aaa:bbb:ccc" })]]);
-		await expect(credentials.get(42, "strava")).rejects.toThrow();
+		await expect(credentials.get(42, "whoop")).rejects.toThrow();
 		// Nothing may null the ciphertext or retire the link: the plaintext is
 		// recoverable as soon as the right key is on the keyring again.
 		expect(sqlLog(/access_token_enc = NULL/)).toHaveLength(0);
@@ -297,8 +297,8 @@ describe("get", () => {
 describe("revoke", () => {
 	it("clears both ciphertext columns but keeps the row", async () => {
 		respondWith([[row({ access_token_enc: "v2:k1:x" })]]);
-		expect(await credentials.revoke(42, "strava")).toEqual({
-			provider: "strava",
+		expect(await credentials.revoke(42, "whoop")).toEqual({
+			provider: "whoop",
 			revoked: true,
 		});
 		const [update] = sqlLog(/UPDATE user_credential SET\s+status = \?, revoked_at/);
@@ -363,13 +363,13 @@ describe("list and status", () => {
 
 	it("hides revoked credentials", async () => {
 		respondWith([[row({ status: "revoked" })]]);
-		expect(await credentials.status(42, "strava")).toBeNull();
+		expect(await credentials.status(42, "whoop")).toBeNull();
 	});
 
 	it("reports a linked provider with its scopes", async () => {
 		respondWith([[row()]]);
-		const state = await credentials.status(42, "strava");
-		expect(state.provider).toBe("strava");
+		const state = await credentials.status(42, "whoop");
+		expect(state.provider).toBe("whoop");
 		expect(state.scopes).toEqual(["read", "activity:read"]);
 		expect(state).not.toHaveProperty("access_token_enc");
 	});

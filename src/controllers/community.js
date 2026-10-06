@@ -32,6 +32,8 @@ function handler(run) {
 
 module.exports = {
   overview: handler((profileId) => community.overview(profileId)),
+  // Calendar events that mention the community's towns and places; read-only.
+  calendar: handler((profileId) => community.calendarEvents(profileId)),
   // The person's own Google Contacts, searched for the "link a contact" box.
   searchContacts: handler((profileId, req) => community.searchContacts(profileId, req.query.q)),
   // Contacts whose Google address is this street line: suggestions, never links.
