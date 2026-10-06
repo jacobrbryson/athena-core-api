@@ -68,21 +68,32 @@ async function markOffered(ids, sessionId) {
 	);
 }
 
-/** Offered, still-pending questions with what was said since — for the dream to read. */
-async function offeredWithTranscripts(limitPerQuestion = 24) {
+/**
+ * Offered, still-pending questions with what was said since — for the dream to read.
+ *
+ * She may have asked in one conversation and the person answered in another
+ * (sessions interleave, and `offered_session_id` follows whichever session saw
+ * the question last), so this reads the person's own words and Athena's replies
+ * across every session the person spoke in since the question existed, not just
+ * the one it was last offered in.
+ */
+async function offeredWithTranscripts(limitPerQuestion = 40) {
 	const [questions] = await pool.query(
-		`SELECT id, profile_id, question, offered_session_id, offered_at FROM athena_dream_question
+		`SELECT id, profile_id, question, created_at FROM athena_dream_question
      WHERE status = 'pending' AND offered_session_id IS NOT NULL AND expires_at > NOW()`
 	);
 	for (const q of questions) {
-		// Only the person's own words and Athena's replies — another participant's
-		// lines are not this person's answer.
+		// Only the person's own words and Athena's replies in the sessions they
+		// spoke in — another participant's lines are not this person's answer.
 		const [lines] = await pool.query(
-			`SELECT is_human, text, created_at FROM message
-       WHERE session_id = ? AND created_at >= DATE_SUB(?, INTERVAL 2 MINUTE)
-         AND (is_human = 0 OR profile_id = ?)
-       ORDER BY created_at ASC LIMIT ?`,
-			[q.offered_session_id, q.offered_at, q.profile_id, limitPerQuestion]
+			`SELECT is_human, text, created_at FROM (
+         SELECT is_human, text, created_at FROM message
+         WHERE created_at >= ?
+           AND session_id IN (SELECT DISTINCT session_id FROM message WHERE profile_id = ? AND is_human = 1 AND created_at >= ?)
+           AND (is_human = 0 OR profile_id = ?)
+         ORDER BY created_at DESC LIMIT ?
+       ) recent ORDER BY created_at ASC`,
+			[q.created_at, q.profile_id, q.created_at, q.profile_id, limitPerQuestion]
 		);
 		q.transcript = lines.map((l) => `${l.is_human ? "person" : "athena"}: ${String(l.text).replace(/\s+/g, " ").slice(0, 400)}`);
 	}

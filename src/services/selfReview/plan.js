@@ -37,6 +37,9 @@ const THRESHOLDS = {
 	// distinct days, is broken rather than quiet.
 	extractionMinRuns: 3,
 	extractionQuietDays: 3,
+	// Below this many human lines in 72h, silence from the extractor is what a
+	// quiet household looks like — still reported, but not as a regression.
+	extractionBusyLines: 30,
 	// Enough proposals for "none of them were written" to mean something.
 	extractionMinProposals: 5,
 	extractionDuplicateShare: 0.8,
@@ -245,7 +248,15 @@ function ruleFindings({ metrics, evals, config, evalHistory = [], maintenance = 
 			const proposed = ex.proposedFacts + ex.proposedMoments;
 			const written = ex.writtenFacts + ex.writtenMoments;
 			if (ex.runs >= THRESHOLDS.extractionMinRuns && ex.days >= THRESHOLDS.extractionQuietDays && proposed === 0) {
-				add("high", "memory", `Memory extraction proposed nothing in ${ex.runs} runs over ${ex.days} days`, `${ex.humanLines} lines from people were read in 72h and not one fact or moment came back — check the extract prompt and model output`);
+				const quiet = ex.humanLines < THRESHOLDS.extractionBusyLines;
+				add(
+					quiet ? "low" : "high",
+					"memory",
+					`Memory extraction proposed nothing in ${ex.runs} runs over ${ex.days} days`,
+					quiet
+						? `only ${ex.humanLines} lines from people in 72h, so this is probably a quiet household, not a broken extractor — it becomes a regression once people say more and still nothing comes back`
+						: `${ex.humanLines} lines from people were read in 72h and not one fact or moment came back — check the extract prompt and model output`
+				);
 			} else if (proposed >= THRESHOLDS.extractionMinProposals && written === 0) {
 				add(
 					"medium",

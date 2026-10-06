@@ -369,7 +369,7 @@ You have your own MySQL 8 database, athena_mind, and full control of it: CREATE 
    - _contact(profile_id, contact_id, name, given_name, family_name, nicknames, emails, phones, relations, addresses, organization, birthday, photo_url, contact_groups, updated_at) — the person's own Google Contacts, when they linked them; JSON columns are arrays of {value,type} (relations: {person,type}). Cite a contact as "c:<contact_id>".
    - _catalog — written only through the "describe" op.
 4. Views are welcome. Give views a _profile_id column too, or the chat can't read them.
-5. One SQL statement per "sql" step, no trailing semicolons chains. Stored procedures, triggers and events are not permitted.
+5. information_schema.COLUMNS has no TABLE_TYPE column (that is on information_schema.TABLES — join the two to filter views). If nothing changed tonight there is nothing to verify: finish with a note instead of re-auditing structure. One SQL statement per "sql" step, no trailing semicolons chains. Stored procedures, triggers and events are not permitted.
 6. Only record what the facts say. Don't invent details. If two facts might be the same person/place and you can't tell, ASK instead of merging.
 
 ## Ops (the "steps" array; each needs a short "why")

@@ -239,10 +239,16 @@ describe("ruleFindings", () => {
 				config: { orcwoodCount: 1 },
 			}).filter((x) => x.area === "memory");
 
-		test("nothing proposed across three days is broken, however quiet the chat", () => {
-			const [f] = findingsFor(ex({ runs: 4, days: 3, humanLines: 9 }));
+		test("nothing proposed across three days is broken when people were talking", () => {
+			const [f] = findingsFor(ex({ runs: 4, days: 3, humanLines: 60 }));
 			expect(f).toMatchObject({ severity: "high" });
 			expect(f.title).toMatch(/proposed nothing in 4 runs over 3 days/);
+		});
+
+		test("the same silence in a quiet household is still reported, but low", () => {
+			const [f] = findingsFor(ex({ runs: 4, days: 3, humanLines: 9 }));
+			expect(f).toMatchObject({ severity: "low" });
+			expect(f.evidence || f.detail || JSON.stringify(f)).toMatch(/quiet household/);
 		});
 
 		test("one quiet day is not a failure", () => {
