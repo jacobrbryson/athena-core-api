@@ -110,6 +110,8 @@ router.patch('/dashboard/health/family/:uuid/resolve', requireAuth, express.json
 router.get('/dashboard/family/people', requireAuth, require('../controllers/familyPeople').overview);
 router.put('/dashboard/family/people/:factUuid/contact', requireAuth, express.json({ limit: '1kb' }), require('../controllers/familyPeople').link);
 router.delete('/dashboard/family/people/:factUuid/contact', requireAuth, require('../controllers/familyPeople').unlink);
+router.delete('/dashboard/family/people/:factUuid', requireAuth, require('../controllers/familyPeople').remove);
+router.post('/dashboard/family/people/:factUuid/merge', requireAuth, express.json({ limit: '1kb' }), require('../controllers/familyPeople').merge);
 
 // Public: the on-device model manifest carries no secrets, and devices poll it
 // before (and after) pairing.

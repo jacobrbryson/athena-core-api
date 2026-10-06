@@ -1,6 +1,7 @@
 jest.mock("../helpers/db", () => ({ query: jest.fn() }));
 jest.mock("./family", () => ({ getFamilyForProfile: jest.fn(), listChildren: jest.fn() }));
 jest.mock("./community", () => ({ contactsFor: jest.fn() }));
+jest.mock("./memory", () => ({ memoryEvents: { emit: jest.fn() } }));
 
 const db = require("../helpers/db");
 const family = require("./family");
@@ -102,5 +103,56 @@ describe("linkContact", () => {
 		await people.linkContact(1, "f-1", { contactId: "111", name: "Stale" });
 		const insert = db.query.mock.calls.find(([sql]) => /INSERT INTO athena_family_contact/.test(sql));
 		expect(insert[1]).toEqual([1, "f-1", "111", "Linda Smith"]);
+	});
+});
+
+describe("removePerson / mergePeople", () => {
+	const memory = require("./memory");
+	const A = { id: 1, uuid: "a", category: "person", memory_key: "Name", memory_value: "likes soccer" };
+	const B = { id: 2, uuid: "b", category: "person", memory_key: "Skylar", memory_value: "daughter, 8" };
+	const mockDb = ({ facts = [A, B], intoLink = null } = {}) =>
+		db.query.mockImplementation(async (sql, params) => {
+			if (/FROM user_memory\s+WHERE profile_id = \? AND uuid/.test(sql)) return [[facts.find((f) => f.uuid === params[1])].filter(Boolean)];
+			if (/SELECT id FROM athena_family_contact/.test(sql)) return [[intoLink]];
+			return [[]];
+		});
+	const ran = (re) => db.query.mock.calls.filter(([sql]) => re.test(sql));
+
+	test("delete forgets the memory and its link, only for the caller's own person", async () => {
+		mockDb();
+		family.getFamilyForProfile.mockResolvedValue(null);
+		await people.removePerson(1, "a");
+		expect(ran(/SET deleted_at = NOW/)).toHaveLength(1);
+		expect(ran(/DELETE FROM athena_family_contact/)[0][1]).toEqual([1, "a"]);
+		expect(memory.memoryEvents.emit).toHaveBeenCalledWith("fact:deleted", { id: 1, profile_id: 1 });
+	});
+
+	test("deleting someone that is not theirs is a 404 and writes nothing", async () => {
+		mockDb({ facts: [] });
+		await expect(people.removePerson(1, "x")).rejects.toMatchObject({ status: 404 });
+		expect(ran(/SET deleted_at/)).toHaveLength(0);
+	});
+
+	test("merge appends what was known, moves the link, forgets the duplicate", async () => {
+		mockDb();
+		family.getFamilyForProfile.mockResolvedValue(null);
+		await people.mergePeople(1, "a", "b");
+		expect(ran(/SET memory_value/)[0][1][0]).toBe("daughter, 8; likes soccer");
+		expect(ran(/SET fact_uuid = \?/)[0][1]).toEqual(["b", 1, "a"]);
+		expect(ran(/SET deleted_at = NOW/)[0][1]).toEqual([1]);
+	});
+
+	test("merge does not repeat what the target already says, and keeps the target's own link", async () => {
+		mockDb({ facts: [{ ...A, memory_value: "Daughter, 8" }, B], intoLink: { id: 9 } });
+		family.getFamilyForProfile.mockResolvedValue(null);
+		await people.mergePeople(1, "a", "b");
+		expect(ran(/SET memory_value/)).toHaveLength(0);
+		expect(ran(/SET fact_uuid = \?/)).toHaveLength(0);
+		expect(ran(/DELETE FROM athena_family_contact/)[0][1]).toEqual([1, "a"]);
+	});
+
+	test("merging someone into themselves is refused", async () => {
+		await expect(people.mergePeople(1, "a", "a")).rejects.toMatchObject({ status: 400 });
+		expect(db.query).not.toHaveBeenCalled();
 	});
 });

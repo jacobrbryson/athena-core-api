@@ -1,5 +1,9 @@
 # Capability ledger
 
+- 2026-10-06 — Family page: Merge folds a duplicate person or pet into another
+  (details kept, contact link moved) and Delete forgets an entry —
+  `companion-dashboard.md` (status: partial)
+
 - 2026-10-06 — The Community card and page list calendar events from the next
   seven days that mention your community (the town and distinctive names from
   your points of interest), worded like "Soccer practice tomorrow night";

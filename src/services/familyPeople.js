@@ -1,6 +1,7 @@
 const pool = require("../helpers/db");
 const familyService = require("./family");
 const community = require("./community");
+const memory = require("./memory");
 
 /**
  * What the Family card knows about people beyond memories: the children on
@@ -109,4 +110,54 @@ async function unlinkContact(profileId, factUuid) {
 	return overview(profileId);
 }
 
-module.exports = { overview, linkContact, unlinkContact, isoDay };
+const notFound = () => Object.assign(new Error("That person is no longer in your memories."), { status: 404 });
+
+async function ownFact(profileId, uuid) {
+	const [[fact]] = await pool.query(
+		`SELECT id, uuid, category, memory_key, memory_value FROM user_memory
+		 WHERE profile_id = ? AND uuid = ? AND deleted_at IS NULL AND category IN (?)`,
+		[profileId, String(uuid), FAMILY_CATEGORIES]
+	);
+	return fact || null;
+}
+
+/** Forget a remembered person or pet (the memory is soft-deleted, as everywhere) and drop their contact link. */
+async function removePerson(profileId, factUuid) {
+	const fact = await ownFact(profileId, factUuid);
+	if (!fact) throw notFound();
+	await pool.query("UPDATE user_memory SET deleted_at = NOW() WHERE id = ?", [fact.id]);
+	await pool.query("DELETE FROM athena_family_contact WHERE profile_id = ? AND fact_uuid = ?", [profileId, fact.uuid]);
+	memory.memoryEvents.emit("fact:deleted", { id: fact.id, profile_id: profileId });
+	return overview(profileId);
+}
+
+/**
+ * Fold one remembered person into another: what was said about them is kept on
+ * the target (never dropped, never repeated), the Google Contact link moves
+ * across if the target has none, and the duplicate is forgotten.
+ */
+async function mergePeople(profileId, fromUuid, intoUuid) {
+	if (!fromUuid || !intoUuid || String(fromUuid) === String(intoUuid)) throw bad("Pick two different people to merge.");
+	const [from, into] = await Promise.all([ownFact(profileId, fromUuid), ownFact(profileId, intoUuid)]);
+	if (!from || !into) throw notFound();
+
+	const had = (into.memory_value || "").trim();
+	const add = (from.memory_value || "").trim();
+	const merged = !add || had.toLowerCase().includes(add.toLowerCase()) ? had : had ? `${had}; ${add}` : add;
+	if (merged !== had) {
+		await pool.query("UPDATE user_memory SET memory_value = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [merged.slice(0, 2000), into.id]);
+	}
+
+	const [[intoLink]] = await pool.query("SELECT id FROM athena_family_contact WHERE profile_id = ? AND fact_uuid = ?", [profileId, into.uuid]);
+	if (intoLink) await pool.query("DELETE FROM athena_family_contact WHERE profile_id = ? AND fact_uuid = ?", [profileId, from.uuid]);
+	else await pool.query("UPDATE athena_family_contact SET fact_uuid = ? WHERE profile_id = ? AND fact_uuid = ?", [into.uuid, profileId, from.uuid]);
+
+	await pool.query("UPDATE user_memory SET deleted_at = NOW() WHERE id = ?", [from.id]);
+	memory.memoryEvents.emit("fact:deleted", { id: from.id, profile_id: profileId });
+	if (merged !== had) {
+		memory.memoryEvents.emit("fact:written", { id: into.id, profile_id: profileId, category: into.category, memory_key: into.memory_key, memory_value: merged.slice(0, 2000) });
+	}
+	return overview(profileId);
+}
+
+module.exports = { overview, linkContact, unlinkContact, removePerson, mergePeople, isoDay };

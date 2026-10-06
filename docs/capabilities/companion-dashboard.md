@@ -44,6 +44,14 @@ change in Google shows up on its own, and Unlink removes it. If Google Contacts
 isn't connected, the same button offers to connect it. A contact can be linked
 to only one person.
 
+When the same person or pet has been remembered twice, or I filed something that
+isn't a person ("Name", "Parents"), the Family page can tidy it. Merge on a
+person asks who they should be folded into: what I know about them is added to
+that person (nothing repeated, nothing lost), their Google Contact link moves
+across if the target has none, and the duplicate is forgotten. Delete forgets an
+entry after you confirm. Children from your family profiles can't be merged or
+deleted here.
+
 The News card and page show headlines I have already read for you in the
 background, from pages you paste in News → Manage pages — no feed URL needed,
 and no waiting on a website when you open the dashboard. How often I read each

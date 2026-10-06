@@ -25,4 +25,6 @@ module.exports = {
   overview: handler((profileId) => familyPeople.overview(profileId)),
   link: handler((profileId, req) => familyPeople.linkContact(profileId, req.params.factUuid, req.body || {})),
   unlink: handler((profileId, req) => familyPeople.unlinkContact(profileId, req.params.factUuid)),
+  remove: handler((profileId, req) => familyPeople.removePerson(profileId, req.params.factUuid)),
+  merge: handler((profileId, req) => familyPeople.mergePeople(profileId, req.params.factUuid, req.body?.intoUuid)),
 };
