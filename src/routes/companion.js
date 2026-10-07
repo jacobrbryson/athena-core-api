@@ -63,6 +63,14 @@ router.get('/dashboard/community/contacts/at', requireAuth, require('../controll
 router.post('/dashboard/community/neighbors', requireAuth, express.json({ limit: '4kb' }), require('../controllers/community').saveNeighbor);
 router.patch('/dashboard/community/neighbors/:uuid', requireAuth, express.json({ limit: '4kb' }), require('../controllers/community').updateNeighbor);
 router.delete('/dashboard/community/neighbors/:uuid', requireAuth, require('../controllers/community').removeNeighbor);
+// Door-to-door street checks: a street listed ahead of time, then each house marked.
+router.get('/dashboard/community/door-rounds', requireAuth, require('../controllers/doorToDoor').list);
+router.post('/dashboard/community/door-rounds', requireAuth, express.json({ limit: '1kb' }), require('../controllers/doorToDoor').start);
+router.get('/dashboard/community/door-rounds/:uuid', requireAuth, require('../controllers/doorToDoor').get);
+router.post('/dashboard/community/door-rounds/:uuid/doors', requireAuth, express.json({ limit: '1kb' }), require('../controllers/doorToDoor').addDoor);
+router.post('/dashboard/community/door-rounds/:uuid/sync', requireAuth, express.json({ limit: '256kb' }), require('../controllers/doorToDoor').sync);
+router.post('/dashboard/community/door-rounds/:uuid/close', requireAuth, express.json({ limit: '1kb' }), require('../controllers/doorToDoor').close);
+router.delete('/dashboard/community/door-rounds/:uuid', requireAuth, require('../controllers/doorToDoor').remove);
 router.post('/dashboard/community/events', requireAuth, express.json({ limit: '4kb' }), require('../controllers/community').saveEvent);
 router.patch('/dashboard/community/events/:uuid', requireAuth, express.json({ limit: '4kb' }), require('../controllers/community').updateEvent);
 router.delete('/dashboard/community/events/:uuid', requireAuth, require('../controllers/community').removeEvent);

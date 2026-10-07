@@ -1,5 +1,15 @@
 # Capability ledger
 
+- 2026-10-06 — The Community map now moves and zooms, and shows each known neighbor
+  as a marker (a house-sized square when zoomed in) with a details popup; one
+  tap places neighbors that have no location yet from their addresses —
+  `community.md` (status: live)
+
+- 2026-10-06 — Community → Check on your street: list a street ahead of time
+  (OpenStreetMap houses plus your saved neighbors), then in an emergency mark
+  each house safe / no answer / needs help, with notes, saved on the phone
+  first and sent when there's signal — `door-to-door.md` (status: live)
+
 - 2026-10-06 — Family page: Merge folds a duplicate person or pet into another
   (details kept, contact link moved) and Delete forgets an entry —
   `companion-dashboard.md` (status: partial)

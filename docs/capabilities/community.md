@@ -29,6 +29,15 @@ all of it in mind whenever we talk:
   you type an address, I suggest the contacts whose Google address is that
   same house. I'll know who you mean, and I think of them when something
   happens near home.
+- **The map** — every point of interest with its ring, and every neighbor you
+  know as a green marker. Drag to move it (on a phone, two fingers — one finger
+  still scrolls the page), scroll or pinch or use + and − to zoom, and tap a
+  marker for the household's name, address, how many contacts are linked and
+  your notes. Zoomed in close, each neighbor's marker becomes a house-sized
+  green square, so you can see which house is which. A neighbor appears once
+  they have a location, which Find gives them; if some don't, the line under
+  the map offers to place them from their addresses.
+
 - **Local events** — church suppers, school fairs, town days like Ham Day: the
   day (or days), a time, where, a link and notes. Mark one "happens every year"
   and it comes round again — a week after, it's "last Saturday"; by winter it's
