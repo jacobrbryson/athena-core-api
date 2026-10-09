@@ -122,13 +122,20 @@ async function search(endpoint, query) {
 		},
 	});
 	const metadata = response?.candidates?.[0]?.groundingMetadata || {};
+	// One source per site. Every chunk carries its own Google redirect URL,
+	// even two pages of the same site (or the same page cited twice), and the
+	// title is only the domain — so deduplicating by URL showed "costco.com"
+	// two or three times under one reply.
 	const seen = new Set();
 	const sources = [];
 	for (const chunk of metadata.groundingChunks || []) {
 		const url = chunk?.web?.uri;
-		if (!url || seen.has(url)) continue;
-		seen.add(url);
-		sources.push({ title: chunk.web.title || url, url });
+		if (!url) continue;
+		const title = chunk.web.title || url;
+		const site = title.trim().toLowerCase();
+		if (seen.has(site)) continue;
+		seen.add(site);
+		sources.push({ title, url });
 	}
 	return {
 		text: (answerText(response) || "").trim(),

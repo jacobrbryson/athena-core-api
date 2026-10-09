@@ -62,7 +62,8 @@ test("search grounds on Google Search, checks access, and returns deduplicated s
 					webSearchQueries: ["braves score"],
 					groundingChunks: [
 						{ web: { uri: "https://a.example", title: "mlb.com" } },
-						{ web: { uri: "https://a.example", title: "mlb.com" } },
+						// The same site again under a different redirect URL, as Gemini sends it.
+						{ web: { uri: "https://a2.example", title: "MLB.com" } },
 						{ web: { uri: "https://b.example" } },
 						{ retrievedContext: {} },
 					],
