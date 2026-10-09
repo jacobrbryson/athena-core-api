@@ -14,7 +14,8 @@ const credentials = require('../credentials');
 
 const HOST = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.atlassian\.net$/i;
 const TIMEOUT_MS = 12000;
-const JQL = 'assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC';
+// Only the current sprint: the backlog and future sprints aren't today's work.
+const JQL = 'assignee = currentUser() AND sprint in openSprints() AND statusCategory != Done ORDER BY updated DESC';
 
 /** `{ baseUrl, authorization }` when this profile's Jira link is an API token, else null. */
 async function forProfile(profileId) {
@@ -62,4 +63,4 @@ async function readIssues(access) {
   };
 }
 
-module.exports = { forProfile, readIssues };
+module.exports = { forProfile, readIssues, JQL };

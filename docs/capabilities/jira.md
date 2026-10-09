@@ -1,7 +1,7 @@
 ---
 id: jira
 title: Jira Cloud
-summary: I can read your assigned open Jira Cloud issues and group them by project on the dashboard.
+summary: I can read your assigned open Jira Cloud issues in the current sprint and group them by project on the dashboard.
 where: Companion → Work → Connected apps → Jira Cloud
 status: partial
 surfaces: [companion]
@@ -11,7 +11,7 @@ triggers: [jira, work, inbox, projects]
 
 ## What I can do
 
-I read assigned issues whose status category is not Done from authorized Jira Cloud sites. Work shows a preview and Projects groups the returned issues. I can also read this summary when you ask about Jira or projects. For each issue I also know whether it's in progress (Jira's own status grouping, so "Code Review" counts) and, for the whole read, whether Jira had more than I returned. The dashboard's Working banner uses that to show the ticket you're in the middle of.
+I read assigned issues in the current (open) sprint whose status category is not Done from authorized Jira Cloud sites; backlog and future-sprint issues are left out. Work shows a preview and Projects groups the returned issues. I can also read this summary when you ask about Jira or projects. For each issue I also know whether it's in progress (Jira's own status grouping, so "Code Review" counts) and, for the whole read, whether Jira had more than I returned. The dashboard's Working banner uses that to show the ticket you're in the middle of.
 
 ## Work site by API token
 

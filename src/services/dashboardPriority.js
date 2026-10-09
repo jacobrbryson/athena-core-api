@@ -45,10 +45,28 @@ const MINUTE = 60_000;
 const latest = (rows) =>
 	[...(rows || [])].sort((a, b) => String(b.date).localeCompare(String(a.date)))[0] || null;
 
-/** Minutes until an event starts — negative once it is under way, null if unparseable. */
+/**
+ * Minutes until an event starts — negative once it is under way, null if
+ * unparseable. Coarse past the hour: the count is part of the cache key, and
+ * an exact one re-asked the model every minute, so a banner came and went on
+ * nothing but a fresh roll of the dice.
+ */
 function minutesUntil(start) {
 	const at = Date.parse(start || "");
-	return Number.isFinite(at) ? Math.round((at - Date.now()) / MINUTE) : null;
+	if (!Number.isFinite(at)) return null;
+	const minutes = Math.round((at - Date.now()) / MINUTE);
+	return minutes > 60 ? Math.round(minutes / 30) * 30 : minutes;
+}
+
+/**
+ * The next thing that actually takes their time: timed, not finished, not an
+ * out-of-office marker. The Calendar card's "Next up" uses the same rule. An
+ * all-day "Patrick (OOO)" at the head of the list read to the model as a
+ * meeting in four hours.
+ */
+function nextTimed(events) {
+	const now = Date.now();
+	return events.find((e) => !e.allDay && e.eventType !== "outOfOffice" && Date.parse(e.end || e.start) > now) || null;
 }
 
 /**
@@ -59,7 +77,7 @@ function minutesUntil(start) {
 function describe(summary, pendingCount) {
 	const status = (key) => summary?.[key]?.status || "error";
 	const events = summary?.calendar?.data?.events || [];
-	const next = events[0];
+	const next = nextTimed(events);
 	const recovery = latest(summary?.recovery?.data?.filter((r) => r.state === "SCORED"));
 	const sleep = latest(summary?.sleep?.data?.filter((s) => !s.nap));
 	const chores = summary?.familyChores?.data?.chores || [];
@@ -77,9 +95,8 @@ function describe(summary, pendingCount) {
 			empty: events.length === 0,
 			signals: {
 				eventsNext7Days: events.length,
-				nextEventTitle: next?.title || null,
-				nextEventInMinutes: next ? minutesUntil(next.start) : null,
-				nextEventIsAllDay: next ? !!next.allDay : null,
+				nextTimedEventTitle: next?.title || null,
+				nextTimedEventInMinutes: next ? minutesUntil(next.start) : null,
 			},
 		},
 		{
@@ -183,7 +200,8 @@ ${JSON.stringify(cards, null, 1)}
 	`Decide whether anything here is serious enough to put a big alert across ` +
 	`the top of their screen the moment they open it — something they would be upset ` +
 	`to find out about later. Ongoing emergencies near their home always are. A card ` +
-	`marked "empty": true has nothing behind it and cannot be the reason. Most ` +
+	`marked "empty": true has nothing behind it and cannot be the reason, and an ` +
+		`ordinary upcoming event is not one either — the calendar card already shows it. Most ` +
 	`days nothing is: use null.
 
 ` +

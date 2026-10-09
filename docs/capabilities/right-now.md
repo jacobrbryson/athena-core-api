@@ -16,6 +16,12 @@ weigh it against the places you've told me you go and the projects waiting at
 home, and I put **one** suggestion at the top of your dashboard, with a second
 one of a different kind underneath it.
 
+While your Working location in Google Calendar covers the moment, "your next
+appointment" means the next one on your work calendar — a family calendar's
+event doesn't end your workday window. An Out of office block never counts as
+an appointment. During work hours the ticket I suggest is the same one the Work
+banner shows you have in progress, when there is one.
+
 For a place, I read its own web page on a rhythm and keep what it says: open or
 closed, today's hours, and whether those hours depend on the weather. Where a place has weather-dependent
 hours and I know where it is, I check the forecast for that spot.

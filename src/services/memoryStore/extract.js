@@ -65,6 +65,19 @@ const EXTRACT_SCHEMA = {
       },
     },
     forget: { type: "array", items: { type: "string" } },
+    merge: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          into: { type: "string" },
+          from: { type: "array", items: { type: "string" } },
+          value: { type: "string" },
+          confidence: { type: "number" },
+        },
+        required: ["into", "from", "value", "confidence"],
+      },
+    },
   },
   required: ["facts", "moments", "forget"],
 };
@@ -103,6 +116,8 @@ Rules:
 - Never repeat a known fact whose value hasn't changed — it is already remembered. Only NEW facts and CHANGED values belong in facts.
 - Only what the person stated or clearly confirmed. Never facts about Athena, never guesses, never things only Athena said.
 - moments: at most 2 genuinely notable things that happened or were discussed — a plan made, a story told, a feeling shared, a decision, a milestone. Skip small talk and games. importance 1-10 (10 = life event).
+- One key per person, pet or place: theirs. A new detail about someone already known — how they are related, their birthday, where they live — is a CHANGED value for their existing key: reuse that exact key and write the whole value, every old detail kept and the new one added ("aunt missy" = "Lives in Charlotte; my dad's sister"). Never make a key like "aunt missy relation" or "skylar birthday".
+- merge: when known facts already split one person across keys ("aunt missy" and "aunt missy relation"), fold them together: into = the person's own key, from = the other keys (each starts with that key), value = one combined value that keeps every detail from all of them. confidence 0-100.
 - forget: exact keys of known facts the person explicitly asked you to forget or said were wrong.
 - These lines were written on ${today.weekday} ${today.iso}. A memory outlives the conversation, so never store a relative day ("tonight", "tomorrow", "Friday", "next week"): work out the real date from today and write it in, e.g. "line dancing on Fri 2026-09-25". Read later, "Friday night" says nothing about which Friday.
 - A one-off plan or event with a date is a moment, never a fact. Facts are only for things that stay true.
@@ -246,6 +261,7 @@ function emptyResult() {
     facts: 0,
     moments: 0,
     forgotten: 0,
+    merged: 0,
     proposed: { facts: 0, moments: 0 },
     dropped: emptyDropped(),
   };
@@ -358,6 +374,8 @@ async function applyExtraction(
     });
   }
 
+  await applyMerges(profileId, familyId, data.merge, { result, decide, dryRun });
+
   const forget = (Array.isArray(data.forget) ? data.forget : []).slice(0, 10);
   if (dryRun) {
     for (const key of forget) decisions.push({ kind: "forget", key, outcome: "forget" });
@@ -365,6 +383,63 @@ async function applyExtraction(
   }
   result.forgotten = await memory.forgetFactsByKey(profileId, forget);
   return result;
+}
+
+const MAX_MERGES = 5;
+// "aunt missy relation" and "aunt missy's birthday" are details of "aunt missy";
+// "aunt mary" is somebody else. Only the first kind may be folded in, so a model
+// can tidy one person's keys but never fuse two people.
+const detailOf = (from, into) => {
+  const f = from.trim().toLowerCase();
+  const i = into.trim().toLowerCase();
+  return f !== i && (f.startsWith(`${i} `) || f.startsWith(`${i}'s `) || f.startsWith(`${i}’s `));
+};
+
+/**
+ * Fold one person's facts, scattered across keys, back under their own key:
+ * write the combined value there, then soft-delete the others. Curated facts
+ * are held to the same locks as an ordinary write, and a merge that can't
+ * take every key it names takes none.
+ */
+async function applyMerges(profileId, familyId, merges, { result, decide, dryRun }) {
+  const proposed = Array.isArray(merges) ? merges : [];
+  result.merged = 0;
+  for (const m of proposed.slice(0, MAX_MERGES)) {
+    const from = Array.isArray(m?.from) ? m.from.filter((k) => typeof k === "string" && k.trim()) : [];
+    const item = { category: null, key: m?.into };
+    if (typeof m?.into !== "string" || !m.into.trim() || typeof m.value !== "string" || !m.value.trim() || !from.length || !from.every((k) => detailOf(k, m.into))) {
+      result.dropped.malformed += 1;
+      decide("merge", item, "malformed");
+      continue;
+    }
+    const confidence = Math.max(0, Math.min(100, Number(m.confidence) || 60));
+    const [target] = await memory.findLiveFactsByKey(profileId, m.into);
+    const parts = (await Promise.all(from.map((k) => memory.findLiveFactsByKey(profileId, k)))).flat();
+    if (!target || !parts.length) {
+      result.dropped.malformed += 1;
+      decide("merge", item, "malformed");
+      continue;
+    }
+    const locked = (row) => row.source === "parent" || (row.source === "user" && confidence < 80);
+    if (confidence < 50 || [target, ...parts].some(locked)) {
+      result.dropped[confidence < 50 ? "lowConfidence" : "locked"] += 1;
+      decide("merge", { ...item, category: target.category }, confidence < 50 ? "lowConfidence" : "locked");
+      continue;
+    }
+    decide("merge", { ...item, category: target.category }, "merge");
+    result.merged += 1;
+    if (dryRun) continue;
+    await memory.upsertMemoryForProfile(profileId, familyId, {
+      category: target.category,
+      key: target.memory_key,
+      value: m.value,
+      source: "ai",
+      confidence,
+      visibility: "private",
+    });
+    for (const p of parts) await memory.forgetFactById(profileId, p.id);
+  }
+  result.dropped.overCap += Math.max(0, proposed.length - MAX_MERGES);
 }
 
 /**

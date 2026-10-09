@@ -187,6 +187,26 @@ async function forgetFactsByKey(profileId, keys = []) {
 	return count;
 }
 
+/** Live facts under a key in any category (case-insensitive), for folding one person's keys together. */
+async function findLiveFactsByKey(profileId, key) {
+	const [rows] = await pool.query(
+		`SELECT id, uuid, category, memory_key, memory_value, source, confidence
+     FROM user_memory WHERE profile_id = ? AND LOWER(memory_key) = LOWER(?) AND deleted_at IS NULL;`,
+		[profileId, String(key).trim().slice(0, 120)]
+	);
+	return rows;
+}
+
+/** Soft-delete one fact by id, scoped to its profile. */
+async function forgetFactById(profileId, id) {
+	const [r] = await pool.query(
+		`UPDATE user_memory SET deleted_at = NOW() WHERE id = ? AND profile_id = ? AND deleted_at IS NULL;`,
+		[id, profileId]
+	);
+	if (r?.affectedRows) memoryEvents.emit("fact:deleted", { id, profile_id: profileId });
+	return r?.affectedRows || 0;
+}
+
 /** Create or update a memory slot (unique per profile/category/key). */
 async function upsertMemory(actor, payload = {}) {
 	const { profileId, familyId } = await resolveProfileId(actor);
@@ -237,6 +257,8 @@ module.exports = {
 	upsertMemoryForProfile,
 	getFactSlot,
 	forgetFactsByKey,
+	findLiveFactsByKey,
+	forgetFactById,
 	deleteMemory,
 	getMemorySummaryForProfileId,
 };

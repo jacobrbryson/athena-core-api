@@ -274,6 +274,43 @@ describe("extraction safety", () => {
 		expect(memory.upsertMemoryForProfile.mock.calls.map(([, , f]) => f.key)).toEqual(["spouse", "long-term vision"]);
 	});
 
+	describe("merging one person's scattered keys", () => {
+		const row = (id, key, source = "ai", category = "family") => ({ id, uuid: `u${id}`, category, memory_key: key, memory_value: "x", source });
+		beforeEach(() => {
+			jest.spyOn(memory, "forgetFactById").mockResolvedValue(1);
+			jest.spyOn(memory, "findLiveFactsByKey").mockImplementation(async (_p, key) =>
+				({ "aunt missy": [row(1, "aunt missy")], "aunt missy relation": [row(2, "aunt missy relation")], "aunt mary": [row(3, "aunt mary")], "skylar birthday": [row(4, "skylar birthday", "parent")], skylar: [row(5, "Skylar")] })[key] || []
+			);
+		});
+		const run = (merge) => extract.applyExtraction(session, { facts: [], moments: [], forget: [], merge }, { audience: "adult" });
+
+		test("a detail key folds into the person's key and is soft-deleted", async () => {
+			const r = await run([{ into: "aunt missy", from: ["aunt missy relation"], value: "Lives in Charlotte; my dad's sister", confidence: 90 }]);
+			expect(r.merged).toBe(1);
+			expect(memory.upsertMemoryForProfile).toHaveBeenCalledWith(42, 3, expect.objectContaining({ category: "family", key: "aunt missy", value: "Lives in Charlotte; my dad's sister", source: "ai" }));
+			expect(memory.forgetFactById).toHaveBeenCalledWith(42, 2);
+		});
+
+		test("two different people are never fused", async () => {
+			const r = await run([{ into: "aunt missy", from: ["aunt mary"], value: "both", confidence: 99 }]);
+			expect(r.merged).toBe(0);
+			expect(memory.upsertMemoryForProfile).not.toHaveBeenCalled();
+			expect(memory.forgetFactById).not.toHaveBeenCalled();
+		});
+
+		test("a parent-curated part locks the whole merge", async () => {
+			const r = await run([{ into: "skylar", from: ["skylar birthday"], value: "Skylar; birthday May 1", confidence: 99 }]);
+			expect(r).toMatchObject({ merged: 0, dropped: expect.objectContaining({ locked: 1 }) });
+			expect(memory.forgetFactById).not.toHaveBeenCalled();
+		});
+
+		test("a dry run decides without writing", async () => {
+			const r = await extract.applyExtraction(session, { facts: [], moments: [], forget: [], merge: [{ into: "aunt missy", from: ["aunt missy relation"], value: "v", confidence: 90 }] }, { audience: "adult", dryRun: true });
+			expect(r.decisions).toEqual([expect.objectContaining({ kind: "merge", key: "aunt missy", outcome: "merge" })]);
+			expect(memory.upsertMemoryForProfile).not.toHaveBeenCalled();
+		});
+	});
+
 	test("at most 8 facts are written per extraction", async () => {
 		const facts = Array.from({ length: 12 }, (_, i) => ({ category: "family", key: `new-${i}`, value: `v${i}`, confidence: 90 }));
 		const r = await extract.applyExtraction(session, { facts, moments: [], forget: [] }, { audience: "adult" });

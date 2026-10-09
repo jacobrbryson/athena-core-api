@@ -58,9 +58,15 @@ const hoursLabel = (minutes) => {
  * birthday does not stop anyone riding — so the window runs to the next TIMED
  * event. An event already under way closes the window entirely, which is the
  * honest answer even though it means the card goes quiet.
+ *
+ * While a Working location covers now, only the calendar it lives on — the
+ * work calendar — bounds the window, the same rule the Work banner uses: a
+ * family calendar's "Docs" at 2pm is not what a workday is waiting on. An Out
+ * of office block is never a commitment.
  */
-function openWindow(events = []) {
-	const timed = events.filter((e) => !e.allDay);
+function openWindow(events = [], workingLocations = [], timeZone = "UTC") {
+	const work = workCalendar(workingLocations, timeZone);
+	const timed = events.filter((e) => !e.allDay && e.eventType !== "outOfOffice" && (!work || !e.calendar || e.calendar === work));
 	const running = timed.find((e) => {
 		const start = Date.parse(e.start);
 		const end = Date.parse(e.end || e.start);
@@ -76,6 +82,23 @@ function openWindow(events = []) {
 		busyWith: null,
 		nextEvent: { title: next.title || "your next commitment", start: next.start, inMinutes: minutesUntil(next.start) },
 	};
+}
+
+/** The calendar holding the Working location that covers now, or null. All-day ends are exclusive dates. */
+function workCalendar(workingLocations = [], timeZone = "UTC") {
+	const now = Date.now();
+	let today;
+	try {
+		today = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(now));
+	} catch {
+		today = new Date(now).toISOString().slice(0, 10);
+	}
+	const here = workingLocations.find((e) => {
+		if (e.allDay) return e.start <= today && (e.end ? today < e.end : today === e.start);
+		const start = Date.parse(e.start), end = Date.parse(e.end);
+		return Number.isFinite(start) && Number.isFinite(end) && start <= now && now < end;
+	});
+	return here?.calendar || null;
 }
 
 // --- Candidates -----------------------------------------------------------
@@ -241,15 +264,26 @@ function goalCandidates(rows, projectTitles) {
 /**
  * Assigned Jira issues, offered only in working hours on a weekday — nobody
  * opened the dashboard on a Saturday evening to be told about a ticket.
+ *
+ * What they already have in progress comes first, picked the way the Work
+ * banner picks it — Jira's own status grouping, most recently touched first
+ * (the read is newest-first) — so the two never name different tickets. Due
+ * dates only order the tickets nobody has started.
  */
+const isInProgress = (issue) =>
+	issue.statusCategory ? issue.statusCategory === "indeterminate" : /progress/i.test(issue.status || "");
+
 function workCandidates(issues, window, { workHours }) {
 	if (!workHours) return [];
 	return (issues || [])
-		.map((issue) => {
+		.map((issue, order) => {
+			const started = isInProgress(issue);
 			const days = issue.due ? Math.round((Date.parse(issue.due) - Date.now()) / 86_400_000) : null;
 			let score = 36;
-			if (/progress|review|doing/i.test(issue.status || "")) score += 12;
-			if (days !== null && Number.isFinite(days)) score += days < 0 ? 20 : days <= 2 ? 12 : days <= 7 ? 4 : 0;
+			// Above any not-started ticket, overdue included; a step down per
+			// place in Jira's order keeps the banner's ticket on top.
+			if (started) score += 25 - Math.min(order, 4);
+			else if (days !== null && Number.isFinite(days)) score += days < 0 ? 20 : days <= 2 ? 12 : days <= 7 ? 4 : 0;
 			if (window.freeMinutes !== null && window.freeMinutes < 30) score -= 20;
 			return {
 				id: `work:${issue.key}`,
@@ -258,6 +292,7 @@ function workCandidates(issues, window, { workHours }) {
 				issueKey: issue.key,
 				project: issue.project || null,
 				status: issue.status || null,
+				inProgress: started,
 				dueDate: issue.due || null,
 				url: issue.url,
 				score,
@@ -299,6 +334,9 @@ const PROMPT = (sheet) =>
 	`- Only ever choose from the candidate ids given. Never invent an option, ` +
 	`a time, a distance, an opening hour or a weather claim.\n` +
 	`- The window has to actually hold it, drive included.\n` +
+	`- Among work tickets, the first with "inProgress": true is the one they're ` +
+	`on, and the one the rest of the screen shows; pick another ticket only for a ` +
+	`clear reason, and say it.\n` +
 	`- If nothing outdoors is open or the weather has ruled it out, the lead is ` +
 	`something at home, and say plainly why the outdoor option is not on.\n` +
 	`- Low recovery after a hard week is a reason to pick the lighter option, ` +
@@ -425,7 +463,7 @@ async function getRightNow(profileId, user) {
 	if (!summary) summary = await dashboard.getDashboard(profileId, user).catch(() => null);
 
 	const timeZone = summary?.calendar?.data?.timeZone || process.env.ATHENA_TIME_ZONE || "UTC";
-	const window = openWindow(summary?.calendar?.data?.events || []);
+	const window = openWindow(summary?.calendar?.data?.events || [], summary?.calendar?.data?.workingLocations || [], timeZone);
 
 	const localHour = Number(new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", hourCycle: "h23" }).format(new Date()));
 	const weekday = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" }).format(new Date());

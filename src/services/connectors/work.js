@@ -14,7 +14,7 @@ async function jira(profileId) {
   const results = await Promise.all(sites.map(async site => {
     try {
       const result = await providerGet(profileId, 'jira', `/ex/jira/${encodeURIComponent(site.id)}/rest/api/3/search/jql`, {
-        query: { jql: 'assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC', maxResults: 10, fields: 'summary,status,project,updated,duedate' },
+        query: { jql: jiraApiToken.JQL, maxResults: 25, fields: 'summary,status,project,updated,duedate' },
         invalidateOnAuthFailure: false,
       });
       return { more: !!result.nextPageToken || result.isLast === false, issues: (result.issues || []).map(issue => ({

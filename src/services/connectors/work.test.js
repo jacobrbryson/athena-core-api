@@ -1,5 +1,5 @@
 jest.mock('./http', () => ({ providerGet: jest.fn() }));
-jest.mock("./jiraApiToken", () => ({ forProfile: jest.fn().mockResolvedValue(null), readIssues: jest.fn() }));
+jest.mock("./jiraApiToken", () => ({ forProfile: jest.fn().mockResolvedValue(null), readIssues: jest.fn(), JQL: "assignee = currentUser() AND sprint in openSprints()" }));
 const { providerGet } = require('./http');
 const work = require('./work');
 beforeEach(() => jest.resetAllMocks());

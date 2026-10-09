@@ -33,7 +33,13 @@ Spouse, Son, Daughter, Cousin, Pet, Child. I take it from how the memory is
 filed ("spouse"), from a pet, or from what you told me ("Wynter is my
 daughter") — never from someone else's mention ("lives near her son"). When I
 don't know how someone is related to you, their row says so and the button opens
-a chat where I ask, so I can fill it in.
+a chat where I ask, so I can fill it in. What you tell me there goes onto that
+person's own memory, not a new entry beside them, and a detail I once filed
+under its own name ("Aunt Missy relation", "Skylar birthday") shows on the
+person's row rather than as a person of its own — I fold those back in myself
+the next time we talk. A relation word that opens their name ("Aunt Missy") says
+how they're related. Household facts filed with the family ("children home
+time", "family dinner") aren't people and don't appear on the card.
 
 Children on your family profiles appear on the card on their own, with their
 birthday, and a child you have also told me about is one row, not two. On the
@@ -83,7 +89,9 @@ driven by the Working location you set in Google Calendar, not by the clock: no
 location covering the moment, or an Out of office event over it, and there is no
 banner, so a day off needs nothing from you. It appears and disappears on its
 own at the start and end of that block. Only meetings inside the working block
-count as "next meeting"; focus time and all-day markers don't.
+count as "next meeting"; focus time and all-day markers don't. And only meetings
+on the same calendar as that Working location — your work calendar — count: a
+family or shared calendar's events stay on the Calendar card, not in the banner.
 
 "In progress" is Jira's own grouping, so it holds whatever your workflow calls
 its statuses ("Code Review" counts); if several are in progress I show the one

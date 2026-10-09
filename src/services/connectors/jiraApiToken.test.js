@@ -24,6 +24,7 @@ test('reads assigned issues with basic auth and rejects bad tokens', async () =>
   const result = await jiraApiToken.readIssues(access);
   expect(result.issues[0]).toMatchObject({ key: 'A-1', url: 'https://team.atlassian.net/browse/A-1' });
   expect(fetch.mock.calls[0][0].searchParams.get('jql')).toContain('assignee = currentUser()');
+  expect(fetch.mock.calls[0][0].searchParams.get('jql')).toContain('sprint in openSprints()');
   expect(fetch.mock.calls[0][1].headers.Authorization).toBe('Basic x');
   fetch.mockResolvedValueOnce({ ok: false, status: 401 });
   await expect(jiraApiToken.readIssues(access)).rejects.toThrow('rejected');

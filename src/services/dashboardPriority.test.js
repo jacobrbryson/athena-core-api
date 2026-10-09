@@ -203,7 +203,47 @@ describe("getPriority", () => {
 		expect(prompt).toContain('"assignedOpenIssues": 1');
 		expect(prompt).toContain('"source":');
 		expect(prompt).toContain('"slackMentions": null');
-		expect(prompt).toContain('"nextEventTitle": "Design review"');
+		expect(prompt).toContain('"nextTimedEventTitle": "Design review"');
 		expect(prompt).not.toContain("a@b.c");
+	});
+
+	it("skips an all-day marker when naming the next event", async () => {
+		const later = (h) => new Date(Date.now() + h * 3600_000).toISOString();
+		dashboard.cachedDashboard.mockReturnValue({
+			...dashboard.cachedDashboard(),
+			calendar: source("ready", { events: [
+				{ title: "Patrick (OOO)", start: "2026-10-09", end: "2026-10-10", allDay: true },
+				{ title: "Away", start: later(1), end: later(9), allDay: false, eventType: "outOfOffice" },
+				{ title: "Sprint planning", start: later(2), end: later(3), allDay: false },
+			], timeZone: "UTC", days: 7 }),
+		});
+		llm.generateJson.mockResolvedValue({ data: { alert: null }, model: "test" });
+
+		await priority.getPriority(profile, {});
+		const prompt = llm.generateJson.mock.calls[0][0].contents[0].parts[0].text;
+
+		expect(prompt).toContain('"nextTimedEventTitle": "Sprint planning"');
+		expect(prompt).toContain('"nextTimedEventInMinutes": 120');
+		expect(prompt).not.toContain("Patrick");
+	});
+
+	it("keeps the signal sheet (the cache key) still as a far-off countdown ticks", async () => {
+		const start = Date.now() + 4 * 3600_000;
+		dashboard.cachedDashboard.mockReturnValue({
+			...dashboard.cachedDashboard(),
+			calendar: source("ready", { events: [{ title: "Sprint planning", start: new Date(start).toISOString(), allDay: false }], timeZone: "UTC", days: 7 }),
+		});
+		llm.generateJson.mockResolvedValue({ data: { alert: null }, model: "test" });
+		const realNow = Date.now;
+		try {
+			await priority.getPriority(profile, {});
+			Date.now = () => realNow() + 2 * 60_000; // two minutes later
+			priority.invalidate(profile);
+			await priority.getPriority(profile, {});
+		} finally {
+			Date.now = realNow;
+		}
+		const [first, second] = llm.generateJson.mock.calls.map((c) => c[0].contents[0].parts[0].text);
+		expect(second).toBe(first);
 	});
 });

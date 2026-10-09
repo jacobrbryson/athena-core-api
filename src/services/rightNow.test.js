@@ -79,6 +79,45 @@ describe('openWindow', () => {
   it('is open-ended when nothing is scheduled', () => {
     expect(rightNow.openWindow([]).freeMinutes).toBeNull();
   });
+
+  describe('during a workday', () => {
+    const WORK = 'me@work.example';
+    const location = { title: 'Home', start: inMinutes(-120), end: inMinutes(300), allDay: false, eventType: 'workingLocation', calendar: WORK };
+    const events = [
+      { title: 'Docs', start: inMinutes(30), end: inMinutes(60), allDay: false, calendar: 'Family' },
+      { title: 'Sprint review', start: inMinutes(90), end: inMinutes(120), allDay: false, calendar: WORK },
+    ];
+
+    it('runs to the next work-calendar event, not a family one', () => {
+      expect(rightNow.openWindow(events, [location]).nextEvent.title).toBe('Sprint review');
+    });
+
+    it('is not closed by a family event under way', () => {
+      const w = rightNow.openWindow([{ title: 'Docs', start: inMinutes(-10), end: inMinutes(20), allDay: false, calendar: 'Family' }], [location]);
+      expect(w.busyWith).toBeNull();
+    });
+
+    it('counts every calendar once the working location has ended', () => {
+      const over = { ...location, start: inMinutes(-600), end: inMinutes(-60) };
+      expect(rightNow.openWindow(events, [over]).nextEvent.title).toBe('Docs');
+    });
+
+    it('covers the day for an all-day working location', () => {
+      const today = new Date().toISOString().slice(0, 10);
+      const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+      const allDay = { ...location, start: today, end: tomorrow, allDay: true };
+      expect(rightNow.openWindow(events, [allDay], 'UTC').nextEvent.title).toBe('Sprint review');
+    });
+  });
+
+  it('does not treat an Out of office block as a commitment', () => {
+    const w = rightNow.openWindow([
+      { title: 'Away', start: inMinutes(-60), end: inMinutes(600), allDay: false, eventType: 'outOfOffice' },
+      { title: 'Piano', start: inMinutes(120), end: inMinutes(180), allDay: false },
+    ]);
+    expect(w.busyWith).toBeNull();
+    expect(w.nextEvent.title).toBe('Piano');
+  });
 });
 
 describe('placeCandidates', () => {
@@ -242,6 +281,21 @@ describe('workCandidates', () => {
 
   it('offers no tickets outside working hours', () => {
     expect(rightNow.workCandidates(issues, window, { workHours: false })).toHaveLength(0);
+  });
+
+  it('leads with the ticket the Work banner shows, whatever is overdue', () => {
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+    const jira = [
+      { key: 'B-1', title: 'Overdue, not started', status: 'To Do', statusCategory: 'new', due: yesterday },
+      // Most recently touched in-progress: the banner's pick. Its status name
+      // says nothing about progress; Jira's grouping does.
+      { key: 'B-2', title: 'What I am on', status: 'Testing', statusCategory: 'indeterminate' },
+      { key: 'B-3', title: 'Also started, due soon', status: 'In Progress', statusCategory: 'indeterminate', due: tomorrow },
+    ];
+    const out = rightNow.workCandidates(jira, window, { workHours: true });
+    expect(out.map((c) => c.id)).toEqual(['work:B-2', 'work:B-3']);
+    expect(out[0].inProgress).toBe(true);
   });
 });
 
