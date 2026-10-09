@@ -15,6 +15,7 @@ const initiative = require("../services/initiative");
 const nearbyIncidents = require("../services/pulsepoint/watch");
 const familyHealth = require("../services/familyHealth");
 const community = require("../services/community");
+const websites = require("../services/websites");
 const placeReminders = require("../services/placeReminders");
 const dreams = require("../services/dreams");
 const { audienceForSession } = require("../services/audience");
@@ -346,6 +347,21 @@ async function processAiResponse(session, message, clients, ctx = {}) {
             : communityBlock;
       } catch (e) {
         console.warn("[gemini] community block failed:", e.message);
+      }
+    }
+
+    // Their websites: the stored Search Console / Analytics numbers, only on
+    // a turn that is about their sites (or names one). Reads the database,
+    // never Google, and never fatal.
+    if (mayPropose) {
+      try {
+        const websitesBlock = await websites.promptBlock(session.profile_id, message);
+        if (websitesBlock)
+          initiativeBlock = initiativeBlock
+            ? [initiativeBlock, websitesBlock].join("\n\n")
+            : websitesBlock;
+      } catch (e) {
+        console.warn("[gemini] websites block failed:", e.message);
       }
     }
 

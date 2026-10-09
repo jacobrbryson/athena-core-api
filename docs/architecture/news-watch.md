@@ -27,8 +27,10 @@ news_item     a headline seen on it (first_seen_at is ours; published_at is the 
 news_poll     every visit, and what it changed — the audit trail behind the rhythm
 ```
 
-`profile_id = 0` is the house: the env-declared `NEWS_FEEDS` sources that belong
-to nobody and feed world memory. Any other `profile_id` is one person's reading
+`profile_id = 0` is the house: sources that belong to nobody and feed world
+memory. The house list lives only in these rows — not in an environment
+variable (the old `NEWS_FEEDS` seeding was removed 2026-10-09). Add or retire a
+house feed by inserting or disabling a `news_source` row with `profile_id = 0`. Any other `profile_id` is one person's reading
 list.
 
 `scope` decides whether what she reads there also becomes a world-scope
@@ -143,7 +145,6 @@ There is no route for setting an interval. That is the feature.
 
 | variable | default | what it does |
 | --- | --- | --- |
-| `NEWS_FEEDS` | NPR + BBC feeds | comma-separated house sources (`profile_id 0`, world scope). Empty string means none. |
 | `NEWS_MIN_INTERVAL_MINUTES` | 15 | the politeness floor. Nothing is read more often, ever. |
 | `NEWS_CADENCE_COOLDOWN_MINUTES` | 30 | how often a model may be asked about one source. |
 | `NEWS_MAX_SOURCES` | 12 | pages per person. |

@@ -604,7 +604,7 @@ describe("google group", () => {
 		const result = await oauth.completeGroup("google", { code: "c", state: stateFrom(authorize_url) });
 		expect(result.linked).toEqual(["google_contacts"]);
 		expect(result.kept).toEqual(["gmail"]);
-		expect(result.declined).toEqual(["google_calendar"]);
+		expect(result.declined).toEqual(["google_calendar", "websites"]);
 		expect(mockCredentials.put).toHaveBeenCalledTimes(1);
 		expect(mockCredentials.put.mock.calls[0][0]).toMatchObject({
 			profileId: 42,

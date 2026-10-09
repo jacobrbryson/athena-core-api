@@ -13,7 +13,10 @@ const crypto = require("node:crypto");
 const { v4: uuidv4 } = require("uuid");
 const pool = require("../../helpers/db");
 
-/** Sources with no owner: seeded from NEWS_FEEDS, they feed world memory. */
+/**
+ * Sources with no owner: they feed world memory. The house list is these rows
+ * and nothing else (owner, 2026-10-09) — there is no env list to seed from.
+ */
 const HOUSE_PROFILE = 0;
 
 const sha1 = (value) => crypto.createHash("sha1").update(String(value)).digest("hex");
@@ -243,7 +246,7 @@ async function worldItemsSince(since, limit = 200) {
  * Grace is the longer of a day and twice the source's own interval, and a
  * source seeded in the last hour isn't judged yet.
  *
- * `watcherDown` is judged on the house sources (NEWS_FEEDS, HOUSE_PROFILE)
+ * `watcherDown` is judged on the house sources (HOUSE_PROFILE)
  * when there are any: "check now" only polls the clicking person's own pages,
  * so the scheduled job is the only thing that can ever read a house source.
  * On 09-30 one person's page, checked by hand, turned "NPR, BBC and Fox never

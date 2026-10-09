@@ -54,6 +54,16 @@ router.post('/dashboard/incidents/test', requireAuth, express.json({ limit: '1kb
 // because a handset speaks for itself (same rule as location samples).
 router.post('/dashboard/incidents/phone-alert', requireAuthOrDevice, express.json({ limit: '8kb' }), require('../controllers/nearbyIncidents').phoneAlert);
 
+// Websites: the sites the person manages and their Search Console / Analytics
+// numbers (read-only). Shown on the Projects page.
+router.get('/dashboard/websites', requireAuth, require('../controllers/websites').list);
+router.get('/dashboard/websites/discover', requireAuth, require('../controllers/websites').discover);
+router.post('/dashboard/websites', requireAuth, express.json({ limit: '2kb' }), require('../controllers/websites').save);
+router.post('/dashboard/websites/refresh', requireAuth, require('../controllers/websites').refresh);
+router.patch('/dashboard/websites/:uuid', requireAuth, express.json({ limit: '2kb' }), require('../controllers/websites').update);
+router.post('/dashboard/websites/:uuid/refresh', requireAuth, require('../controllers/websites').refresh);
+router.delete('/dashboard/websites/:uuid', requireAuth, require('../controllers/websites').remove);
+
 // Community: points of interest (the places above, with what they are),
 // neighbours and local events — typed by the person, read into chat.
 router.get('/dashboard/community', requireAuth, require('../controllers/community').overview);

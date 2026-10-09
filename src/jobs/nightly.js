@@ -30,6 +30,7 @@ const actions = require("../services/actions");
 const initiative = require("../services/initiative");
 const lookRequests = require("../services/lookRequests");
 const dreams = require("../services/dreams");
+const websites = require("../services/websites");
 const { collectMetrics } = require("../services/selfReview/metrics");
 const { runEvals } = require("../services/selfReview/evals");
 const { ruleFindings, writePlan, fallbackPlan, renderMarkdown } = require("../services/selfReview/plan");
@@ -116,6 +117,12 @@ async function maintenance({ dryRun }) {
 	// somebody to read a report about it. Runs AFTER expiry so the night's
 	// unanswered nudges are already terminal and get counted.
 	await step("nudgeAppraisal", () => initiative.sweepAppraisals(), results);
+	// Websites: read Search Console and Analytics for every person's sites and
+	// store today's snapshot, so the Projects panel and chat answer from numbers
+	// that are at most a day old. Read-only; a person whose Google link is gone
+	// gets the reconnect message on their sites, not a failed night.
+	await step("websites", () => websites.refreshEveryone(), results);
+	await step("websitesPrune", async () => ({ pruned: await websites.prune(120) }), results);
 	await dreamSteps(results);
 	return results;
 }

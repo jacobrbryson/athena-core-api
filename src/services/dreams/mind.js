@@ -351,13 +351,48 @@ async function referencedSources(conn, entries) {
 }
 
 /**
+ * True when `sql` holds a ";" that MySQL would read as the end of a
+ * statement: outside quotes, backticks and comments, with backslash escapes
+ * on (MySQL's default sql_mode). So 'Wed; Fri' is data, while a quote hidden
+ * in a comment can't swallow a real second statement. This only lets values
+ * through and gives her a clear reason; the wall is multipleStatements off
+ * on her connection.
+ */
+function hasSecondStatement(sql) {
+	for (let i = 0; i < sql.length; i += 1) {
+		const c = sql[i];
+		if (c === "'" || c === '"' || c === "`") {
+			i += 1;
+			for (; i < sql.length; i += 1) {
+				if (sql[i] === "\\" && c !== "`") i += 1;
+				else if (sql[i] === c && sql[i + 1] === c) i += 1;
+				else if (sql[i] === c) break;
+			}
+			if (i >= sql.length) throw new Error(`unterminated ${c} quote`);
+		} else if (c === "#" || (c === "-" && sql[i + 1] === "-" && (i + 2 === sql.length || /\s/.test(sql[i + 2])))) {
+			const eol = sql.indexOf("\n", i);
+			if (eol === -1) return false;
+			i = eol;
+		} else if (c === "/" && sql[i + 1] === "*" && sql[i + 2] !== "!" && sql[i + 2] !== "+") {
+			// /*! ... */ and /*+ ... */ are executed by MySQL, so they're scanned as code.
+			const end = sql.indexOf("*/", i + 2);
+			if (end === -1) throw new Error("unterminated /* comment");
+			i = end + 1;
+		} else if (c === ";") {
+			return true;
+		}
+	}
+	return false;
+}
+
+/**
  * Run one of her statements. SELECT-like statements return their first rows
  * so the next round of the dream can see them.
  */
 async function runStatement(conn, statement) {
 	const sql = String(statement || "").trim().replace(/;\s*$/, "");
 	if (!sql) throw new Error("empty statement");
-	if (sql.includes(";")) {
+	if (hasSecondStatement(sql)) {
 		// mysql2 would refuse it anyway with multipleStatements off; say why.
 		throw new Error("one statement per step");
 	}
@@ -373,7 +408,7 @@ async function runStatement(conn, statement) {
  * values are parameters, and checks every row's sources belong to its person.
  */
 async function upsertRows(conn, table, rows, { factOwner, clarificationOwner, contactOwner }) {
-	if (!IDENT.test(String(table || "")) || table.startsWith("_")) throw new Error(`bad table name: ${table}`);
+	if (!IDENT.test(String(table || "")) || table.startsWith("_")) throw new Error(`bad table name: ${table} (upsert needs a "table" field naming one of your own tables)`);
 	if (!Array.isArray(rows) || !rows.length) throw new Error("no rows");
 	const accepted = [];
 	const rejected = [];
@@ -425,7 +460,7 @@ function rowProblem(row, { factOwner, clarificationOwner, contactOwner }) {
 
 async function describeObject(conn, { object, description, label_column, triggers }) {
 	if (!IDENT.test(String(object || "")) || object.startsWith("_")) throw new Error(`bad object name: ${object}`);
-	if (!description) throw new Error("describe needs a description");
+	if (!description) throw new Error('describe needs the "purpose" field filled with one sentence (it is not in "why")');
 	if (label_column && !IDENT.test(String(label_column).replace(/^_/, "x"))) throw new Error("bad label_column");
 	const words = (Array.isArray(triggers) ? triggers : [])
 		.map((t) => String(t).toLowerCase().trim())

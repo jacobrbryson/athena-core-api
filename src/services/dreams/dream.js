@@ -80,6 +80,33 @@ const NARRATIVE_SCHEMA = {
 	required: ["narrative"],
 };
 
+// A transient ChatGPT failure (rate limit, 5xx, timeout, dropped connection)
+// is retried on the dream model before the night settles for the weaker
+// review chain. A 4xx that isn't 408/429 won't change on a second try, and
+// neither does an empty account: OpenAI says "insufficient_quota" on a 429.
+const DREAM_RETRY_DELAYS_MS = [3000, 15000];
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const isOutOfCredits = (err) => /insufficient_quota/i.test(String(err?.message || ""));
+function isTransient(err) {
+	if (isOutOfCredits(err)) return false;
+	const msg = String(err?.message || "");
+	// Every adapter writes "HTTP <status>"; a bare number ("500 rows") is not one.
+	const status = Number(err?.status || err?.statusCode || (msg.match(/\bHTTP\s*([45]\d\d)\b/) || [])[1]);
+	if (status) return status === 408 || status === 429 || status >= 500;
+	return /timeout|timed out|ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket|fetch failed|network/i.test(msg);
+}
+
+/**
+ * One night's view of ChatGPT. Once it has used up its retries, or the
+ * account is out of credits, `down` holds why and the rest of the night goes
+ * straight to the stand-in: a dead endpoint would otherwise cost every round
+ * its full timeouts plus the waits, and the nightly job has an hour for
+ * everything.
+ */
+function newDreamer(delaysMs = DREAM_RETRY_DELAYS_MS) {
+	return { delaysMs, down: null };
+}
+
 /**
  * Dreaming runs on ChatGPT (the owner's choice, 2026-09-26: the chat-tuned
  * models were a poor fit for schema design). Task "dream" is served only by an
@@ -87,17 +114,36 @@ const NARRATIVE_SCHEMA = {
  * configured, or it fails, the night falls back to the "review" chain —
  * also the owner's choice — and the returned `fellBack` lets the log say so.
  */
-async function think(opts) {
-	const hasDreamer = llm.endpointsFor("dream").length > 0;
-	if (hasDreamer) {
-		try {
-			return { ...(await llm.generateJson({ ...opts, task: "dream" })), fellBack: null };
-		} catch (err) {
-			const res = await llm.generateJson({ ...opts, task: "review" });
-			return { ...res, fellBack: String(err.message).slice(0, 300) };
+async function think(opts, dreamer = newDreamer()) {
+	if (!llm.endpointsFor("dream").length) return { ...(await llm.generateJson({ ...opts, task: "review" })), fellBack: null };
+	let why = dreamer.down;
+	if (!why) {
+		let lastErr;
+		let tried = 0;
+		for (;;) {
+			tried += 1;
+			try {
+				return { ...(await llm.generateJson({ ...opts, task: "dream" })), fellBack: null };
+			} catch (err) {
+				lastErr = err;
+				if (!isTransient(err) || tried > dreamer.delaysMs.length) break;
+				await sleep(dreamer.delaysMs[tried - 1]);
+			}
+		}
+		why = `${String(lastErr.message).slice(0, 240)} (after ${tried} attempt(s))`;
+		if (tried > dreamer.delaysMs.length || isOutOfCredits(lastErr)) {
+			why += "; not trying ChatGPT again tonight";
+			dreamer.down = why;
 		}
 	}
-	return { ...(await llm.generateJson({ ...opts, task: "review" })), fellBack: null };
+	let res;
+	try {
+		res = await llm.generateJson({ ...opts, task: "review" });
+	} catch (reviewErr) {
+		// Keep ChatGPT's own failure: otherwise the log shows only the stand-in's.
+		throw new Error(`ChatGPT: ${why.slice(0, 300)} | then ${reviewErr.message}`);
+	}
+	return { ...res, fellBack: why };
 }
 
 // ---------------------------------------------------------------------------
@@ -166,7 +212,7 @@ async function closeDream(id, { status, summary, narrative = null, imagePath = n
  * told not to invent events that aren't in it: whimsy in the telling, not in
  * the record. A night the model can't narrate simply has no narrative.
  */
-async function narrate({ summary, digest, stats, status }) {
+async function narrate({ summary, digest, stats, status, dreamer }) {
 	const prompt = `You are Athena. Last night you dreamed — which for you means you spent the night reorganizing your memories in your own database. Below is the real log of that night (values redacted) and your plain summary of it.
 
 Tell last night as a DREAM — the way a person recounts a vivid, strange dream over breakfast: first person, past tense, 120–200 words, one to three short paragraphs. It should read like a real dream, not a report.
@@ -192,7 +238,7 @@ Return JSON: {"narrative": "..."}`;
 			temperature: 0.9,
 			contents: prompt,
 			check: (d) => (typeof d?.narrative === "string" && d.narrative.trim().length > 40 ? null : "missing narrative"),
-		});
+		}, dreamer);
 		return data.narrative.trim();
 	} catch {
 		return null;
@@ -488,10 +534,11 @@ function statementFor(step) {
 // A night
 // ---------------------------------------------------------------------------
 
-async function dream({ rounds = DEFAULT_ROUNDS, log = () => undefined } = {}) {
+async function dream({ rounds = DEFAULT_ROUNDS, log = () => undefined, retryDelaysMs = DREAM_RETRY_DELAYS_MS } = {}) {
 	const night = await openDream();
 	const record = recorder(night.id);
 	const stats = { facts: 0, focus: 0, rounds: 0, steps_ok: 0, steps_failed: 0, purged: 0, guard_drops: 0, questions_asked: 0, questions_resolved: 0 };
+	const dreamer = newDreamer(retryDelaysMs);
 
 	if (!mind.configured()) {
 		await record("note", { why: "athena_mind is not configured (ATHENA_MIND_DB_USER / ATHENA_MIND_DB_PASS); nothing to do", ok: false });
@@ -584,12 +631,12 @@ async function dream({ rounds = DEFAULT_ROUNDS, log = () => undefined } = {}) {
 						temperature: 0.2,
 						contents: prompt,
 						check: (d) => (Array.isArray(d?.steps) && typeof d?.summary === "string" ? null : "missing steps/summary"),
-					});
+					}, dreamer);
 					data = res.data;
 					servedBy = `${res.model || res.endpointId} (${res.endpointId})`;
 					if (res.fellBack) await record("note", { round, why: `ChatGPT couldn't dream this round, so ${res.endpointId} stood in: ${res.fellBack}`, ok: false });
 				} catch (err) {
-					await record("note", { round, why: `no model could dream this round (attempt ${attempt}): ${String(err.message).slice(0, 400)}`, ok: false });
+					await record("note", { round, why: `no model could dream this round (attempt ${attempt}): ${String(err.message).slice(0, 800)}`, ok: false });
 				}
 			}
 			if (!data) break;
@@ -642,7 +689,7 @@ async function dream({ rounds = DEFAULT_ROUNDS, log = () => undefined } = {}) {
 
 		const status = stats.rounds === 0 ? "failed" : stats.steps_failed ? "partial" : "ok";
 		const finalSummary = summary || "I looked things over and left them as they were.";
-		const narrative = stats.rounds ? await narrate({ summary: finalSummary, digest: record.digest, stats, status }) : null;
+		const narrative = stats.rounds ? await narrate({ summary: finalSummary, digest: record.digest, stats, status, dreamer }) : null;
 
 		// A picture of it, painted from the narrative alone (see image.js).
 		// A failure costs the picture, never the night.
@@ -667,4 +714,4 @@ async function dream({ rounds = DEFAULT_ROUNDS, log = () => undefined } = {}) {
 	}
 }
 
-module.exports = { dream, pruneAudit, narrate, buildPrompt, runStep, ROUND_SCHEMA, AUDIT_DAYS };
+module.exports = { dream, pruneAudit, narrate, buildPrompt, runStep, think, isTransient, DREAM_RETRY_DELAYS_MS, ROUND_SCHEMA, AUDIT_DAYS };

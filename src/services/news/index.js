@@ -7,7 +7,6 @@
  *   news.getNews(profileId)               the headlines, from what she has already read
  *   news.checkNow(profileId)              look now, for the person who just added a page
  *   news.pollDue() / news.pollSource()    the scheduled job's entry points
- *   news.seedHouseSources()               NEWS_FEEDS -> unowned world sources
  *   news.catchUpWorldMemory()             anything the poller failed to remember
  *
  * The design in one line: a source is a PAGE, not a feed; the interval is
@@ -206,28 +205,6 @@ async function pollByUuid(uuid, options = {}) {
 	return pollSource(source, options);
 }
 
-/** NEWS_FEEDS -> unowned sources that feed Athena's world memory. Idempotent. */
-async function seedHouseSources() {
-	const raw = process.env.NEWS_FEEDS;
-	if (raw === "") return { added: 0 };
-	const values = (raw ? raw.split(",") : ["https://feeds.npr.org/1001/rss.xml", "https://feeds.bbci.co.uk/news/rss.xml"])
-		.map((value) => value.trim())
-		.filter(Boolean);
-	const known = await store.existingHashes(store.HOUSE_PROFILE);
-	let added = 0;
-	for (const value of values) {
-		try {
-			const url = pageUrl(value);
-			if (known.has(store.sha1(url))) continue;
-			await store.addSource(store.HOUSE_PROFILE, { url, host: new URL(url).hostname, scope: "world", intervalMinutes: 360 });
-			added += 1;
-		} catch (err) {
-			console.warn(`[news] NEWS_FEEDS entry ignored (${value}):`, err.message);
-		}
-	}
-	return { added };
-}
-
 /**
  * Write any world-scope headline from the last day that has no memory yet.
  *
@@ -272,7 +249,6 @@ module.exports = {
 	pollSource,
 	pollByUuid,
 	listAll: store.listAll,
-	seedHouseSources,
 	catchUpWorldMemory,
 	worldPollHealth: store.worldPollHealth,
 	prune: store.pruneItems,

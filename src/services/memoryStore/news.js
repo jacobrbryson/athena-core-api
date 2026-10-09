@@ -19,15 +19,14 @@
  */
 const { parseFeed } = require("../news/feed");
 
-/** Nightly: seed the unowned NEWS_FEEDS sources, then catch up any missed memories. */
+/** Nightly: catch up any missed world memories, and fail loudly if nobody is reading the pages. */
 async function ingestNews() {
 	// Required lazily: services/news reaches back into ./events, and requiring
 	// it at module load would make memoryStore's own index part of that cycle.
 	const news = require("../news");
-	const seeded = await news.seedHouseSources().catch((err) => ({ added: 0, error: err.message }));
 	const totals = await news.catchUpWorldMemory();
 	const health = await news.worldPollHealth();
-	const result = { ...totals, seeded: seeded.added || 0, worldSources: health.worldSources, overdue: health.overdue.map((s) => s.host) };
+	const result = { ...totals, worldSources: health.worldSources, overdue: health.overdue.map((s) => s.host) };
 	// Nothing to catch up is only "ok" if something is reading the pages. With
 	// the watcher down (see worldPollHealth) a green step here is how a week of
 	// no news went unnoticed.

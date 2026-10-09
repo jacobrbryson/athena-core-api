@@ -156,7 +156,7 @@ async function providerRequest(
 	profileId,
 	providerId,
 	path,
-	{ method = "GET", query, body, actor = "athena", invalidateOnAuthFailure = true } = {}
+	{ method = "GET", query, body, actor = "athena", invalidateOnAuthFailure = true, api = null } = {}
 ) {
 	const provider = getProvider(providerId);
 	let token;
@@ -186,7 +186,14 @@ async function providerRequest(
 		);
 	}
 
-	const url = buildUrl(provider.apiBase, path, query);
+	// A provider with several hosts names them in `apiBases`; the caller picks
+	// one by name and never supplies a host (buildUrl refuses one in a path).
+	let base = provider.apiBase;
+	if (api) {
+		base = provider.apiBases && provider.apiBases[api];
+		if (!base) throw httpError(`${provider.label} has no API named ${api}`, 400, "bad_api");
+	}
+	const url = buildUrl(base, path, query);
 	const namespace = `provider:${providerId}`;
 	const load = async () => {
 		const controller = new AbortController();

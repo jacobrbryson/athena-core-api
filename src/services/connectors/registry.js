@@ -197,6 +197,51 @@ const PROVIDERS = {
 	},
 
 	// -----------------------------------------------------------------
+	// Websites: Search Console + Analytics (GA4) — read-only
+	// -----------------------------------------------------------------
+	// One credential for both because they are one question ("how are my sites
+	// doing?") and one Google approval. The three hosts are named bases in
+	// `apiBases`, chosen by the connector with `{ api: "search" }`; a caller can
+	// never supply a host of its own (see buildUrl in http.js).
+	websites: {
+		id: "websites",
+		label: "Google Websites",
+		authorizeUrl: env(
+			"GOOGLE_OAUTH_AUTHORIZE_URL",
+			"https://accounts.google.com/o/oauth2/v2/auth"
+		),
+		tokenUrl: env("GOOGLE_OAUTH_TOKEN_URL", "https://oauth2.googleapis.com/token"),
+		revokeUrl: env("GOOGLE_OAUTH_REVOKE_URL", "https://oauth2.googleapis.com/revoke"),
+		revokeMethod: "POST",
+		revokeBody: (token) => ({ token }),
+		scopes: [
+			"https://www.googleapis.com/auth/webmasters.readonly",
+			"https://www.googleapis.com/auth/analytics.readonly",
+			"openid",
+			"email",
+		],
+		scopeSeparator: " ",
+		clientIdSecret: "GOOGLE_OAUTH_CLIENT_ID",
+		clientSecretSecret: "GOOGLE_OAUTH_CLIENT_SECRET",
+		pkce: true,
+		authorizeParams: {
+			access_type: "offline",
+			prompt: "consent",
+			include_granted_scopes: "true",
+		},
+		tokenAuth: "body",
+		consentType: null,
+		rotatesRefreshToken: false,
+		apiBase: env("GOOGLE_SEARCH_CONSOLE_API_BASE", "https://searchconsole.googleapis.com"),
+		apiBases: {
+			search: env("GOOGLE_SEARCH_CONSOLE_API_BASE", "https://searchconsole.googleapis.com"),
+			analytics: env("GOOGLE_ANALYTICS_DATA_API_BASE", "https://analyticsdata.googleapis.com/v1beta"),
+			admin: env("GOOGLE_ANALYTICS_ADMIN_API_BASE", "https://analyticsadmin.googleapis.com/v1beta"),
+		},
+		identify: googleIdentity,
+	},
+
+	// -----------------------------------------------------------------
 	// Whoop
 	// -----------------------------------------------------------------
 	whoop: {
@@ -275,7 +320,7 @@ const GROUPS = {
 	google: {
 		id: "google",
 		label: "Google",
-		members: ["gmail", "google_calendar", "google_contacts"],
+		members: ["gmail", "google_calendar", "google_contacts", "websites"],
 		// Always asked, whatever the members are: the id_token is how the
 		// callback learns which Google account consented.
 		identityScopes: ["openid", "email", "profile"],
@@ -285,7 +330,7 @@ const GROUPS = {
 		// with the console, and a redirect_uri_mismatch when it isn't. The
 		// callback tells the two flows apart by the state's own provider.
 		callbackVia: "google_calendar",
-		accountKey: { gmail: "email", google_calendar: "sub", google_contacts: "sub" },
+		accountKey: { gmail: "email", google_calendar: "sub", google_contacts: "sub", websites: "sub" },
 	},
 };
 

@@ -225,6 +225,37 @@ describe("runStatement", () => {
 	test("one statement per step", async () => {
 		await expect(mind.runStatement(fakeConn(), "DROP TABLE a; DROP TABLE b")).rejects.toThrow(/one statement/);
 	});
+
+	test("a semicolon inside a quoted value is data, not a second statement", async () => {
+		const conn = fakeConn();
+		await expect(mind.runStatement(conn, "INSERT INTO routines (schedule_text) VALUES ('Wed; Fri')")).resolves.toBeDefined();
+		await expect(mind.runStatement(conn, "INSERT INTO t (a) VALUES ('x'); DROP TABLE t")).rejects.toThrow(/one statement/);
+	});
+
+	test.each([
+		["a backslash-escaped quote", "INSERT INTO t (a) VALUES ('it\\'s; fine')"],
+		["a doubled quote", "INSERT INTO t (a) VALUES ('it''s; fine')"],
+		["a double-quoted value", 'INSERT INTO t (a) VALUES ("Wed; Fri")'],
+		["a backticked name", "SELECT `odd;name` FROM t"],
+		["a comment", "SELECT 1 /* Wed; Fri */ FROM t -- and; more"],
+	])("%s keeps its semicolon as data", async (_label, sql) => {
+		await expect(mind.runStatement(fakeConn(), sql)).resolves.toBeDefined();
+	});
+
+	test.each([
+		["a quote inside a block comment", "SELECT 1 /* it's */; DROP TABLE x /* ' */"],
+		["a quote inside a -- comment", "SELECT 1 -- '\n; DROP TABLE t -- '"],
+		["a quote inside a # comment", "SELECT 1 # '\n; DROP TABLE t # '"],
+		["an escaped backslash closing the value", "SELECT 'a\\\\'; DROP TABLE t; SELECT '"],
+		["an executable comment", "SELECT 1 /*!; DROP TABLE t */"],
+	])("%s can't hide a second statement", async (_label, sql) => {
+		await expect(mind.runStatement(fakeConn(), sql)).rejects.toThrow(/one statement/);
+	});
+
+	test("an unbalanced quote or comment is named, not run", async () => {
+		await expect(mind.runStatement(fakeConn(), "SELECT 'unbalanced; DROP TABLE t")).rejects.toThrow(/unterminated ' quote/);
+		await expect(mind.runStatement(fakeConn(), "SELECT 1 /* never closed; DROP TABLE t")).rejects.toThrow(/unterminated \/\* comment/);
+	});
 });
 
 // ---------------------------------------------------------------------------
@@ -524,13 +555,60 @@ describe("which model dreams", () => {
 		llm.endpointsFor.mockReturnValue([{ id: "openai" }]);
 		llm.generateJson
 			.mockRejectedValueOnce(new Error("HTTP 429 no credits"))
+			.mockRejectedValueOnce(new Error("HTTP 429 no credits"))
+			.mockRejectedValueOnce(new Error("HTTP 429 no credits"))
 			.mockResolvedValueOnce({ ...ROUND, endpointId: "gemini", model: "gemini-3.5-flash-lite" })
 			.mockResolvedValue({ data: { narrative: null } });
-		const out = await dream({ rounds: 1 });
+		const out = await dream({ rounds: 1, retryDelaysMs: [0, 0] });
 		expect(out.status).toBe("ok");
-		expect(llm.generateJson.mock.calls.slice(0, 2).map((c) => c[0].task)).toEqual(["dream", "review"]);
+		// Retries used up: the narration goes straight to the stand-in too.
+		expect(llm.generateJson.mock.calls.map((c) => c[0].task)).toEqual(["dream", "dream", "dream", "review", "review"]);
 		const note = pool.query.mock.calls.find((c) => c[0].includes("INSERT INTO athena_dream_step") && String(c[1][5]).includes("stood in"));
 		expect(note[1][5]).toMatch(/gemini stood in: HTTP 429/);
+		expect(note[1][5]).toMatch(/after 3 attempt/);
+	});
+
+	test("a transient ChatGPT failure is retried on the dream model and Gemini never stands in", async () => {
+		mysql.createConnection.mockResolvedValue(fakeConn());
+		mainDb({ facts: FACTS });
+		llm.endpointsFor.mockReturnValue([{ id: "openai" }]);
+		llm.generateJson
+			.mockRejectedValueOnce(new Error("HTTP 503 overloaded"))
+			.mockResolvedValueOnce(ROUND)
+			.mockResolvedValueOnce({ data: { narrative: null } });
+		await dream({ rounds: 1, retryDelaysMs: [0, 0] });
+		expect(llm.generateJson.mock.calls.slice(0, 2).map((c) => c[0].task)).toEqual(["dream", "dream"]);
+		const note = pool.query.mock.calls.find((c) => c[0].includes("INSERT INTO athena_dream_step") && String(c[1][5]).includes("stood in"));
+		expect(note).toBeUndefined();
+	});
+
+	test("a non-transient failure (400) falls back at once without retrying", async () => {
+		mysql.createConnection.mockResolvedValue(fakeConn());
+		mainDb({ facts: FACTS });
+		llm.endpointsFor.mockReturnValue([{ id: "openai" }]);
+		llm.generateJson
+			.mockRejectedValueOnce(new Error("HTTP 400 invalid schema"))
+			.mockResolvedValueOnce({ ...ROUND, endpointId: "gemini" })
+			.mockResolvedValue({ data: { narrative: null } });
+		await dream({ rounds: 1 });
+		expect(llm.generateJson.mock.calls.slice(0, 2).map((c) => c[0].task)).toEqual(["dream", "review"]);
+		const note = pool.query.mock.calls.find((c) => c[0].includes("INSERT INTO athena_dream_step") && String(c[1][5]).includes("stood in"));
+		expect(note[1][5]).toMatch(/after 1 attempt\(s\)\)$/);
+		// One bad request isn't an outage: the narration still asks ChatGPT.
+		expect(llm.generateJson.mock.calls[2][0].task).toBe("dream");
+	});
+
+	test("when ChatGPT and the stand-in both fail, the round's note keeps both reasons", async () => {
+		mysql.createConnection.mockResolvedValue(fakeConn());
+		mainDb({ facts: FACTS });
+		llm.endpointsFor.mockReturnValue([{ id: "openai" }]);
+		llm.generateJson.mockRejectedValueOnce(new Error("HTTP 400 invalid schema")).mockRejectedValueOnce(new Error('No model could serve "review" (gemini: HTTP 500)'));
+		// The round's second try fails the same way.
+		llm.generateJson.mockRejectedValueOnce(new Error("HTTP 400 again")).mockRejectedValueOnce(new Error("HTTP 500 again"));
+		const out = await dream({ rounds: 1 });
+		expect(out.status).toBe("failed");
+		const note = pool.query.mock.calls.find((c) => c[0].includes("INSERT INTO athena_dream_step") && String(c[1][5]).includes("no model could dream"));
+		expect(note[1][5]).toMatch(/ChatGPT: HTTP 400 invalid schema \(after 1 attempt\(s\)\) \| then No model could serve "review" \(gemini: HTTP 500\)/);
 	});
 
 	test("paints the narrative into the bucket and records the path", async () => {
@@ -562,5 +640,60 @@ describe("which model dreams", () => {
 		const close = pool.query.mock.calls.find((c) => c[0].startsWith("UPDATE athena_dream SET"));
 		expect(close[1][2]).toMatch(/porch/);
 		expect(close[1][3]).toBeNull();
+	});
+});
+
+describe("think", () => {
+	const { think, isTransient, DREAM_RETRY_DELAYS_MS } = require("./dream");
+	const OK = { data: { ok: true }, endpointId: "openai" };
+	const STANDIN = { data: { ok: true }, endpointId: "gemini" };
+	const fast = () => ({ delaysMs: [0, 0], down: null });
+	const tasks = () => llm.generateJson.mock.calls.map((c) => c[0].task);
+
+	beforeEach(() => llm.endpointsFor.mockReturnValue([{ id: "openai" }]));
+
+	test("waits for real between retries outside the tests", () => {
+		expect(DREAM_RETRY_DELAYS_MS).toEqual([3000, 15000]);
+	});
+
+	test("counts the calls it actually made when a retry turns into a hard failure", async () => {
+		llm.generateJson.mockRejectedValueOnce(new Error("HTTP 503 busy")).mockRejectedValueOnce(new Error("HTTP 400 bad")).mockResolvedValueOnce(STANDIN);
+		const res = await think({}, fast());
+		expect(tasks()).toEqual(["dream", "dream", "review"]);
+		expect(res.fellBack).toBe("HTTP 400 bad (after 2 attempt(s))");
+	});
+
+	test("retries a timeout that carries no status", async () => {
+		llm.generateJson.mockRejectedValueOnce(new Error('No model could serve "dream" (openai: openai /chat/completions timed out)')).mockResolvedValueOnce(OK);
+		const res = await think({}, fast());
+		expect(tasks()).toEqual(["dream", "dream"]);
+		expect(res.fellBack).toBeNull();
+	});
+
+	test("an empty account isn't retried, and the night stops asking", async () => {
+		const dreamer = fast();
+		llm.generateJson
+			.mockRejectedValueOnce(new Error('openai /chat/completions -> HTTP 429 {"error":{"code":"insufficient_quota"}}'))
+			.mockResolvedValue(STANDIN);
+		await think({}, dreamer);
+		const second = await think({}, dreamer);
+		expect(tasks()).toEqual(["dream", "review", "review"]);
+		expect(second.fellBack).toMatch(/insufficient_quota.*not trying ChatGPT again tonight/);
+	});
+
+	test("after the retries are used up, later calls go straight to the stand-in", async () => {
+		const dreamer = fast();
+		llm.generateJson.mockRejectedValueOnce(new Error("HTTP 503")).mockRejectedValueOnce(new Error("HTTP 503")).mockRejectedValueOnce(new Error("HTTP 503")).mockResolvedValue(STANDIN);
+		await think({}, dreamer);
+		await think({}, dreamer);
+		expect(tasks()).toEqual(["dream", "dream", "dream", "review", "review"]);
+	});
+
+	test("reads the status only from HTTP <status>, never a bare number", () => {
+		expect(isTransient(new Error("invalid output: expected 500 rows"))).toBe(false);
+		expect(isTransient(new Error("openai /chat/completions -> HTTP 400 max 500 items"))).toBe(false);
+		expect(isTransient(new Error("openai /chat/completions -> HTTP 502 bad gateway"))).toBe(true);
+		expect(isTransient(Object.assign(new Error("nope"), { status: 408 }))).toBe(true);
+		expect(isTransient(new Error("connect ECONNREFUSED 10.0.0.5:443"))).toBe(true);
 	});
 });

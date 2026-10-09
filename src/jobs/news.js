@@ -126,13 +126,6 @@ async function main() {
 	const args = parseArgs(process.argv);
 	log(`starting${args.dryRun ? " (dry run)" : ""}; policy=${llm.status().policy}`);
 	await llm.startHealthLoop?.();
-	// The env-declared house sources are seeded here rather than at server
-	// start: this is the process that reads them, and it is idempotent.
-	if (!args.dryRun && !args.source) {
-		const seeded = await news.seedHouseSources().catch((err) => ({ added: 0, error: err.message }));
-		if (seeded.added) log(`seeded ${seeded.added} source(s) from NEWS_FEEDS`);
-	}
-
 	if (args.status) {
 		await status();
 		return;

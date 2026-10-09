@@ -1,5 +1,10 @@
 # Capability ledger
 
+- 2026-10-07 — Projects → Websites: list the sites you manage and see last
+  week's Search Console clicks/impressions and Analytics visitors against the
+  week before; new Websites row on the Google card in Connected apps —
+  `websites.md` (status: partial)
+
 - 2026-10-06 — The Community map now moves and zooms, and shows each known neighbor
   as a marker (a house-sized square when zoomed in) with a details popup; one
   tap places neighbors that have no location yet from their addresses —
