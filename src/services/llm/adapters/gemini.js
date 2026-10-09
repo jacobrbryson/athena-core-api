@@ -97,6 +97,47 @@ async function raw(endpoint, contents, config = {}) {
 	return ai().models.generateContent({ model: endpoint.models.tools, contents, config });
 }
 
+/**
+ * A web search, answered by Gemini with Google Search grounding. Returns a
+ * short factual summary plus the pages it was grounded on. Kept apart from
+ * generate() because grounding and a strict response schema don't mix: the
+ * chat reply stays one schema-constrained call, and this result reaches it as
+ * prompt context like any connector read.
+ *
+ *   { text, sources: [{ title, url }], queries: [...], model }
+ */
+async function search(endpoint, query) {
+	await assertModelAccess();
+	const model = endpoint.models.search;
+	const response = await ai().models.generateContent({
+		model,
+		contents: [{ role: "user", parts: [{ text: query }] }],
+		config: {
+			tools: [{ googleSearch: {} }],
+			systemInstruction: [
+				CORE_MISSION,
+				"Search the web and report what you find about the request below: the facts, figures, dates and names that answer it, most recent first.",
+				"Plain prose, under 200 words. Say plainly when sources disagree or when nothing current turns up. Do not answer from memory alone.",
+			].join("\n\n"),
+		},
+	});
+	const metadata = response?.candidates?.[0]?.groundingMetadata || {};
+	const seen = new Set();
+	const sources = [];
+	for (const chunk of metadata.groundingChunks || []) {
+		const url = chunk?.web?.uri;
+		if (!url || seen.has(url)) continue;
+		seen.add(url);
+		sources.push({ title: chunk.web.title || url, url });
+	}
+	return {
+		text: (answerText(response) || "").trim(),
+		sources,
+		queries: Array.isArray(metadata.webSearchQueries) ? metadata.webSearchQueries : [],
+		model,
+	};
+}
+
 async function embed(endpoint, texts, { model, purpose = "document" } = {}) {
 	await assertModelAccess();
 	const response = await ai().models.embedContent({
@@ -161,4 +202,4 @@ async function speech(endpoint, text, { sing = false } = {}) {
 	};
 }
 
-module.exports = { generate, raw, embed, speech, EMBED_DIMS, _setClient: (c) => (client = c) };
+module.exports = { generate, raw, search, embed, speech, EMBED_DIMS, _setClient: (c) => (client = c) };

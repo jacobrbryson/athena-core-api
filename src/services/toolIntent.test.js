@@ -39,7 +39,7 @@ describe("guess", () => {
 		llm.decide.mockResolvedValue(answers({}));
 		await intent.guess("how did I sleep?", { profileId: PROFILE, audience: "adult" });
 		const asked = Object.keys(llm.decide.mock.calls[0][0].questions);
-		expect(asked.sort()).toEqual(["calendar", "heart_rate", "whoop", "whoop_also", "window"].sort());
+		expect(asked.sort()).toEqual(["calendar", "heart_rate", "web", "whoop", "whoop_also", "window"].sort());
 		expect(asked).not.toContain("email");
 	});
 
@@ -47,6 +47,8 @@ describe("guess", () => {
 		llm.decide.mockResolvedValue(answers({}));
 		await intent.guess("what's my heart rate?", { profileId: PROFILE, audience: "child" });
 		expect(llm.decide.mock.calls[0][0].questions).not.toHaveProperty("heart_rate");
+		// Nor a web search: a child's words do not go out to a search engine.
+		expect(llm.decide.mock.calls[0][0].questions).not.toHaveProperty("web");
 		expect(heartRate.getPref).not.toHaveBeenCalled();
 	});
 
@@ -81,11 +83,26 @@ describe("guess", () => {
 		warn.mockRestore();
 	});
 
-	it("does not call Jev when nothing is connected", async () => {
+	it("does not call Jev when a child has nothing connected", async () => {
+		connectorContext.linkedProviders.mockResolvedValue(new Set());
+		expect(await intent.guess("anything tonight?", { profileId: PROFILE, audience: "child" })).toBeNull();
+		expect(llm.decide).not.toHaveBeenCalled();
+	});
+
+	it("still offers an adult with nothing connected a web search", async () => {
 		connectorContext.linkedProviders.mockResolvedValue(new Set());
 		heartRate.getPref.mockResolvedValue({ enabled: false });
-		expect(await intent.guess("anything tonight?", { profileId: PROFILE, audience: "adult" })).toBeNull();
-		expect(llm.decide).not.toHaveBeenCalled();
+		llm.decide.mockResolvedValue(answers({ web: 0.9 }, "unspecified"));
+		const g = await intent.guess("who won the Braves game last night?", { profileId: PROFILE, audience: "adult" });
+		expect(Object.keys(llm.decide.mock.calls[0][0].questions).sort()).toEqual(["web", "window"]);
+		expect(g.fetch).toEqual(["web"]);
+		expect(g.filler).toEqual({ key: "web", text: "Let me look that up, hmm…" });
+	});
+
+	it("needs more confidence to search the web than to read a connector", async () => {
+		llm.decide.mockResolvedValue(answers({ calendar: 0.5, web: 0.5 }));
+		const g = await intent.guess("what's the plan?", { profileId: PROFILE, audience: "adult" });
+		expect(g.fetch).toEqual(["calendar"]);
 	});
 
 	it("skips quietly when this deployment has no Jev key", async () => {
@@ -113,6 +130,9 @@ describe("fillerLine", () => {
 			"Let me check your email and WHOOP, and I'll grab your heart rate off the band too…"
 		);
 		expect(intent.fillerLine(["heart_rate"]).text).toBe("Let me grab your heart rate, hmm…");
+		expect(intent.fillerLine(["web"]).text).toBe("Let me look that up, hmm…");
+		expect(intent.fillerLine(["calendar", "web"]).text).toBe("Let me check your calendar, and I'll look online too…");
+		expect(intent.fillerLine(["heart_rate", "web"]).text).toBe("Let me grab your heart rate and look that up, hmm…");
 	});
 });
 
@@ -124,6 +144,7 @@ describe("extraGrounding", () => {
 			providers: ["google_calendar"],
 			daysByProvider: { google_calendar: 1 },
 			heartRate: false,
+			web: false,
 		});
 	});
 
@@ -137,6 +158,16 @@ describe("extraGrounding", () => {
 		expect(extra.providers).toEqual(["whoop"]);
 		expect(extra.daysByProvider).toEqual({});
 		expect(extra.heartRate).toBe(true);
+	});
+
+	it("adds a web search the keyword gate missed, but not one it caught", () => {
+		expect(intent.extraGrounding(guessed(["web"]), "who won last night's game?")).toBeNull();
+		expect(intent.extraGrounding(guessed(["web"]), "is the new iPhone out yet?")).toEqual({
+			providers: [],
+			daysByProvider: {},
+			heartRate: false,
+			web: true,
+		});
 	});
 
 	it("is null with no guess", () => {

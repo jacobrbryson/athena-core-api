@@ -30,7 +30,7 @@ function allEndpoints() {
 }
 
 /** Ordered candidate endpoints for a task (before health filtering). */
-function candidatesFor(task, { audience } = {}) {
+function candidatesFor(task, { audience, prefer } = {}) {
 	const spec = TASKS[task];
 	if (!spec) throw new Error(`Unknown LLM task "${task}"`);
 	const canDo = (e) => !!e.models?.[task];
@@ -40,7 +40,10 @@ function candidatesFor(task, { audience } = {}) {
 
 	const policy = audience === "child" ? config.childPolicy : config.policy;
 	if (policy === "frontier-only") return front;
-	if (policy === "frontier-first") return [...front, ...orc];
+	// A caller can ask for the frontier first on one call (a reply resting on
+	// web results, where a small local model is likeliest to embellish). It
+	// can only move the frontier up; the local tier stays as the fallback.
+	if (policy === "frontier-first" || prefer === "frontier") return [...front, ...orc];
 	return [...orc, ...front];
 }
 
@@ -69,8 +72,8 @@ class NoModelAvailableError extends Error {
  * Generate text/JSON for a task. Returns { text, endpointId, tier, model }.
  * Throws NoModelAvailableError only after every candidate has failed.
  */
-async function generate({ task = "chat", contents, json = true, schema = null, audience, validate, temperature }) {
-	const chain = managedCandidates(task, { audience });
+async function generate({ task = "chat", contents, json = true, schema = null, audience, validate, temperature, prefer }) {
+	const chain = managedCandidates(task, { audience, prefer });
 	const attempts = [];
 
 	for (let i = 0; i < chain.length; i++) {
@@ -167,6 +170,27 @@ async function raw(contents, cfg = {}) {
 	} catch (err) {
 		health.reportFailure(endpoint.id, err);
 		telemetry.recordCall({ task: "tools", endpointId: endpoint.id, tier: endpoint.tier, model: endpoint.models.tools, outcome: "error", latencyMs: Date.now() - started, error: err.message });
+		throw err;
+	}
+}
+
+/**
+ * Search the web (Gemini + Google Search grounding). Frontier-only, first
+ * endpoint that declares a search model, no fallback: a failed search means
+ * no web context, never a guess. Returns { text, sources, queries, model }.
+ */
+async function search(query, { audience } = {}) {
+	const endpoint = config.frontier.find((e) => e.models?.search && adapterFor(e).search);
+	if (!endpoint) throw new NoModelAvailableError("search", []);
+	const started = Date.now();
+	try {
+		const out = await adapterFor(endpoint).search(endpoint, query);
+		health.reportSuccess(endpoint.id, Date.now() - started);
+		telemetry.recordCall({ task: "search", endpointId: endpoint.id, tier: endpoint.tier, model: out.model, outcome: "ok", latencyMs: Date.now() - started, audience, inputChars: query.length, outputChars: out.text.length });
+		return out;
+	} catch (err) {
+		health.reportFailure(endpoint.id, err);
+		telemetry.recordCall({ task: "search", endpointId: endpoint.id, tier: endpoint.tier, model: endpoint.models.search, outcome: "error", latencyMs: Date.now() - started, audience, error: err.message });
 		throw err;
 	}
 }
@@ -351,6 +375,7 @@ module.exports = {
 	generateOn,
 	endpointsFor,
 	raw,
+	search,
 	embed,
 	embeddingSpace,
 	image,

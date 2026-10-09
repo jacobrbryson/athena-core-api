@@ -1,5 +1,10 @@
 # Capability ledger
 
+- 2026-10-09 — Web search: Athena searches the web (Gemini + Google Search)
+  before answering anything current, on her own when the question needs it
+  or when asked to "look it up", and shows the pages she used as links under
+  the reply — `web-search.md` (status: live)
+
 - 2026-10-07 — Projects → Websites: list the sites you manage and see last
   week's Search Console clicks/impressions and Analytics visitors against the
   week before; new Websites row on the Google card in Connected apps —

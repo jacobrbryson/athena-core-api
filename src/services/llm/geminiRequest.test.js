@@ -53,6 +53,41 @@ test("a string prompt still becomes one user turn, with CORE_MISSION alone", asy
 	expect(call.config.responseSchema).toBeUndefined();
 });
 
+test("search grounds on Google Search, checks access, and returns deduplicated sources", async () => {
+	mockGenerateContent.mockResolvedValue({
+		candidates: [
+			{
+				content: { parts: [{ text: " The Braves won 5-3. " }] },
+				groundingMetadata: {
+					webSearchQueries: ["braves score"],
+					groundingChunks: [
+						{ web: { uri: "https://a.example", title: "mlb.com" } },
+						{ web: { uri: "https://a.example", title: "mlb.com" } },
+						{ web: { uri: "https://b.example" } },
+						{ retrievedContext: {} },
+					],
+				},
+			},
+		],
+	});
+	const out = await gemini.search({ ...endpoint, models: { search: "search-model" } }, "who won?");
+	const call = mockGenerateContent.mock.calls[0][0];
+	expect(call.model).toBe("search-model");
+	expect(call.config.tools).toEqual([{ googleSearch: {} }]);
+	expect(call.config.systemInstruction.startsWith(CORE_MISSION)).toBe(true);
+	expect(call.config.responseSchema).toBeUndefined();
+	expect(mockAssertAccess).toHaveBeenCalledTimes(1);
+	expect(out).toEqual({
+		text: "The Braves won 5-3.",
+		sources: [
+			{ title: "mlb.com", url: "https://a.example" },
+			{ title: "https://b.example", url: "https://b.example" },
+		],
+		queries: ["braves score"],
+		model: "search-model",
+	});
+});
+
 test("thought parts are excluded and finishReason is reported", async () => {
 	mockGenerateContent.mockResolvedValue({
 		candidates: [{ content: { parts: [{ text: "thinking...", thought: true }, { text: '{"a":1}' }] }, finishReason: "MAX_TOKENS" }],

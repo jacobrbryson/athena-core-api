@@ -55,6 +55,10 @@ const TASKS = {
 	// OPENAI_DREAM_MODEL — and dream.js falls back to "review" when none can.
 	dream: { pinned: null },
 	tools: { pinned: "frontier" }, // Gemini function-calling format
+	// Web search: Gemini with Google Search grounding. Frontier-only (no local
+	// tier can search), and it returns sources, so it has its own path —
+	// see search() in router.js.
+	search: { pinned: "frontier" },
 	tts: { pinned: "frontier" }, // Gemini neural voice
 	// Singing: the same voice on the Pro TTS model, which holds pitch and
 	// sustains notes where Flash mostly reads in rhythm. See speech() in router.js.
@@ -172,6 +176,7 @@ function loadConfig() {
 				review: GEMINI_CHAT_MODEL,
 				vision: GEMINI_CHAT_MODEL,
 				tools: GEMINI_CHAT_MODEL,
+				search: process.env.GEMINI_SEARCH_MODEL || GEMINI_CHAT_MODEL,
 				embed: process.env.GEMINI_EMBED_MODEL || "gemini-embedding-001",
 				tts: process.env.GEMINI_TTS_MODEL || "gemini-2.5-flash-preview-tts",
 				sing: process.env.GEMINI_SING_MODEL || "gemini-2.5-pro-preview-tts",

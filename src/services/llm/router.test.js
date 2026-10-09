@@ -71,9 +71,21 @@ describe("candidate ordering", () => {
 		expect(router.candidatesFor("chat").map((e) => e.id)).toEqual(["gemini"]);
 	});
 
-	test("TTS and tool calling are pinned to the frontier", () => {
+	test("TTS, tool calling and web search are pinned to the frontier", () => {
 		expect(router.candidatesFor("tts").map((e) => e.id)).toEqual(["gemini"]);
 		expect(router.candidatesFor("tools").map((e) => e.id)).toEqual(["gemini"]);
+		expect(router.candidatesFor("search").map((e) => e.id)).toEqual(["gemini"]);
+	});
+
+	test("a caller can prefer the frontier for one call, keeping the local tier as fallback", () => {
+		expect(router.candidatesFor("chat", { prefer: "frontier" }).map((e) => e.id)).toEqual([
+			"gemini",
+			"orc-a",
+		]);
+		// It can only move the frontier up, never bring Orcwood back under frontier-only.
+		setEnv({ LLM_POLICY: "frontier-only" });
+		router.reload();
+		expect(router.candidatesFor("chat", { prefer: "frontier" }).map((e) => e.id)).toEqual(["gemini"]);
 	});
 
 	test("with no Orcwood endpoints configured, behavior is Gemini-only (unchanged prod)", () => {

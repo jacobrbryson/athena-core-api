@@ -7,6 +7,7 @@
  *   llm.image(prompt, { size, quality })
  *   llm.speech(text)
  *   llm.raw(contents, config)   // Gemini function calling
+ *   llm.search(query, { audience })  // web search, Google Search grounding
  *   llm.decide({ state, questions })  // Jev typed decisions (probabilities)
  *   llm.status() / llm.manifest()
  *
@@ -45,6 +46,7 @@ module.exports = {
 	endpointsFor: router.endpointsFor,
 	generateJson,
 	raw: router.raw,
+	search: router.search,
 	embed: router.embed,
 	embeddingSpace: router.embeddingSpace,
 	image: router.image,

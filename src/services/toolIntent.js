@@ -27,6 +27,7 @@ const llm = require("./llm");
 const jev = require("./llm/adapters/jev");
 const connectorContext = require("./connectors/context");
 const heartRate = require("./heartRate");
+const webSearch = require("./webSearch");
 
 const FETCH_AT = 0.35;
 const SPEAK_AT = 0.7;
@@ -78,7 +79,23 @@ const SOURCES = [
 			"Would answering this need the person's live heart rate from their band — " +
 			"what it is right now, or during today's activity?",
 	},
+	{
+		// Not a connector: every adult has it (services/webSearch). A search costs
+		// real money and a few seconds, so it needs more confidence than a
+		// connector read — see WEB_FETCH_AT.
+		id: "web",
+		provider: null,
+		web: true,
+		say: null, // spoken as its own clause, see fillerLine
+		question:
+			"Would answering this well need a fresh web search — news, scores, prices, " +
+			"weather, schedules, opening hours, releases, or any fact about the world " +
+			"that may have changed recently or that a person would look up?",
+	},
 ];
+
+// A wrong web guess spends a search; a wrong connector guess spends a cached read.
+const WEB_FETCH_AT = 0.6;
 
 /** What stretch of time the question is about, and how many days to read. */
 const WINDOWS = {
@@ -97,7 +114,9 @@ async function availableSources(profileId, { audience } = {}) {
 		audience === "adult"
 			? await heartRate.getPref(profileId).then((p) => p.enabled).catch(() => false)
 			: false;
-	return SOURCES.filter((s) => (s.provider ? linked.has(s.provider) : heartOn));
+	return SOURCES.filter((s) =>
+		s.web ? audience === "adult" : s.provider ? linked.has(s.provider) : heartOn
+	);
 }
 
 function buildQuestions(sources) {
@@ -142,8 +161,14 @@ function fillerLine(ids) {
 	if (!sorted.length) return null;
 	const names = SOURCES.filter((s) => sorted.includes(s.id) && s.say).map((s) => s.say);
 	const heart = sorted.includes("heart_rate");
+	const web = sorted.includes("web");
 	let text;
-	if (!names.length) text = "Let me grab your heart rate, hmm…";
+	if (web) {
+		if (names.length && heart) text = `Let me check ${joinNames(names)}, grab your heart rate and look online too…`;
+		else if (names.length) text = `Let me check ${joinNames(names)}, and I'll look online too…`;
+		else if (heart) text = "Let me grab your heart rate and look that up, hmm…";
+		else text = "Let me look that up, hmm…";
+	} else if (!names.length) text = "Let me grab your heart rate, hmm…";
 	else if (heart) text = `Let me check ${joinNames(names)}, and I'll grab your heart rate off the band too…`;
 	else text = `Let me check ${joinNames(names)}, hmm…`;
 	return { key: sorted.join("+"), text };
@@ -186,16 +211,19 @@ async function guess(message, { profileId, audience, sources } = {}) {
 	for (const source of pool) {
 		scores[source.id] = Math.max(noul(source.id), source.also ? noul(`${source.id}_also`) : 0);
 	}
-	const fetch = pool.map((s) => s.id).filter((id) => scores[id] >= FETCH_AT);
+	const fetch = pool
+		.filter((s) => scores[s.id] >= (s.web ? WEB_FETCH_AT : FETCH_AT))
+		.map((s) => s.id);
 	// At most two named sources in the line (the likeliest), plus the heart-rate
 	// clause: "let me check your calendar, your email, WHOOP and heart rate" is not
 	// a filler, it's a speech. Everything in `fetch` is still read.
 	const sure = fetch.filter((id) => scores[id] >= SPEAK_AT);
+	const clause = (id) => id === "heart_rate" || id === "web";
 	const named = sure
-		.filter((id) => id !== "heart_rate")
+		.filter((id) => !clause(id))
 		.sort((a, b) => scores[b] - scores[a])
 		.slice(0, MAX_NAMED);
-	const announce = sure.filter((id) => named.includes(id) || id === "heart_rate");
+	const announce = sure.filter((id) => named.includes(id) || clause(id));
 	const window = WINDOWS[result.answers?.window?.choice] ? result.answers.window.choice : "unspecified";
 
 	return {
@@ -213,7 +241,7 @@ async function guess(message, { profileId, audience, sources } = {}) {
 /**
  * What the guess adds beyond the keyword gates, for the grounding step:
  *   { providers: ["google_calendar"], daysByProvider: { google_calendar: 1 },
- *     heartRate: false }
+ *     heartRate: false, web: false }
  * Sources a keyword gate already caught are left out — they are being fetched
  * already, and fetching them twice would put two copies in the prompt.
  * Returns null when there is nothing to add.
@@ -225,13 +253,14 @@ function extraGrounding(guessed, message) {
 		(s) => s.provider && guessed.fetch.includes(s.id) && !covered.has(s.provider)
 	).map((s) => s.provider);
 	const heart = guessed.fetch.includes("heart_rate") && !heartRate.matches(message);
-	if (!providers.length && !heart) return null;
+	const web = guessed.fetch.includes("web") && !webSearch.matches(message);
+	if (!providers.length && !heart && !web) return null;
 	// Only the calendar is about the future; the guess's window means nothing
 	// to WHOOP history, which keeps its own default.
 	const daysByProvider = providers.includes("google_calendar")
 		? { google_calendar: guessed.days }
 		: {};
-	return { providers, daysByProvider, heartRate: heart };
+	return { providers, daysByProvider, heartRate: heart, web };
 }
 
 module.exports = {

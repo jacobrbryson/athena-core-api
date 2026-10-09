@@ -8,6 +8,7 @@ const integrationService = require("../services/integration");
 const connectorContext = require("../services/connectors/context");
 const heartRate = require("../services/heartRate");
 const toolIntent = require("../services/toolIntent");
+const webSearch = require("../services/webSearch");
 const missionService = require("../services/mission");
 const selfKnowledge = require("../services/selfKnowledge");
 const actions = require("../services/actions");
@@ -94,8 +95,15 @@ async function groundedFromGuess(profileId, message, audience, early, onRead) {
     if (!extra) return null;
     console.info(
       "[gemini] guess added:",
-      [...extra.providers, ...(extra.heartRate ? ["heart_rate"] : [])].join(", "),
+      [
+        ...extra.providers,
+        ...(extra.heartRate ? ["heart_rate"] : []),
+        ...(extra.web ? ["web"] : []),
+      ].join(", "),
     );
+    // The web search runs on its own path (webGroundingFor) so its sources
+    // can reach the reply; only the connector and heart-rate reads are here.
+    if (!extra.providers.length && !extra.heartRate) return null;
     const blocks = await Promise.all([
       extra.providers.length
         ? connectorContext.buildContext(profileId, {
@@ -112,6 +120,25 @@ async function groundedFromGuess(profileId, message, audience, early, onRead) {
     return blocks.filter(Boolean).join("\n\n") || null;
   } catch (e) {
     console.warn("[gemini] guessed grounding failed:", e.message);
+    return null;
+  }
+}
+
+/**
+ * A web search when the person asked for one outright (keyword gate) or the
+ * fast guess thinks the answer needs one. Resolves to { block, sources } or
+ * null; never throws. Adults only — webSearch.buildContext checks too.
+ */
+async function webGroundingFor(message, audience, guessPromise) {
+  try {
+    if (audience !== "adult") return null;
+    let wanted = webSearch.matches(message);
+    if (!wanted && guessPromise) {
+      wanted = !!toolIntent.extraGrounding(await guessPromise, message)?.web;
+    }
+    return wanted ? await webSearch.buildContext(message, { audience }) : null;
+  } catch (e) {
+    console.warn("[gemini] web grounding failed:", e.message);
     return null;
   }
 }
@@ -157,16 +184,32 @@ async function processAiResponse(session, message, clients, ctx = {}) {
       guardian: !!ctx.guardian,
     });
 
-    const guessedGrounding =
+    // One guess shared by the connector grounding and the web search, so Jev
+    // is asked once per turn.
+    const guessPromise =
       groundingProfileId && groundingAudience === "adult"
-        ? groundedFromGuess(
-            groundingProfileId,
-            message,
-            groundingAudience,
-            ctx.guessPromise,
-            onRead,
-          )
-        : Promise.resolve(null);
+        ? ctx.guessPromise ||
+          toolIntent
+            .guess(message, {
+              profileId: groundingProfileId,
+              audience: groundingAudience,
+            })
+            .catch(() => null)
+        : null;
+    const guessedGrounding = guessPromise
+      ? groundedFromGuess(
+          groundingProfileId,
+          message,
+          groundingAudience,
+          guessPromise,
+          onRead,
+        )
+      : Promise.resolve(null);
+    const webGrounding = webGroundingFor(
+      message,
+      groundingAudience,
+      guessPromise,
+    );
 
     let integrationContext = null;
     if (groundingProfileId) {
@@ -401,6 +444,11 @@ async function processAiResponse(session, message, clients, ctx = {}) {
       integrationContext = [integrationContext, guessedBlock]
         .filter(Boolean)
         .join("\n\n");
+    const web = await webGrounding;
+    if (web)
+      integrationContext = [integrationContext, web.block]
+        .filter(Boolean)
+        .join("\n\n");
 
     const prompt = await generatePrompt(session, topics || [], message, {
       integrationContext,
@@ -443,6 +491,9 @@ async function processAiResponse(session, message, clients, ctx = {}) {
           task: "chat",
           contents: prompt,
           audience: memoryCtx.audience,
+          // A reply resting on search results goes to the frontier first: a
+          // small local model is likeliest to embellish what it was handed.
+          ...(web ? { prefer: "frontier" } : {}),
           // Constrain the model to the reply schema (Gemini structured
           // output) rather than only asking for JSON in the prompt.
           schema: CHAT_SCHEMA,
@@ -634,6 +685,9 @@ async function processAiResponse(session, message, clients, ctx = {}) {
         // Live socket only. A reply fetched by polling arrives as the stored
         // combined text and is spoken, not sung.
         ...(lyrics ? { lyrics } : {}),
+        // The pages a web search grounded this reply on, shown as links under
+        // it. Live socket only, like lyrics: they are not stored.
+        ...(web?.sources?.length && !fellBack ? { sources: web.sources } : {}),
       },
     });
 
