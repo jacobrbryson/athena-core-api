@@ -475,16 +475,62 @@ describe("recordPhoneAlert (where the phone is, and calls that cannot be placed)
 		jest.spyOn(geocode, "lookup").mockImplementation(async (q) =>
 			q === "12 Oak Dr, NC" ? [{ latitude: 35.68, longitude: -80.9073 }, { latitude: 35.2, longitude: -78.6 }] : []
 		);
-		const out = await watch.recordPhoneAlert(1, { title: "Structure Fire", text: "12 Oak Dr, ALEXANDER" });
+		const out = await watch.recordPhoneAlert(1, {
+			title: "Structure Fire",
+			text: "12 Oak Dr, ALEXANDER",
+			suggest: async () => ({ data: { candidates: [] } }),
+		});
 		expect(out.unplaced).toBe("could not place the address");
 		expect(nudges).toHaveLength(1);
+	});
+
+	test("a model's rewrite is used once the geocoder finds it in the call's own town", async () => {
+		fakeDb({ live: false });
+		jest.spyOn(geocode, "regionsAt").mockResolvedValue([]);
+		jest.spyOn(geocode, "lookup").mockImplementation(async (q) =>
+			q === "100 Wagner St, Troutman, NC" ? [{ label: "100 WAGNER ST, TROUTMAN, NC, 28166", latitude: 35.68, longitude: -80.9 }] : []
+		);
+		const suggest = jest.fn().mockResolvedValue({ data: { candidates: ["100 Wagner St, Troutman, NC"] } });
+		const out = await watch.recordPhoneAlert(1, {
+			title: "",
+			text: "Structure Fire • Iredell 911 WAGNER ST & RAMP, TROUTMAN",
+			suggest,
+			generate: async () => { throw new Error("no model"); },
+		});
+		expect(suggest.mock.calls[0][0]).toMatch(/WAGNER ST & RAMP, TROUTMAN/);
+		expect(out.incident).toMatchObject({ what: "Structure Fire", place: "Home", estimated: true });
+	});
+
+	test("a model's rewrite in another town is refused", async () => {
+		const nudges = fakeDb({ live: false });
+		jest.spyOn(geocode, "regionsAt").mockResolvedValue([]);
+		jest.spyOn(geocode, "lookup").mockImplementation(async (q) =>
+			q === "100 Wagner St, Mooresville, NC" ? [{ label: "100 WAGNER ST, MOORESVILLE, NC, 28117", latitude: 35.68, longitude: -80.9 }] : []
+		);
+		const out = await watch.recordPhoneAlert(1, {
+			title: "",
+			text: "Structure Fire • Iredell 911 WAGNER ST & RAMP, TROUTMAN",
+			suggest: async () => ({ data: { candidates: ["100 Wagner St, Mooresville, NC"] } }),
+		});
+		expect(out.unplaced).toBe("could not place the address");
+		expect(nudges).toHaveLength(1);
+	});
+
+	test("the rescue's answer shape is checked", () => {
+		expect(phone.checkRescue({ candidates: [] })).toBe(true);
+		expect(phone.checkRescue({ candidates: "1 Main St" })).not.toBe(true);
+		expect(phone.checkRescue({ candidates: ["a", "b", "c", "d"] })).not.toBe(true);
 	});
 
 	test("an address nobody can find is still told, without a distance", async () => {
 		const nudges = fakeDb();
 		jest.spyOn(geocode, "regionsAt").mockResolvedValue(["28677"]);
 		jest.spyOn(geocode, "lookup").mockResolvedValue([]);
-		const out = await watch.recordPhoneAlert(1, { title: "Medical Emergency", text: "9 Nowhere Ln" });
+		const out = await watch.recordPhoneAlert(1, {
+			title: "Medical Emergency",
+			text: "9 Nowhere Ln",
+			suggest: async () => { throw new Error("no model"); },
+		});
 		expect(out).toMatchObject({ told: true, unplaced: "could not place the address", what: "Medical Emergency" });
 		expect(nudges[0][5]).toMatch(/couldn't place it on a map/);
 	});

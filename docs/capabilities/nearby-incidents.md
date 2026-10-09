@@ -23,7 +23,10 @@ sources feed this:
   send you a push myself. Medical calls are included; only drills, standby
   and unit moves are left out. When the call doesn't name a town, I look the
   street up in the town your phone is in first, then your saved places' towns.
-  A call on I-77 or I-40 ("3700 N I77") is placed by its mile marker.
+  A call on I-77 or I-40 ("3700 N I77") is placed by its mile marker. If the
+  street still can't be found, I ask a model for other ways to write it (the
+  road's other name, a cross street) and use one only if the geocoder finds it
+  in the same town; distances placed that way are "about".
   If I can't put it on a map at all, I still tell you what PulsePoint said —
   just without a distance.
 - **National Weather Service alerts** for each watched place, checked every 15

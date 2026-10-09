@@ -73,6 +73,7 @@ function locate(address) {
 			latitude: Math.round((lat0 + t * (lat1 - lat0)) * 1e5) / 1e5,
 			longitude: Math.round((lon0 + t * (lon1 - lon0)) * 1e5) / 1e5,
 			label: `I-${m[3]} ${m[2].toUpperCase()}, mile ${Math.round(mile * 10) / 10}`,
+			estimated: true,
 		};
 	}
 	return null;

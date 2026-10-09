@@ -240,6 +240,8 @@ const rank = (level) => Math.max(0, LEVELS.indexOf(level));
 const higher = (a, b) => (rank(a) >= rank(b) ? a : b);
 /** A model that does not answer in this long is treated as not answering. */
 const MODEL_TIMEOUT_MS = 25_000;
+/** The phone is waiting on the request; an unplaced call is told regardless. */
+const RESCUE_TIMEOUT_MS = 15_000;
 
 /**
  * The level the model is not allowed to go under.
@@ -277,6 +279,7 @@ function sheet(hits, countyActive, weather = []) {
 					unitsResponding: item.incident.units,
 					dispatchedMinutesAgo: minutesAgo(item.incident.receivedAt),
 					seriousByDispatchStandards: item.incident.alertable,
+					...(item.incident.estimated ? { distanceIsEstimate: true } : {}),
 				}
 			: {
 					what: item.what,
@@ -286,6 +289,7 @@ function sheet(hits, countyActive, weather = []) {
 					unitsResponding: item.units,
 					dispatchedMinutesAgo: item.receivedAt ? minutesAgo(new Date(item.receivedAt)) : null,
 					seriousByDispatchStandards: item.serious,
+					...(item.estimated ? { distanceIsEstimate: true } : {}),
 				};
 	return {
 		countyWideActiveCalls: countyActive,
@@ -319,7 +323,8 @@ const PROMPT = (facts, floor) =>
 	"(e.g. many trees down during a storm warning), say so plainly. " +
 	"You may add one practical suggestion only if it follows directly " +
 	"from the list (e.g. avoid a named street with a call on it). Do not invent anything that is " +
-	"not in the list — no injuries, causes, advice about other roads, or closures it does not state.\n\n" +
+	"not in the list — no injuries, causes, advice about other roads, or closures it does not state. " +
+	'When a call has distanceIsEstimate, say "about" with its distance.\n\n' +
 	'Reply as JSON: {"level":"...","headline":"...","body":"..."}';
 
 function fallbackAssessment(hits = [], weather = []) {
@@ -352,6 +357,7 @@ function asHit(item) {
 			units: item.units,
 			receivedAt: item.receivedAt ? new Date(item.receivedAt) : null,
 			alertable: item.serious === true,
+			estimated: item.estimated === true,
 		},
 		nearest: {
 			miles: Number(item.miles) || 0,
@@ -398,6 +404,48 @@ async function generateWithModel(prompt, marks = []) {
 		contents: [{ role: "user", parts: [{ text: prompt }] }],
 		check: (p) => checkAnswer(p, marks),
 	});
+}
+
+/** Other ways to write an address the geocoder missed — same gate, same router. */
+async function suggestWithModel(prompt) {
+	await require("../../security/access").assertModelAccess();
+	const llm = require("../llm");
+	return llm.generateJson({
+		task: "json",
+		contents: [{ role: "user", parts: [{ text: prompt }] }],
+		check: phoneAlerts.checkRescue,
+	});
+}
+
+/**
+ * A model's rewrite of an unplaceable address, checked by the geocoder: each
+ * suggestion must match exactly one place, in the town the call came from.
+ * Null when nothing passes — and never throws or waits past the timeout, since
+ * an unplaced call is still told either way.
+ */
+async function rescuePlace(parsed, guesses, suggest = suggestWithModel) {
+	const towns = guesses.filter((g) => /[A-Za-z]/.test(g));
+	let timer;
+	try {
+		const result = await Promise.race([
+			suggest(phoneAlerts.RESCUE_PROMPT(parsed, towns)),
+			new Promise((_, reject) => {
+				timer = setTimeout(() => reject(new Error("model timed out")), RESCUE_TIMEOUT_MS);
+			}),
+		]);
+		const candidates = Array.isArray(result?.data?.candidates) ? result.data.candidates.slice(0, 3) : [];
+		for (const candidate of candidates) {
+			const found = await phoneAlerts.place(String(candidate), { unique: true });
+			if (found && phoneAlerts.acceptRescue(found.label, parsed, guesses)) {
+				return { ...found, estimated: true, suggested: String(candidate) };
+			}
+		}
+	} catch (error) {
+		console.warn("[phone-alert] address rescue failed:", error.message);
+	} finally {
+		clearTimeout(timer);
+	}
+	return null;
 }
 
 /**
@@ -876,7 +924,7 @@ async function tellUnplaced(profileId, parsed, { places, postedAt, why }) {
  * Returns why it was ignored rather than throwing: the phone forwards whatever
  * it sees, and most of it will not be for us.
  */
-async function recordPhoneAlert(profileId, { title, text, postedAt, generate } = {}) {
+async function recordPhoneAlert(profileId, { title, text, postedAt, generate, suggest } = {}) {
 	const places = await placesFor(profileId);
 	if (!places.length) return { ignored: "no watched places" };
 	// Towns for the geocoder, since dispatch text rarely names one: where the
@@ -914,6 +962,16 @@ async function recordPhoneAlert(profileId, { title, text, postedAt, generate } =
 		if (matches.length) {
 			point = found;
 			break;
+		}
+	}
+	// Nothing matched: let a model suggest other ways to write it, which only
+	// count once the geocoder finds them in the call's own town.
+	if (!point && !highway) {
+		const guesses = regions.filter((r) => typeof r === "string" && r.trim());
+		const rescued = await rescuePlace(parsed, guesses, suggest);
+		if (rescued) {
+			point = rescued;
+			matches = geo.placesNear(rescued, places, DEFAULT_RADIUS_MILES);
 		}
 	}
 	if (!point) return tellUnplaced(profileId, parsed, { places, postedAt, why: "could not place the address" });

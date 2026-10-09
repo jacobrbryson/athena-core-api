@@ -213,6 +213,50 @@ async function place(query, { unique = false } = {}) {
 }
 
 /**
+ * The last try for an address nothing else could place: ask a model how the
+ * same spot would be written for a street geocoder — another name for the
+ * road ("E Garner Bagnal Blvd" is also a US highway), a numbered address at
+ * a ramp, a cross street. The model only ever proposes TEXT; a point comes
+ * from the Census geocoder or not at all, and only when acceptRescue agrees.
+ */
+const RESCUE_PROMPT = (parsed, towns) =>
+	"A 911 dispatch notification from PulsePoint gave this location, and the US Census street " +
+	"geocoder could not match it:\n\n" +
+	`Notification: ${JSON.stringify(parsed.text.slice(0, 300))}\n` +
+	`Address as read: ${JSON.stringify(parsed.address)}\n` +
+	`Area: ${towns.length ? towns.join("; ") : "unknown"} (North Carolina)\n\n` +
+	"Write up to 3 one-line US street addresses for the SAME spot that the Census geocoder is more " +
+	"likely to match: the road's other official name or route number, the nearest numbered " +
+	"address on that road, or a cross-street intersection written \"Road A & Road B\". Every " +
+	"suggestion must end with the town and state. Only suggest what you are confident is the same " +
+	"place; an empty list is a fine answer. Never move the call to a different town.\n\n" +
+	'Reply as JSON: {"candidates":["..."]}';
+
+/** Is a model's answer the right shape? A string rejects it (the router tries the next tier). */
+function checkRescue(answer) {
+	const list = answer?.candidates;
+	if (!Array.isArray(list)) return "need candidates: an array of strings";
+	if (list.length > 3 || list.some((c) => typeof c !== "string" || c.length < 5 || c.length > 150)) {
+		return "candidates must be at most 3 addresses of 5-150 characters";
+	}
+	return true;
+}
+
+/**
+ * Does a geocoded match belong to this call? It must be in the town the
+ * notification names, or — when it names none — in one of the towns or ZIPs
+ * we were already guessing. A model cannot move a call across the county.
+ */
+function acceptRescue(label, parsed, guesses = []) {
+	const where = String(label || "").toUpperCase();
+	const town = parsed.address.split(",").slice(1).map((s) => s.trim()).find((s) => s && !stateOf(s));
+	const wanted = town
+		? [town]
+		: guesses.map((g) => String(g).split(",")[0].trim()).filter(Boolean);
+	return wanted.some((w) => new RegExp(`(^|[ ,])${w.toUpperCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([ ,]|$)`).test(where));
+}
+
+/**
  * The towns to try for an address near `point` (where the phone is): its ZIP,
  * then its town. Cached, and empty — never thrown — when the lookup fails.
  */
@@ -251,6 +295,8 @@ function incidentFrom(parsed, point, nearest, postedAt) {
 		latitude: Math.round(point.latitude * 1e5) / 1e5,
 		longitude: Math.round(point.longitude * 1e5) / 1e5,
 		via: "phone",
+		// Placed by mile marker or a model-suggested address: say "about".
+		...(point.estimated ? { estimated: true } : {}),
 	};
 }
 
@@ -267,6 +313,9 @@ module.exports = {
 	QUIET_CODES,
 	parse,
 	place,
+	RESCUE_PROMPT,
+	checkRescue,
+	acceptRescue,
 	regionsNear,
 	incidentFrom,
 	expired,
