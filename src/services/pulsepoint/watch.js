@@ -58,6 +58,7 @@ const { randomUUID, createHash } = require("node:crypto");
 const pool = require("../../helpers/db");
 const nws = require("./nws");
 const phoneAlerts = require("./phoneAlerts");
+const interstates = require("./interstates");
 const geo = require("./geo");
 
 const TRIGGER_ID = "nearby_incident";
@@ -894,10 +895,19 @@ async function recordPhoneAlert(profileId, { title, text, postedAt, generate } =
 
 	// The first guess that lands inside a ring wins. A street that exists in
 	// several of the towns tried is only told if one of them is near.
+	// An interstate block number ("3700 N I77") is placed by its mile marker;
+	// otherwise each town guess, then the street state-wide if it is unique.
 	let point = null;
 	let matches = [];
-	for (const query of parsed.queries) {
-		const found = await phoneAlerts.place(query);
+	const highway = interstates.locate(parsed.address);
+	const attempts = highway
+		? [async () => highway]
+		: [
+				...parsed.queries.map((query) => () => phoneAlerts.place(query)),
+				...(parsed.wide ? [() => phoneAlerts.place(parsed.wide, { unique: true })] : []),
+			];
+	for (const attempt of attempts) {
+		const found = await attempt();
 		if (!found) continue;
 		point = point || found;
 		matches = geo.placesNear(found, places, DEFAULT_RADIUS_MILES);

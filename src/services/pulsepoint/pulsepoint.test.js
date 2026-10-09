@@ -361,6 +361,28 @@ describe("phone alerts (PulsePoint's own notifications)", () => {
 		);
 	});
 
+	test("the agency's 911 is not a street number", () => {
+		// Real 2026-10-08 notification text: every one was read as "911 936 E ...".
+		const p = phone.parse({ title: "", text: "Traffic Collision • Iredell 911 936 E GARNER BAGNAL BLVD, STATESVILLE", region });
+		expect(p).toMatchObject({ ok: true, what: "Traffic Collision", address: "936 E GARNER BAGNAL BLVD, STATESVILLE" });
+		const x = phone.parse({ title: "", text: "Expanded Traffic Collision • Iredell 911 CONCORDIA CHURCH RD & W NC 152 HWY, ROWAN", region });
+		expect(x.address).toBe("CONCORDIA CHURCH RD & W NC 152 HWY, ROWAN");
+		// A real address that happens to start with 911 is kept.
+		expect(phone.parse({ title: "Structure Fire", text: "911 Oak Dr", region }).address).toBe("911 Oak Dr");
+	});
+
+	test("drops a suite, and adds the state to a town that has none", () => {
+		const p = phone.parse({ title: "", text: "Gas Leak • Iredell 911 637 WILLIAMSON RD, STE 100, MOORESVILLE", region });
+		expect(p.address).toBe("637 WILLIAMSON RD, MOORESVILLE");
+		expect(p.queries).toEqual(["637 WILLIAMSON RD, MOORESVILLE", "637 WILLIAMSON RD, MOORESVILLE, NC"]);
+		expect(p.wide).toBe("637 WILLIAMSON RD, NC");
+	});
+
+	test("an ST street suffix is not a state", () => {
+		const p = phone.parse({ title: "Vehicle Fire", text: "101 Main ST", regions: ["28677", "Statesville, NC"] });
+		expect(p.queries).toEqual(["101 Main ST, 28677", "101 Main ST, Statesville, NC"]);
+	});
+
 	test("a phone-sourced call expires on its own clock; a feed call never does", () => {
 		const old = { via: "phone", receivedAt: new Date(Date.now() - 4 * 3600_000).toISOString() };
 		const recent = { via: "phone", receivedAt: new Date().toISOString() };
@@ -422,6 +444,40 @@ describe("recordPhoneAlert (where the phone is, and calls that cannot be placed)
 		expect(lookup.mock.calls[0][0]).toBe("200 S Center St, 28677");
 		expect(out.incident).toMatchObject({ what: "Medical Emergency", place: "you" });
 		expect(out.told).toBe(true);
+	});
+
+	test("an interstate block number is placed by its mile marker, with no geocoder", async () => {
+		fakeDb();
+		jest.spyOn(geocode, "regionsAt").mockResolvedValue(["28677"]);
+		const lookup = jest.spyOn(geocode, "lookup").mockResolvedValue([]);
+		// Mile 42 is the Troutman exit, inside home's ring.
+		const out = await watch.recordPhoneAlert(1, {
+			title: "",
+			text: "Traffic Collision • Iredell 911 4200 N I77, TROUTMAN",
+			generate: async () => { throw new Error("no model"); },
+		});
+		expect(lookup).not.toHaveBeenCalled();
+		expect(out.incident).toMatchObject({ what: "Traffic Collision", place: "Home" });
+		expect(out.incident.miles).toBeLessThan(3);
+	});
+
+	test("a far interstate call is not told", async () => {
+		const nudges = fakeDb({ live: false });
+		jest.spyOn(geocode, "regionsAt").mockResolvedValue([]);
+		const out = await watch.recordPhoneAlert(1, { title: "", text: "Vehicle Fire • Iredell 911 6400 N I77, HARMONY" });
+		expect(out.ignored).toBe("not near a watched place");
+		expect(nudges).toHaveLength(0);
+	});
+
+	test("a street searched state-wide is only trusted when it is unique", async () => {
+		const nudges = fakeDb({ live: false });
+		jest.spyOn(geocode, "regionsAt").mockResolvedValue([]);
+		jest.spyOn(geocode, "lookup").mockImplementation(async (q) =>
+			q === "12 Oak Dr, NC" ? [{ latitude: 35.68, longitude: -80.9073 }, { latitude: 35.2, longitude: -78.6 }] : []
+		);
+		const out = await watch.recordPhoneAlert(1, { title: "Structure Fire", text: "12 Oak Dr, ALEXANDER" });
+		expect(out.unplaced).toBe("could not place the address");
+		expect(nudges).toHaveLength(1);
 	});
 
 	test("an address nobody can find is still told, without a distance", async () => {

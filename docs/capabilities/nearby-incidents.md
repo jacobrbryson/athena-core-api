@@ -23,6 +23,7 @@ sources feed this:
   send you a push myself. Medical calls are included; only drills, standby
   and unit moves are left out. When the call doesn't name a town, I look the
   street up in the town your phone is in first, then your saved places' towns.
+  A call on I-77 or I-40 ("3700 N I77") is placed by its mile marker.
   If I can't put it on a map at all, I still tell you what PulsePoint said —
   just without a distance.
 - **National Weather Service alerts** for each watched place, checked every 15
@@ -98,6 +99,7 @@ rules. Background calls are charged to `ATHENA_BACKGROUND_GOOGLE_ID`.
 - Service: `../../src/services/pulsepoint/` — `watch.js` (situation, telling,
   weather rhythm, banner ack, prompt block), `phoneAlerts.js` (notification text
   → incident), `nws.js` (weather), `geo.js`, `geocode.js` (US Census geocoder),
+  `interstates.js` (I-77/I-40 block number → point, from OSM exit positions),
   `calltypes.js` + `calltypes.json`.
 - Job: `../../src/jobs/incidents.js` (`athena-incidents`, scheduler every 5 min;
   the rhythm lives in `watch.js`). It reads the weather service only and

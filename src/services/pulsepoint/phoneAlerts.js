@@ -92,10 +92,16 @@ function callTypeIn(text) {
 function addressIn(text, callType) {
 	let rest = text;
 	if (callType) rest = rest.replace(new RegExp(callType.description, "i"), " ");
-	// Whatever the app put before a dash — its own name, the agency's — is not
-	// part of the address, so keep only the last dash-separated piece.
-	rest = rest.split(/\s[-–—|:]\s/).pop() || rest;
-	rest = clean(rest.replace(/^[\s\-–—:,|]+/, "").replace(/\bPulsePoint\b/gi, " "));
+	// Whatever the app put before a dash or bullet — its own name, the call
+	// type — is not part of the address, so keep only the last piece.
+	rest = rest.split(/\s[-–—|:•·]\s/).pop() || rest;
+	rest = clean(rest.replace(/^[\s\-–—:,|•·]+/, "").replace(/\bPulsePoint\b/gi, " "));
+	// The dispatching agency leads the text: "Iredell 911 936 E Garner Bagnal
+	// Blvd". Its "911" is not a street number (2026-10-08: every call that day
+	// was looked up as "911 936 E ..." and not one could be placed).
+	rest = rest.replace(/^(?:[A-Za-z][A-Za-z.'-]*\s+){1,3}(?:E-?)?911\s+(?=\S)/i, "");
+	// A suite is nothing a street geocoder can use.
+	rest = clean(rest.replace(/,?\s*\b(?:STE|SUITE|APT|UNIT|LOT|RM)\b\.?\s*#?\s*[A-Za-z0-9-]+/gi, ""));
 
 	// A town and state are kept when the text has them: "400 Main St,
 	// Mooresville, NC" must not be geocoded as a Troutman address.
@@ -137,9 +143,8 @@ function parse({ title, text, region, regions }) {
 			text: whole,
 		};
 	}
-	const hasTown = /,\s*[A-Za-z .]+/.test(address) || /\b[A-Z]{2}\b/.test(address);
 	const guesses = [...new Set([...(regions || []), region].filter((r) => typeof r === "string" && r.trim()))];
-	const queries = hasTown || !guesses.length ? [address] : guesses.map((r) => `${address}, ${r}`);
+	const { queries, wide } = queriesFor(address, guesses);
 	return {
 		ok: true,
 		code: callType.id,
@@ -149,19 +154,56 @@ function parse({ title, text, region, regions }) {
 		address,
 		query: queries[0],
 		queries,
+		wide,
 		text: whole,
 	};
 }
 
-/** Geocode, with a small cache. Null when the address cannot be placed. */
-async function place(query) {
-	const key = query.toLowerCase();
+/**
+ * "NC" from "Statesville, NC" or "Troutman, NC 28166"; null for "28677" and
+ * for "101 Main ST", whose "ST" is a street, not a state.
+ */
+const stateOf = (text) => (String(text).match(/(?:^|,)\s*([A-Z]{2})(?:\s+\d{5})?\s*$/i) || [])[1]?.toUpperCase() || null;
+
+/**
+ * What to ask the geocoder, in order. Dispatch text names a town without a
+ * state ("…, STATESVILLE"), sometimes a county rather than a town ("…,
+ * ALEXANDER", "…, ROWAN"), and often nothing at all.
+ *
+ * `wide` is the street alone across the whole state: the last resort, and
+ * only trusted when it matches exactly one place (see place()).
+ */
+function queriesFor(address, guesses) {
+	const [street, ...after] = address.split(",").map((part) => part.trim());
+	const town = after.filter(Boolean).join(", ");
+	const state = stateOf(address) || guesses.map(stateOf).find(Boolean) || null;
+	let queries;
+	if (town || stateOf(address) || !guesses.length) {
+		// A town in the text is kept: "400 Main St, Mooresville" must not be
+		// looked up as a Troutman street.
+		queries = [address];
+		if (town && state && !stateOf(address)) queries.push(`${address}, ${state}`);
+	} else {
+		queries = guesses.map((r) => `${address}, ${r}`);
+	}
+	const wide = state ? `${street}, ${state}` : null;
+	return { queries, wide: wide && !queries.includes(wide) ? wide : null };
+}
+
+/**
+ * Geocode, with a small cache. Null when the address cannot be placed.
+ * `unique` refuses an answer unless exactly one place matched: a street asked
+ * about across a whole state must not be pinned on whichever namesake the
+ * geocoder happened to list first.
+ */
+async function place(query, { unique = false } = {}) {
+	const key = `${unique ? "1" : "*"}|${query.toLowerCase()}`;
 	const hit = geocoded.get(key);
 	if (hit && Date.now() - hit.at < GEOCODE_CACHE_MS) return hit.point;
 	let point = null;
 	try {
 		const matches = await geocode.lookup(query);
-		point = matches[0] || null;
+		point = unique && matches.length !== 1 ? null : matches[0] || null;
 	} catch (error) {
 		console.warn("[phone-alert] could not geocode:", error.message);
 		return null;
