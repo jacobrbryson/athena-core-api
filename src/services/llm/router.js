@@ -52,8 +52,13 @@ function orderByHealth(candidates) {
 	return up.length ? up : candidates;
 }
 
-function managedCandidates(task, opts) {
-	return autotune.tune(orderByHealth(candidatesFor(task, opts)), task, telemetry.recent(200), opts).ordered;
+function managedCandidates(task, opts = {}) {
+	const ordered = autotune.tune(orderByHealth(candidatesFor(task, opts)), task, telemetry.recent(200), opts).ordered;
+	// `avoid` moves one endpoint to the back: a critic should not be the model
+	// that wrote the draft. It is a preference, not an exclusion — with a
+	// single endpoint configured, that endpoint still answers.
+	if (!opts.avoid) return ordered;
+	return [...ordered.filter((e) => e.id !== opts.avoid), ...ordered.filter((e) => e.id === opts.avoid)];
 }
 
 function inputSize(contents) {
@@ -72,8 +77,8 @@ class NoModelAvailableError extends Error {
  * Generate text/JSON for a task. Returns { text, endpointId, tier, model }.
  * Throws NoModelAvailableError only after every candidate has failed.
  */
-async function generate({ task = "chat", contents, json = true, schema = null, audience, validate, temperature, prefer }) {
-	const chain = managedCandidates(task, { audience, prefer });
+async function generate({ task = "chat", contents, json = true, schema = null, audience, validate, temperature, prefer, avoid }) {
+	const chain = managedCandidates(task, { audience, prefer, avoid });
 	const attempts = [];
 
 	for (let i = 0; i < chain.length; i++) {

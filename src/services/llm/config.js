@@ -50,6 +50,9 @@ const TASKS = {
 	extract: { pinned: null }, // background memory extraction
 	vision: { pinned: null }, // image -> structured JSON scene description
 	review: { pinned: null }, // nightly self-review / planning
+	// The inner monologue's second look at a draft reply (services/monologue).
+	// Its own task so it never skews the nightly review's metrics.
+	critique: { pinned: null },
 	// Dreaming (services/dreams): schema design + the dream retelling. Served
 	// only by endpoints that declare a `dream` model — today OpenAI, via
 	// OPENAI_DREAM_MODEL — and dream.js falls back to "review" when none can.
@@ -97,6 +100,7 @@ function normalizeEndpoint(e, index) {
 			json: models.json || models.chat || null,
 			extract: models.extract || models.chat || null,
 			review: models.review || models.chat || null,
+			critique: models.critique || models.review || models.chat || null,
 			vision: models.vision || null,
 			embed: models.embed || null,
 		},
@@ -130,6 +134,7 @@ function buildOpenAi() {
 		json: process.env.OPENAI_JSON_MODEL || chat,
 		extract: process.env.OPENAI_EXTRACT_MODEL || chat,
 		review: process.env.OPENAI_REVIEW_MODEL || chat,
+		critique: process.env.OPENAI_CRITIQUE_MODEL || process.env.OPENAI_REVIEW_MODEL || chat,
 		vision: process.env.OPENAI_VISION_MODEL || null,
 		// Explicit only: dreaming is the one task the owner chose ChatGPT for.
 		dream: process.env.OPENAI_DREAM_MODEL || null,
@@ -174,6 +179,7 @@ function loadConfig() {
 				json: GEMINI_CHAT_MODEL,
 				extract: GEMINI_CHAT_MODEL,
 				review: GEMINI_CHAT_MODEL,
+				critique: process.env.GEMINI_CRITIQUE_MODEL || GEMINI_CHAT_MODEL,
 				vision: GEMINI_CHAT_MODEL,
 				tools: GEMINI_CHAT_MODEL,
 				search: process.env.GEMINI_SEARCH_MODEL || GEMINI_CHAT_MODEL,

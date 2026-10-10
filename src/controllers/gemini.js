@@ -9,6 +9,7 @@ const connectorContext = require("../services/connectors/context");
 const heartRate = require("../services/heartRate");
 const toolIntent = require("../services/toolIntent");
 const webSearch = require("../services/webSearch");
+const monologue = require("../services/monologue");
 const missionService = require("../services/mission");
 const selfKnowledge = require("../services/selfKnowledge");
 const actions = require("../services/actions");
@@ -67,6 +68,23 @@ const CHAT_ATTEMPTS = 2;
 // dropped replies) — and it must not pretend to have answered.
 const FALLBACK_REPLY =
   "Sorry — something glitched on my end and I lost that reply. Can you say it again?";
+
+// Shown (and, where cached, spoken) while the inner monologue searches to
+// check a claim in her draft. Fixed text, like every filler line.
+const DOUBLE_CHECK_FILLER = {
+  key: "double-check",
+  text: "Hm, let me double-check that…",
+};
+
+/** Send one rpc to every open socket watching this session. */
+function broadcastToSession(clients, sessionUuid, payload) {
+  const sessionClients = clients?.get(sessionUuid);
+  if (!sessionClients) return;
+  const serialized = JSON.stringify(payload);
+  for (const ws of sessionClients) {
+    if (ws.readyState === ws.OPEN) ws.send(serialized);
+  }
+}
 
 /** The shared reply schema every conversation mode emits (see prompt.js). */
 function isValidReply(r) {
@@ -450,8 +468,7 @@ async function processAiResponse(session, message, clients, ctx = {}) {
         .filter(Boolean)
         .join("\n\n");
 
-    const prompt = await generatePrompt(session, topics || [], message, {
-      integrationContext,
+    const promptOptions = {
       capabilityBlock,
       actionBlock,
       initiativeBlock,
@@ -474,44 +491,82 @@ async function processAiResponse(session, message, clients, ctx = {}) {
       // unaffected.
       speakerProfileId: ctx.speakerProfileId ?? null,
       participants,
-    });
+    };
 
-    // Routed through the tiered model layer (Orcwood -> frontier by policy).
-    // A tier whose output isn't valid reply JSON is skipped in favor of the
-    // next one instead of silently dropping the reply.
-    let parsedResponse;
-    let fellBack = false;
-    for (
-      let attempt = 1;
-      attempt <= CHAT_ATTEMPTS && !parsedResponse;
-      attempt++
-    ) {
-      try {
-        const result = await llm.generate({
-          task: "chat",
-          contents: prompt,
-          audience: memoryCtx.audience,
-          // A reply resting on search results goes to the frontier first: a
-          // small local model is likeliest to embellish what it was handed.
-          ...(web ? { prefer: "frontier" } : {}),
-          // Constrain the model to the reply schema (Gemini structured
-          // output) rather than only asking for JSON in the prompt.
-          schema: CHAT_SCHEMA,
-          validate: (text) => {
-            const candidate = parseModelJson(text);
-            if (!candidate) return "invalid JSON";
-            if (!isValidReply(candidate))
-              return "reply failed schema validation";
-            parsedResponse = candidate;
-            return null;
-          },
-        });
-        if (!result?.text) parsedResponse = null;
-      } catch (err) {
-        console.warn(
-          `Chat attempt ${attempt}/${CHAT_ATTEMPTS} produced no valid reply for session ${session.id}: ${err.message}`,
-        );
+    // Write the reply from the context gathered so far, plus `extraContext`
+    // when the inner monologue sends it back for a second pass. Routed through
+    // the tiered model layer (Orcwood -> frontier by policy); a tier whose
+    // output isn't valid reply JSON is skipped in favor of the next one
+    // instead of silently dropping the reply. Returns { reply, endpointId }
+    // or null when no attempt produced a usable reply.
+    const writeReply = async ({ extraContext = null, prefer } = {}) => {
+      const prompt = await generatePrompt(session, topics || [], message, {
+        ...promptOptions,
+        integrationContext:
+          [integrationContext, extraContext].filter(Boolean).join("\n\n") ||
+          null,
+      });
+      for (let attempt = 1; attempt <= CHAT_ATTEMPTS; attempt++) {
+        let candidateReply = null;
+        try {
+          const result = await llm.generate({
+            task: "chat",
+            contents: prompt,
+            audience: memoryCtx.audience,
+            ...(prefer ? { prefer } : {}),
+            // Constrain the model to the reply schema (Gemini structured
+            // output) rather than only asking for JSON in the prompt.
+            schema: CHAT_SCHEMA,
+            validate: (text) => {
+              const candidate = parseModelJson(text);
+              if (!candidate) return "invalid JSON";
+              if (!isValidReply(candidate))
+                return "reply failed schema validation";
+              candidateReply = candidate;
+              return null;
+            },
+          });
+          if (result?.text && candidateReply)
+            return { reply: candidateReply, endpointId: result.endpointId };
+        } catch (err) {
+          console.warn(
+            `Chat attempt ${attempt}/${CHAT_ATTEMPTS} produced no valid reply for session ${session.id}: ${err.message}`,
+          );
+        }
       }
+      return null;
+    };
+
+    // A reply resting on search results goes to the frontier first: a small
+    // local model is likeliest to embellish what it was handed.
+    const drafted = await writeReply({ prefer: web ? "frontier" : undefined });
+    let parsedResponse = drafted?.reply;
+    let fellBack = false;
+
+    // The inner monologue: a second look at the draft before she says it —
+    // and a search plus a rewrite when it states something she can't support.
+    // Adults only; never throws; keeps the draft on any failure.
+    let webUsed = web;
+    if (parsedResponse && mayPropose) {
+      const reflected = await monologue.reflect({
+        profileId: session.profile_id,
+        audience: memoryCtx.audience,
+        message,
+        draft: parsedResponse,
+        draftEndpointId: drafted.endpointId,
+        context: integrationContext,
+        searched: !!web,
+        rewrite: async (opts) => (await writeReply(opts))?.reply || null,
+        search: (query) =>
+          webSearch.buildContext(query, { audience: memoryCtx.audience }),
+        onSearch: () =>
+          broadcastToSession(clients, session.uuid, {
+            rpc: "filler",
+            filler: DOUBLE_CHECK_FILLER,
+          }),
+      });
+      parsedResponse = reflected.reply;
+      if (reflected.web) webUsed = reflected.web;
     }
 
     if (!parsedResponse) {
@@ -687,7 +742,9 @@ async function processAiResponse(session, message, clients, ctx = {}) {
         ...(lyrics ? { lyrics } : {}),
         // The pages a web search grounded this reply on, shown as links under
         // it. Live socket only, like lyrics: they are not stored.
-        ...(web?.sources?.length && !fellBack ? { sources: web.sources } : {}),
+        ...(webUsed?.sources?.length && !fellBack
+          ? { sources: webUsed.sources }
+          : {}),
       },
     });
 

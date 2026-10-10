@@ -148,6 +148,8 @@ describe("chat pipeline fallback", () => {
 			afterTurn,
 		}));
 		jest.doMock("../controllers/prompt", () => ({ generatePrompt: jest.fn().mockResolvedValue("PROMPT") }));
+		// The inner monologue has its own suite; here it passes the draft through.
+		jest.doMock("./monologue", () => ({ reflect: async ({ draft }) => ({ reply: draft, web: null }) }));
 
 		const replies = ["not json at all", JSON.stringify({ response: "Hi Ross", action: "NO_CHANGE", topic_name: "", new_proficiency: -1, is_factually_true: true })];
 		jest.doMock("./llm", () => ({

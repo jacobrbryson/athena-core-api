@@ -138,6 +138,8 @@ router.get("/llm/manifest", companion.llmManifest);
 router.post("/devices/pair", express.json(), companion.redeemPairingCode);
 
 router.get("/llm/status", requireAuthOrDevice, companion.llmStatus);
+// The Brain panel's "what I almost said": the caller's own turns only.
+router.get("/llm/monologue", requireAuth, companion.llmMonologue);
 router.post("/llm/device-report", requireAuthOrDevice, companion.deviceReport);
 
 // Where to reach a handset. Device-authenticated: only the device knows its

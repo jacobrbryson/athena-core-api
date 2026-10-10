@@ -7,6 +7,7 @@ const perception = require("../services/perception");
 const devices = require("../services/devices");
 const push = require("../services/push");
 const llm = require("../services/llm");
+const monologue = require("../services/monologue");
 const { resolveActor, requireAdultActor } = require("../helpers/actor");
 const lookRequests = require("../services/lookRequests");
 const androidReleases = require("../services/androidRelease");
@@ -142,6 +143,18 @@ async function llmStatus(req, res) {
 		frontier: status.frontier.map((e) => ({ ...e, health: { ...e.health, lastError: e.health.lastError ? "error" : null } })),
 		recentCalls: status.recentCalls.map(({ error, ...c }) => c),
 	});
+}
+
+/**
+ * GET /llm/monologue — the caller's own recent inner monologue, newest first:
+ * each draft, what the critic said, what she looked up and what she sent.
+ * Adults only, and only ever their own turns. In memory, so it resets on a
+ * deploy (services/monologue.js).
+ */
+async function llmMonologue(req, res) {
+	const who = await requireAdultActor(req, res);
+	if (!who) return;
+	return res.json({ turns: monologue.recent(who.profileId) });
 }
 
 /** GET /llm/manifest — public: which on-device models to run (no secrets). */
@@ -371,6 +384,7 @@ module.exports = {
 	rememberPhoto,
 	journal,
 	llmStatus,
+	llmMonologue,
 	llmManifest,
 	deviceReport,
 	registerPushToken,

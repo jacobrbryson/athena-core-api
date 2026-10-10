@@ -1,5 +1,10 @@
 # Capability ledger
 
+- 2026-10-09 — Inner monologue: before sending a reply that states facts,
+  Athena has a second model check it, looks up or drops what was a guess,
+  and shows those second looks in Brain → What I almost said —
+  `brain.md` (status: live)
+
 - 2026-10-09 — Web search: Athena searches the web (Gemini + Google Search)
   before answering anything current, on her own when the question needs it
   or when asked to "look it up", and shows the pages she used as links under

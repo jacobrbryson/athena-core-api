@@ -18,6 +18,8 @@ jest.mock("../services/integration", () => ({ messageNeedsFamilyChores: () => fa
 jest.mock("../services/mission", () => ({}));
 jest.mock("../services/toolIntent", () => ({ guess: jest.fn().mockResolvedValue(null), extraGrounding: () => null }));
 jest.mock("../services/perception", () => ({ getPromptBlock: () => null }));
+const mockReflect = jest.fn();
+jest.mock("../services/monologue", () => ({ reflect: (...a) => mockReflect(...a) }));
 jest.mock("../services/audience", () => ({ audienceForSession: (...a) => mockAudience(...a) }));
 jest.mock("../services/webSearch", () => ({
 	matches: (m) => /look (it|that) up/i.test(m),
@@ -51,6 +53,7 @@ function socket() {
 beforeEach(() => {
 	jest.clearAllMocks();
 	mockAudience.mockResolvedValue("adult");
+	mockReflect.mockImplementation(async ({ draft }) => ({ reply: draft, web: null }));
 	mockBuildWeb.mockResolvedValue({ block: "# From the web\nBraves 5, Mets 3.", sources: SOURCES });
 	mockGenerate.mockImplementation(async ({ validate }) => {
 		validate(reply);
@@ -90,4 +93,54 @@ test("a failed search leaves the turn unharmed", async () => {
 	await processAiResponse(session, "look it up please", clients, {});
 	expect(mockGenerate.mock.calls[0][0].prefer).toBeUndefined();
 	expect(sent.find((m) => m.rpc === "addMessage").message.text).toBe("The Braves won 5-3.");
+});
+
+describe("inner monologue", () => {
+	const revised = { response: "I'm not sure who won — want me to check?", action: "NO_CHANGE", topic_name: "", new_proficiency: -1, is_factually_true: true };
+
+	test("gets the draft, the context and a rewrite that can add context and prefer the frontier", async () => {
+		const { sent, clients } = socket();
+		mockReflect.mockImplementation(async ({ draft, rewrite, draftEndpointId, searched }) => {
+			expect(draft.response).toBe("The Braves won 5-3.");
+			expect(draftEndpointId).toBe("gemini");
+			expect(searched).toBe(false);
+			const again = await rewrite({ extraContext: "# Before you answer", prefer: "frontier" });
+			return { reply: { ...again, response: revised.response }, web: null };
+		});
+		await processAiResponse(session, "tell me about last night", clients, {});
+
+		const second = mockGenerate.mock.calls[1][0];
+		expect(second.prefer).toBe("frontier");
+		expect(mockGeneratePrompt.mock.calls[1][3].integrationContext).toContain("# Before you answer");
+		expect(sent.find((m) => m.rpc === "addMessage").message.text).toBe(revised.response);
+	});
+
+	test("a search it runs announces itself and puts its links under the reply", async () => {
+		const { sent, clients } = socket();
+		mockReflect.mockImplementation(async ({ draft, onSearch, search }) => {
+			onSearch();
+			const web = await search("braves score last night");
+			return { reply: draft, web };
+		});
+		await processAiResponse(session, "tell me about last night", clients, {});
+
+		expect(mockBuildWeb).toHaveBeenCalledWith("braves score last night", { audience: "adult" });
+		const filler = sent.find((m) => m.rpc === "filler");
+		expect(filler.filler.key).toBe("double-check");
+		expect(sent.indexOf(filler)).toBeLessThan(sent.findIndex((m) => m.rpc === "addMessage"));
+		expect(sent.find((m) => m.rpc === "addMessage").message.sources).toEqual(SOURCES);
+	});
+
+	test("is told when the turn already searched", async () => {
+		await processAiResponse(session, "look it up: who won", new Map(), {});
+		expect(mockReflect.mock.calls[0][0].searched).toBe(true);
+	});
+
+	test("never runs for a child", async () => {
+		mockAudience.mockResolvedValue("child");
+		const memoryStore = require("../services/memoryStore");
+		memoryStore.buildMemoryContext.mockResolvedValueOnce({ audience: "child", memoryEnabled: true, promptBlock: null });
+		await processAiResponse(session, "tell me about last night", new Map(), {});
+		expect(mockReflect).not.toHaveBeenCalled();
+	});
 });
