@@ -66,6 +66,7 @@ describe("capability docs", () => {
 		// file whose map points at a deleted path quietly stops being the thing
 		// the next agent can trust, and nothing else would notice.
 		const repoRoot = path.resolve(DOCS_DIR, "../..");
+		const workspace = path.dirname(repoRoot);
 		const looksLikePath = /^[.\w][\w./-]*\.(js|cjs|ts|tsx|md|json)$/;
 		const broken = [];
 		for (const cap of capabilities) {
@@ -74,7 +75,16 @@ describe("capability docs", () => {
 				if (!token.includes("/") || token.includes("*") || token.includes("$")) continue;
 				if (!looksLikePath.test(token)) continue;
 				const base = token.startsWith("..") ? DOCS_DIR : repoRoot;
-				if (!fs.existsSync(path.resolve(base, token))) broken.push(`${cap.file}: ${token}`);
+				const resolved = path.resolve(base, token);
+				// A path into a sibling repo (companion/, guardians/) or the
+				// workspace docs is checked whenever that folder is here — always
+				// in the workspace. CI checks out core_api alone, so there it can
+				// only check what lives in this repo.
+				if (!resolved.startsWith(repoRoot + path.sep)) {
+					const sibling = path.relative(workspace, resolved).split(path.sep)[0];
+					if (!fs.existsSync(path.join(workspace, sibling))) continue;
+				}
+				if (!fs.existsSync(resolved)) broken.push(`${cap.file}: ${token}`);
 			}
 		}
 		expect(broken).toEqual([]);

@@ -1,0 +1,80 @@
+# Protected paths — a required check that fails any pull request not opened by
+# the repository owner if it touches Athena's protected implementation.
+#
+# Phase 4 of the coding-agents plan lets an agent's pull request merge once
+# every required check passes. This is the check that keeps "every check
+# passes" from including a change to her own guardrails: access and identity,
+# the action layer, initiative, provider adapters, secrets and encryption,
+# dependencies, deployment config, CI itself, and the policy files. The list
+# mirrors the protected implementation in the workspace AGENTS.md.
+#
+# Why it can't be talked out of its answer:
+#   - `pull_request_target` runs THIS file as it is on main, never the copy in
+#     the pull request, so a pull request cannot rewrite the check judging it.
+#   - It never checks out or runs the pull request's code; it only lists the
+#     changed file names through the API.
+#   - A rename counts as touching both the old and the new path.
+#   - Only the owner's own pull requests are exempt; an app, a bot or anyone
+#     else is checked.
+# Changing this file is itself protected: an agent pull request that edits it
+# fails here, and only the owner can merge such a change.
+#
+# The same file lives in each of Athena's repos; keep them identical.
+name: Protected paths
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  protected-paths:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check the changed files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          if [ "$AUTHOR" = "$OWNER" ]; then
+            echo "Opened by the repository owner ($OWNER): not restricted."
+            exit 0
+          fi
+
+          # Every repo: CI and policy, deployment, dependencies.
+          common='^\.github/|^Dockerfile|^\.dockerignore$|^cloudbuild\.yaml$|^AGENTS\.md$|^CLAUDE\.md$|^package(-lock)?\.json$|^\.npmrc$'
+
+          case "$GITHUB_REPOSITORY" in
+            */athena-core-api)
+              repo='^src/security/|^src/middleware/(access|auth)|^src/helpers/(actor|callerIdentity|crypto|guardianToken|loginToken|secret)\.|^src/services/secrets/|^src/services/(credentials|consent|audience|familyPermissions|guardianAuth|childAuth|codeAgents)\.|^src/services/actions/|^src/controllers/actions\.js$|^src/routes/actions\.js$|^src/controllers/prompt\.js$|^src/services/initiative/|^src/services/dreams/|^src/services/llm/adapters/|^src/services/connectors/(oauth|http|registry|googleCalendar|gmail|googleContacts)\.js$|^src/jobs/rotate-keys\.js$|^db/'
+              ;;
+            */athena-proxy-api)
+              repo='^src/middleware/(auth|cors|rateLimiter)|^src/config/'
+              ;;
+            */athena-companion|*/athena-guardians)
+              repo='^src/api/(auth|client)\.ts$|^server\.js$'
+              ;;
+            *)
+              echo "Unknown repository $GITHUB_REPOSITORY: refusing by default."
+              exit 1
+              ;;
+          esac
+
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/files" \
+            --jq '.[] | .filename, (.previous_filename // empty)' > changed.txt
+          echo "Changed files:"; sed 's/^/  /' changed.txt
+
+          if grep -E "$common|$repo" changed.txt > touched.txt; then
+            echo
+            echo "::error::This pull request touches protected paths, which only the owner can change:"
+            sed 's/^/  /' touched.txt
+            exit 1
+          fi
+          echo "No protected paths touched."
