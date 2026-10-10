@@ -96,8 +96,13 @@ async function authorized() {
  * Returns { ok: true } or { ok: false, dead, reason }. It does NOT throw for
  * an ordinary refusal: a dead handset must not be able to fail the pass that
  * was trying to reach five other people.
+ *
+ * `silent` sends data and nothing else — no title, no body — for a request to
+ * the app rather than a message to the person (the phone fixing its position
+ * for "how far is…"). The app draws a notification only when a body arrives,
+ * so a silent message never reaches the tray, old app or new.
  */
-async function send(token, { title, body, data = {}, collapseKey, dataOnly = false } = {}) {
+async function send(token, { title, body, data = {}, collapseKey, dataOnly = false, silent = false } = {}) {
 	let auth;
 	try {
 		auth = await authorized();
@@ -111,7 +116,9 @@ async function send(token, { title, body, data = {}, collapseKey, dataOnly = fal
 	// and a nudge uuid arriving as a number is the obvious way to trip that.
 	const strings = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, String(v)]));
 	const message = {
-		message: dataOnly
+		message: silent
+			? { token, data: strings, android: { priority: "high" } }
+			: dataOnly
 			? {
 					// No `notification` block: Android would draw that itself and
 					// never run the app, which is the only place the Acknowledge /

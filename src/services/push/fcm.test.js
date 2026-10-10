@@ -80,4 +80,12 @@ describe("fcm.send dataOnly (notification buttons)", () => {
 		expect(body.message.data).toMatchObject({ uuid: "7", title: "Athena", body: "Tree down", tag: "nudge-7" });
 		expect(body.message.android.priority).toBe("high");
 	});
+
+	test("silent carries no title or body anywhere, so no app version draws it", async () => {
+		await fcm.send("device-token", { silent: true, data: { kind: "locate" } });
+		const body = JSON.parse(sent.init.body);
+		expect(body.message.notification).toBeUndefined();
+		expect(body.message.data).toEqual({ kind: "locate" });
+		expect(body.message.android).toEqual({ priority: "high" });
+	});
 });

@@ -495,6 +495,41 @@ async function sendToProfile(profileId, { title, body, data, collapseKey } = {})
 }
 
 /**
+ * Ask their Android phone where it is, once, for a question they just asked
+ * ("how far is the soccer complex from here?").
+ *
+ * A silent data message, never a notification: the app answers by posting one
+ * sample to POST /location/sample, which keeps it only while location sharing
+ * is switched on. So this checks that switch first and sends nothing without
+ * it — there is no point waking a phone whose answer would be refused, and
+ * the request itself should not exist for someone who said no. It is not
+ * gated on push_enabled: that flag is about being interrupted, and nothing
+ * here interrupts anyone.
+ *
+ * Returns how many phones were asked. Never throws.
+ */
+async function requestLocation(profileId) {
+	try {
+		const [prefs] = await pool.query(
+			"SELECT enabled FROM athena_location_pref WHERE profile_id = ? LIMIT 1",
+			[profileId]
+		);
+		if (prefs[0]?.enabled !== 1) return { asked: 0, skipped: "location sharing off" };
+		const phones = (await reachableDevices(profileId)).filter((d) => d.platform === "android");
+		let asked = 0;
+		for (const phone of phones) {
+			const result = await fcm.send(phone.token, { silent: true, data: { kind: "locate" } });
+			if (result.ok) asked += 1;
+			else if (result.dead) await dropDeadToken(phone.id, result.reason);
+		}
+		return { asked };
+	} catch (err) {
+		console.warn("[push] location request failed:", err.message);
+		return { asked: 0, skipped: err.message };
+	}
+}
+
+/**
  * Push one nudge, and record that we tried.
  *
  * `pushed_at` is set when a transport ACCEPTED the message, which is not the
@@ -638,6 +673,7 @@ module.exports = {
 	pushEnabledFor,
 	sendToProfile,
 	deliverNudge,
+	requestLocation,
 	sendTest,
 	statusFor,
 };

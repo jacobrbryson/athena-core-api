@@ -9,6 +9,7 @@ const connectorContext = require("../services/connectors/context");
 const heartRate = require("../services/heartRate");
 const toolIntent = require("../services/toolIntent");
 const webSearch = require("../services/webSearch");
+const travel = require("../services/travel");
 const monologue = require("../services/monologue");
 const missionService = require("../services/mission");
 const selfKnowledge = require("../services/selfKnowledge");
@@ -267,6 +268,15 @@ async function processAiResponse(session, message, clients, ctx = {}) {
                 console.warn("[gemini] heart rate context failed:", e.message);
                 return null;
               })
+          : null,
+        // "How far is the soccer complex?" — a real drive from home or from
+        // where their phone is now, and the answer to her "from home or from
+        // here?" follow-up. Adults only (buildContext checks); never throws.
+        travel.matches(message) ||
+        travel.followUpChoice(groundingProfileId, message)
+          ? travel.buildContext(groundingProfileId, message, {
+              audience: groundingAudience,
+            })
           : null,
       ]);
       integrationContext = blocks.filter(Boolean).join("\n\n") || null;
