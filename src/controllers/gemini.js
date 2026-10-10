@@ -15,6 +15,7 @@ const codeAgents = require("../services/codeAgents");
 const missionService = require("../services/mission");
 const selfKnowledge = require("../services/selfKnowledge");
 const actions = require("../services/actions");
+const capabilityGaps = require("../services/capabilityGaps");
 const initiative = require("../services/initiative");
 const nearbyIncidents = require("../services/pulsepoint/watch");
 const familyHealth = require("../services/familyHealth");
@@ -77,6 +78,47 @@ const DOUBLE_CHECK_FILLER = {
   key: "double-check",
   text: "Hm, let me double-check that…",
 };
+
+/**
+ * What the second pass is told when her proposal was turned down. The reason
+ * is our own normalize() text or a provider error — information for her, not
+ * an instruction — and anything she proposes from it is checked again.
+ */
+function actionRepairNote(draftResponse, proposed, rejected) {
+  let params = "";
+  try {
+    params = JSON.stringify(proposed?.params ?? {}).slice(0, 800);
+  } catch {
+    params = "(unreadable)";
+  }
+  return [
+    "# Before you answer: what you proposed was turned down",
+    "You drafted this reply:",
+    draftResponse || "(empty)",
+    "",
+    `and proposed \`${String(proposed?.id || "?").slice(0, 60)}\` with ${params}.`,
+    `It was turned down before the person saw it: "${rejected.reason}"`,
+    "",
+    "Write the reply again. Do exactly one of these:",
+    "- If what was missing is already above (in the conversation, their points of interest, their calendar), propose it again with that fixed.",
+    "- Otherwise offer the nearest thing that does work — see \"If this doesn't fit\" under your actions — in words, and propose nothing until they choose.",
+    "- Or ask the one question that would let you do it, and propose nothing.",
+    "Keep it short and in your own voice. Don't mention this draft, and never end on \"I can't\" alone.",
+  ].join("\n");
+}
+
+/**
+ * The last resort, when the second pass couldn't fix it either: say what was
+ * missing. normalize()'s reasons are written about the person ("not one of
+ * their points of interest"); this is said to them.
+ */
+function couldntSetUp(rejected) {
+  const said = rejected?.stage === "params" && rejected.reason
+    ? rejected.reason.replace(/\.$/, "").replace(/\btheir\b/g, "your").replace(/\bthem\b/g, "you")
+    : "";
+  const reason = said ? ` — ${said.charAt(0).toLowerCase()}${said.slice(1)}` : " just now";
+  return `…Actually, I couldn't set that up${reason}, so nothing was saved. Tell me a little more and I'll try it another way.`;
+}
 
 /** Send one rpc to every open socket watching this session. */
 function broadcastToSession(clients, sessionUuid, payload) {
@@ -355,9 +397,17 @@ async function processAiResponse(session, message, clients, ctx = {}) {
       !!session.profile_id && memoryCtx.audience === "adult" && !ctx.guardian;
     if (mayPropose) {
       try {
-        actionBlock = actions.promptBlock(
-          await actions.availableFor(session.profile_id),
-        );
+        const [available, pending] = await Promise.all([
+          actions.availableFor(session.profile_id),
+          actions.listPending(session.profile_id).catch(() => []),
+        ]);
+        // The cards still waiting on them, so "make it 2:00" replaces one
+        // instead of stacking a second beside it. Only with the action block:
+        // no actions this turn means nothing to replace them with.
+        const block = actions.promptBlock(available);
+        actionBlock = block
+          ? [block, actions.pendingBlock(pending)].filter(Boolean).join("\n\n")
+          : null;
       } catch (e) {
         console.warn("[gemini] action block failed:", e.message);
       }
@@ -615,24 +665,70 @@ async function processAiResponse(session, message, clients, ctx = {}) {
     // A standing authority makes propose() execute inline, so `proposal`
     // here may already be done or failed rather than pending. The client
     // renders from `status`, which is why both go down the same rpc.
+    //
+    // A rejection is not the end of the turn (2026-10-09: "remind me when we
+    // get home" was rejected because "home" wasn't a point of interest, and
+    // the person heard only "scratch that"). She gets ONE second pass with the
+    // reason in front of her, to fix the proposal, offer the nearest thing
+    // that works, or ask the question that would let her do it. Whatever she
+    // proposes there goes through attempt() exactly like the first.
     let proposal = null;
-    let proposalFailed = false;
     if (mayPropose && parsedResponse.proposed_action && !fellBack) {
-      try {
-        proposal = await actions.propose(
-          session.profile_id,
-          session.id,
-          withoutNulls(parsedResponse.proposed_action),
-        );
-      } catch (e) {
-        // A standing-authority execution that failed at the provider lands
-        // here. The athena_action row is already terminal with the error on
-        // it, so the person can still see what happened in their history.
-        console.warn("[gemini] action proposal failed:", e.message);
-      }
-      proposalFailed = !proposal || proposal.status === "failed";
-      if (proposalFailed) {
-        parsedResponse.response = `${parsedResponse.response} …Actually, scratch that: I couldn't set that up just now — something went wrong on my end, so nothing was saved. Could you ask me again?`;
+      const tryPropose = async (raw) => {
+        try {
+          return await actions.attempt(session.profile_id, session.id, withoutNulls(raw));
+        } catch (e) {
+          console.warn("[gemini] action proposal failed:", e.message);
+          return { proposal: null, rejected: { stage: "error", reason: "something went wrong on my end" } };
+        }
+      };
+      const first = parsedResponse.proposed_action;
+      const outcome = await tryPropose(first);
+      proposal = outcome.proposal;
+      if (outcome.rejected) {
+        // A standing execution that failed at the provider still has a card
+        // (status "failed", with the reason) and still goes to the client.
+        const failedCard = outcome.proposal?.status === "failed" ? outcome.proposal : null;
+        let repaired = null;
+        try {
+          repaired = (
+            await writeReply({
+              extraContext: actionRepairNote(parsedResponse.response, first, outcome.rejected),
+            })
+          )?.reply;
+        } catch (e) {
+          console.warn("[gemini] action repair failed:", e.message);
+        }
+        let gapOutcome = "failed";
+        if (repaired?.response && !repaired.lyrics) {
+          if (!repaired.proposed_action) {
+            parsedResponse = repaired;
+            proposal = failedCard;
+            gapOutcome = "offered";
+          } else {
+            const second = await tryPropose(repaired.proposed_action);
+            if (second.proposal && !second.rejected) {
+              parsedResponse = repaired;
+              proposal = second.proposal;
+              gapOutcome = "repaired";
+            } else {
+              parsedResponse = repaired;
+              proposal = second.proposal || failedCard;
+              parsedResponse.response = `${repaired.response} ${couldntSetUp(second.rejected)}`;
+            }
+          }
+        } else {
+          parsedResponse.response = `${parsedResponse.response} ${couldntSetUp(outcome.rejected)}`;
+        }
+        capabilityGaps.record({
+          profileId: session.profile_id,
+          sessionId: session.id,
+          message,
+          actionId: outcome.rejected.actionId || first?.id || null,
+          stage: outcome.rejected.stage,
+          reason: outcome.rejected.reason,
+          outcome: gapOutcome,
+        });
       }
     }
 
@@ -771,6 +867,8 @@ async function processAiResponse(session, message, clients, ctx = {}) {
     // just said, and a card that arrives first reads as Athena acting
     // before she explained herself.
     if (proposal) {
+      // `supersedes` on the payload tells the client to take the old card
+      // down now rather than at its next poll.
       broadcast({ rpc: "actionProposed", action: proposal });
       // The dashboard's Notifications card is this list. It has no refresh
       // button, so the count only moves if we say so.

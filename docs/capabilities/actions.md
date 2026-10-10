@@ -44,6 +44,20 @@ Two things I can propose today:
   and I'll tell you what they found when they're back, or when you ask. Only
   for the owner's account.
 
+**When there's more than one way to do it, I ask first.** "I can put an
+alert on your calendar for 7, or remind you when you pull into the driveway —
+which?" You pick, and change anything you like ("the calendar, but make it
+2:00"), and only then does a card appear.
+
+**You can change a card that's still waiting.** Tell me what's wrong with it
+and I'll replace it with a corrected one; the old card disappears so you're
+never left with two.
+
+**If what I tried doesn't work, I don't just stop.** When something I propose
+is turned down before it reaches you — I'm missing an address, say, or the
+time didn't make sense — I see why, and either fix it, offer the nearest
+thing I can do, or ask you the one question I need answered.
+
 If you get tired of approving the same thing, you can tell me to stop asking:
 tick **"Do this without asking me each time"** and I'll just do that one kind
 of thing from then on. I still record every single one, and you can take that
@@ -77,10 +91,11 @@ Approval cards work on your paired phone or car too, not just in this browser.
   reconnect Google Calendar; it will ask for one extra permission.
 - **Approve did nothing and the card went red.** The error on the card is the
   real reason from Google, not my guess at it. Nothing was changed.
-- **I said I'd do something but no card appeared.** Then I got the details
-  wrong somewhere and the proposal was refused before it reached you — a time
-  with no timezone is the usual culprit. Tell me the day and time again,
-  plainly.
+- **I said "I couldn't set that up" and named something missing.** I tried
+  twice and was turned down both times. Tell me the missing piece (usually an
+  address or an exact time) and I'll try again.
+- **There are two cards for the same thing.** I should have replaced the
+  first one. Tap **No** on the one you don't want; it changes nothing.
 
 ## Limits
 
@@ -139,6 +154,17 @@ Approval cards work on your paired phone or car too, not just in this browser.
   `GITHUB_AGENT_TOKEN` and `CODE_AGENT_GOOGLE_IDS` in Secret Manager; offered
   only via the registry's `availableTo` hook. Tests:
   `src/services/codeAgents.test.js`.
+- No dead ends (2026-10-10): `actions.attempt()` returns `{ proposal,
+  rejected: { stage, reason } }`; `propose()` is a wrapper that keeps the old
+  contract. `gemini.js` gives one repair pass (`actionRepairNote`) and then
+  `couldntSetUp()`. Descriptors may carry `alternatives` (a model hint, never
+  a gate). Pending cards reach the prompt via `actions.pendingBlock()`;
+  `proposed_action.supersedes` withdraws the old card (as a decline, audit
+  `action_superseded`) only after the new row exists. Rejections are logged
+  to `athena_capability_gap` (`src/services/capabilityGaps.js`, migration
+  0058) and summarized for the nightly review (`src/services/selfReview/metrics.js`
+  `gaps`). The inner monologue now reads action drafts but can only turn them
+  into a question. Tests: `src/controllers/actionRepair.test.js`.
 - Tests: `src/services/actions/actions.test.js`.
 - Design notes: `../../../docs/architecture/action-layer.md`.
 - Notes: the chat path uses structured output, not function calling, which is

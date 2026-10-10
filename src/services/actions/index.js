@@ -190,6 +190,18 @@ function promptBlock(actions) {
 		"answered by reading, which needs no approval. If you are unsure what they",
 		"want, ask in `response` and propose nothing.",
 		"",
+		"Offer first, then propose. When there is more than one reasonable way to do",
+		"it, or what you can do is not exactly what they asked for, say the options",
+		"in `response` (\"I can put an alert on your calendar for 7, or remind you",
+		"when you pull into the driveway — which?\") and propose nothing. Propose",
+		"once they have chosen, with any change they asked for (\"the calendar, but",
+		"make it 2:00\" is a 2:00 event).",
+		"",
+		"Never leave them at \"I can't\". When none of these does exactly what they",
+		"asked, say so in one clause and offer the nearest thing that does work —",
+		"each action below lists its nearest alternatives — or ask the one question",
+		"that would let you do it.",
+		"",
 	];
 	for (const action of actions) {
 		lines.push(`## ${action.id}`);
@@ -198,13 +210,38 @@ function promptBlock(actions) {
 		for (const [name, description] of Object.entries(action.params)) {
 			lines.push(`- ${name}: ${description}`);
 		}
+		if (action.alternatives) lines.push(`If this doesn't fit: ${action.alternatives}`);
 		lines.push("");
 	}
 	lines.push(
-		"Shape: `proposed_action: { id, params: { ... }, rationale }`. `rationale`",
-		"is one short line on why, shown to the person on the approval card.",
+		"Shape: `proposed_action: { id, params: { ... }, rationale, supersedes }`.",
+		"`rationale` is one short line on why, shown to the person on the approval",
+		"card. `supersedes` is only for replacing a card that is still waiting on",
+		"them (listed below when there is one): put its uuid there and the old card",
+		"is withdrawn when the new one appears.",
 		"Omit `proposed_action` entirely when you are not proposing anything."
 	);
+	return lines.join("\n");
+}
+
+/**
+ * The cards still waiting on this person, so a reply can refer to one — and
+ * replace it ("make it 2:00") instead of stacking a second card beside it.
+ * Null when there are none. The summaries are the stored sentences the person
+ * is reading on the cards, not anything the model wrote this turn.
+ */
+function pendingBlock(pending) {
+	if (!pending || !pending.length) return null;
+	const lines = [
+		"# Cards waiting on the person right now",
+		"They can see these and haven't answered yet. If they ask for a change to",
+		"one, propose the corrected version with `supersedes` set to its uuid.",
+		"Don't propose the same thing again without `supersedes`.",
+		"",
+	];
+	for (const p of pending.slice(0, 5)) {
+		lines.push(`- ${p.uuid} (${p.action_id}): ${p.summary}`);
+	}
 	return lines.join("\n");
 }
 
@@ -225,12 +262,40 @@ function promptBlock(actions) {
  * standing authority for that exact action.
  */
 async function propose(profileId, sessionId, raw, ctx = {}) {
-	if (!profileId || !raw || typeof raw !== "object") return null;
+	const { proposal, rejected } = await attempt(profileId, sessionId, raw, ctx);
+	if (rejected?.thrown) throw rejected.thrown;
+	return proposal;
+}
+
+/**
+ * propose(), but saying why when there is no proposal.
+ *
+ *   { proposal, rejected: null }                 a card (or a standing execution)
+ *   { proposal: null, rejected: { stage, reason } }
+ *
+ * The chat path uses the reason to repair or offer something else instead of
+ * ending on "scratch that" (2026-10-09: a place reminder for "home" was
+ * rejected with exactly what was missing, and the person heard only that it
+ * failed). The reason is our own text from normalize() or the provider's
+ * error — it is shown to the model as information, and anything it proposes
+ * next comes back through here like any other proposal. Nothing about a
+ * rejection loosens a gate.
+ *
+ * A standing execution that fails at the provider is returned as the failed
+ * proposal (status "failed", error set) with `rejected` filled in, and the
+ * original error is kept on `rejected.thrown` so propose() still throws.
+ */
+async function attempt(profileId, sessionId, raw, ctx = {}) {
+	const reject = (stage, reason, extra = {}) => ({
+		proposal: null,
+		rejected: { stage, reason: String(reason || "").slice(0, 300), ...extra },
+	});
+	if (!profileId || !raw || typeof raw !== "object") return reject("shape", "No proposal");
 
 	const action = registry.get(raw.id);
 	if (!action) {
 		console.warn("[actions] model proposed an unknown action:", raw.id);
-		return null;
+		return reject("unknown", `There is no action called "${String(raw.id).slice(0, 60)}"`);
 	}
 
 	// Re-derive availability rather than trusting that the prompt only offered
@@ -238,7 +303,7 @@ async function propose(profileId, sessionId, raw, ctx = {}) {
 	const available = await availableFor(profileId);
 	if (!available.some((a) => a.id === action.id)) {
 		console.warn(`[actions] ${action.id} proposed but not available to profile ${profileId}`);
-		return null;
+		return reject("unavailable", `${action.label} isn't available to this person`, { actionId: action.id });
 	}
 
 	let params;
@@ -251,7 +316,7 @@ async function propose(profileId, sessionId, raw, ctx = {}) {
 		// The interesting failure. A model that keeps proposing invalid params
 		// is a prompt bug, and this line is where it shows up.
 		console.warn(`[actions] ${action.id} params rejected: ${err.message}`);
-		return null;
+		return reject("params", err.message, { actionId: action.id });
 	}
 
 	const summary = action.summarize(params);
@@ -275,13 +340,55 @@ async function propose(profileId, sessionId, raw, ctx = {}) {
 	);
 	await audit(profileId, "action_proposed", action.id);
 
+	// Only once the replacement exists, so a rejected correction never costs
+	// the person the card they already had.
+	const superseded = await supersede(profileId, raw.supersedes, uuid);
+
 	if (authority) {
 		// A standing approval stands in for the person's finger on the button.
 		// It goes through the identical execute path, so gates 1-4 all still
 		// run and the audit row is identical but for `approval`.
-		return runPending(profileId, uuid, { approval: "standing", authorityId: authority.id, ctx });
+		try {
+			const done = await runPending(profileId, uuid, { approval: "standing", authorityId: authority.id, ctx });
+			return { proposal: withSuperseded(done, superseded), rejected: null };
+		} catch (err) {
+			const failed = await get(profileId, uuid).catch(() => null);
+			return {
+				proposal: failed && withSuperseded(failed, superseded),
+				rejected: { stage: "execute", reason: String(err.message || "").slice(0, 300), actionId: action.id, thrown: err },
+			};
+		}
 	}
-	return get(profileId, uuid);
+	return { proposal: withSuperseded(await get(profileId, uuid), superseded), rejected: null };
+}
+
+function withSuperseded(proposal, superseded) {
+	return proposal && superseded ? { ...proposal, supersedes: superseded } : proposal;
+}
+
+/**
+ * Withdraw the card a new proposal replaces ("make it 2:00"). Recorded as a
+ * decline — it only ever removes something the person could have approved,
+ * and only one of their own that is still pending. Returns the withdrawn
+ * uuid, or null when there was nothing to withdraw.
+ */
+async function supersede(profileId, oldUuid, newUuid) {
+	if (typeof oldUuid !== "string" || !/^[0-9a-f-]{36}$/i.test(oldUuid) || oldUuid === newUuid) return null;
+	try {
+		const [result] = await pool.query(
+			`UPDATE athena_action SET status = 'declined', decided_at = NOW(), error = 'Replaced by a corrected proposal'
+			 WHERE uuid = ? AND profile_id = ? AND status = 'pending'`,
+			[oldUuid, profileId]
+		);
+		if (!result.affectedRows) return null;
+		const old = await get(profileId, oldUuid);
+		await audit(profileId, "action_superseded", old?.action_id || null);
+		return oldUuid;
+	} catch (err) {
+		// The new card stands either way; the old one expires on its own.
+		console.warn("[actions] supersede failed:", err.message);
+		return null;
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -517,7 +624,9 @@ module.exports = {
 	PROPOSAL_TTL_MS,
 	availableFor,
 	promptBlock,
+	pendingBlock,
 	propose,
+	attempt,
 	get,
 	listPending,
 	listRecent,

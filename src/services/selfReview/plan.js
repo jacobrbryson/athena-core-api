@@ -380,6 +380,21 @@ function ruleFindings({ metrics, evals, config, evalHistory = [], maintenance = 
 		add("medium", "initiative", "Initiative metrics unavailable", init.reason);
 	}
 
+	// Capability gaps: things she proposed that were turned down. "failed" is
+	// a conversation that ended without what the person asked for; the rest
+	// she rescued, but a reason that keeps recurring is a missing ability.
+	const gaps = metrics.gaps;
+	if (gaps?.available && gaps.total7d > 0) {
+		if (gaps.byOutcome.failed > 0) {
+			add("high", "actions", `${gaps.byOutcome.failed} request(s) ended without a working proposal`, "she was turned down twice and had nothing else to offer; see the top reasons below");
+		}
+		for (const g of gaps.top.filter((t) => t.count >= 2).slice(0, 3)) {
+			add("opportunity", "actions", `${g.actionId || "unknown action"} turned down ${g.count}× this week: ${g.reason}`, `stage ${g.stage}, then ${g.outcome} — a candidate for a new ability or a clearer prompt`, `gap:${g.actionId || "unknown"}:${findingKey("gap", g.reason)}`);
+		}
+	} else if (gaps && !gaps.available) {
+		add("low", "actions", "Capability gap metrics unavailable", gaps.reason);
+	}
+
 	// Abilities: is a local model good enough to take more traffic — or too weak?
 	const localEndpoints = Object.entries(evals?.endpoints || {}).filter(([, r]) => r.tier === "orcwood");
 	for (const [id, r] of localEndpoints) {

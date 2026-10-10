@@ -308,16 +308,22 @@ async function newsMetrics() {
 	});
 }
 
+/** Proposals turned down this week, and what she did instead (services/capabilityGaps). */
+async function gapMetrics() {
+	return section(() => require("../capabilityGaps").weekSummary());
+}
+
 async function collectMetrics({ embeddingSpace }) {
-	const [last24h, baseline7d, chat, memory, initiative, news] = await Promise.all([
+	const [last24h, baseline7d, chat, memory, initiative, news, gaps] = await Promise.all([
 		modelMetrics(24, 0),
 		modelMetrics(24 * 8, 24),
 		chatMetrics(),
 		memoryMetrics(embeddingSpace),
 		initiativeMetrics(),
 		newsMetrics(),
+		gapMetrics(),
 	]);
-	return { models: { last24h, baseline7d }, chat, memory, initiative, news };
+	return { models: { last24h, baseline7d }, chat, memory, initiative, news, gaps };
 }
 
 module.exports = { collectMetrics, summarizeCalls, percentile };

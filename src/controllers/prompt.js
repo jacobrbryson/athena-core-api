@@ -48,6 +48,10 @@ const RESPONSE_SCHEMA = {
         id: { type: "string" },
         params: { type: "object" },
         rationale: { type: "string" },
+        // The uuid of a still-pending card this one replaces ("make it
+        // 2:00"). actions.attempt() withdraws it only if it is this person's
+        // and still pending, and only after the new card exists.
+        supersedes: { type: "string" },
       },
       required: ["id", "params"],
     },

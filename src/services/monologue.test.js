@@ -136,13 +136,55 @@ test("a rewrite that proposes an action is discarded", async () => {
 	expect((await monologue.reflect(args())).reply).toBe(draft);
 });
 
-test("never reflects on a child's turn, an action proposal, or a song", async () => {
+test("never reflects on a child's turn or a song", async () => {
 	screened(0.9);
 	await monologue.reflect(args({ audience: "child" }));
-	await monologue.reflect(args({ draft: { ...draft, proposed_action: { type: "x" } } }));
 	await monologue.reflect(args({ draft: { ...draft, lyrics: "la la" } }));
 	expect(llm.decide).not.toHaveBeenCalled();
 	expect(monologue.recent(PROFILE)).toEqual([]);
+});
+
+test("the screen also asks whether she is guessing what they meant", async () => {
+	llm.decide.mockResolvedValue({ answers: { factual: { noul: 0.1 }, assumes: { noul: 0.8 } } });
+	verdict({ verdict: "revise", problems: ["'the games' could be their kids' soccer"], query: "" });
+	const out = await monologue.reflect(args({ message: "what's the weather for the games today?" }));
+	expect(llm.decide.mock.calls[0][0].questions).toHaveProperty("assumes");
+	expect(llm.generateJson).toHaveBeenCalled();
+	expect(out.reply).toBe(better);
+});
+
+describe("a draft that proposes an action", () => {
+	const card = { id: "remind_at_place", params: { place: "home", reminder: "Tell Ashlyn" } };
+	const proposing = { ...draft, proposed_action: card };
+
+	test("is screened only for guessing, and a sound one keeps its card", async () => {
+		llm.decide.mockResolvedValue({ answers: { assumes: { noul: 0.9 } } });
+		verdict({ verdict: "ok", problems: [], query: "" });
+		const out = await monologue.reflect(args({ draft: proposing }));
+		expect(Object.keys(llm.decide.mock.calls[0][0].questions)).toEqual(["assumes"]);
+		expect(llm.generateJson.mock.calls[0][0].contents).toContain("remind_at_place");
+		expect(out.reply).toBe(proposing);
+		expect(monologue.recent(PROFILE)[0].proposed).toBe("remind_at_place");
+	});
+
+	test("can only become a question: a rewrite that proposes is discarded", async () => {
+		llm.decide.mockResolvedValue({ answers: { assumes: { noul: 0.9 } } });
+		verdict({ verdict: "revise", problems: ["which home?"], query: "" });
+		rewrite.mockResolvedValueOnce({ ...better, proposed_action: card });
+		expect((await monologue.reflect(args({ draft: proposing }))).reply).toBe(proposing);
+
+		rewrite.mockResolvedValueOnce(better);
+		expect((await monologue.reflect(args({ draft: proposing }))).reply).toBe(better);
+		expect(rewrite.mock.calls[1][0].extraContext).toContain("Don't propose anything this time");
+	});
+
+	test("never searches", async () => {
+		llm.decide.mockResolvedValue({ answers: { assumes: { noul: 0.9 } } });
+		verdict({ verdict: "search", problems: ["x"], query: "something" });
+		await monologue.reflect(args({ draft: proposing }));
+		expect(search).not.toHaveBeenCalled();
+		expect(monologue.recent(PROFILE)[0].verdict).toBe("revise");
+	});
 });
 
 test("without Jev there is no screen, no critique and no record", async () => {

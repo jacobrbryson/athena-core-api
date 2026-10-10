@@ -22,6 +22,9 @@
  *   standing       may a standing approval ever skip the per-action prompt?
  *   describe       one line the model reads, saying when to propose this
  *   params         model-facing parameter doc (name -> description)
+ *   alternatives   optional; what to offer instead when this one doesn't fit.
+ *                  A hint the model reads, nothing more — whatever it proposes
+ *                  instead goes through that action's own normalize().
  *   normalize(raw, ctx) -> clean params | throws
  *   summarize(params) -> the plain-language sentence the person approves
  *   execute(profileId, params, ctx) -> { ref, detail }
@@ -118,6 +121,9 @@ const ACTIONS = [
 			"when they ask you to put something on the calendar, book, schedule or " +
 			"block out time. Do not propose it to answer a question about what is " +
 			"already scheduled — reading needs no approval.",
+		alternatives:
+			'It is also how to remind them of something at a time ("remind me at 7 to…"): a short ' +
+			"event at that time, titled with the reminder, gets their calendar's own alert.",
 		params: {
 			title: "What the event is called. Required.",
 			start:
@@ -418,6 +424,11 @@ const ACTIONS = [
 			'remind me ...". Before proposing, say back which place you mean and its ' +
 			"address from their points of interest, so they can correct you. Not for " +
 			"time-based reminders.",
+		alternatives:
+			'For a time ("tomorrow at 7", or "after the game" when the calendar shows when it ends), ' +
+			"offer a short calendar event at that time instead, if they have Google Calendar. If the " +
+			'place isn\'t one of their points of interest ("home" included) and you don\'t know its ' +
+			"street address, ask for the address rather than proposing without one.",
 		params: {
 			place: "The point of interest's name exactly as listed in their community, e.g. \"Missy's\". Required unless address is given.",
 			address: "A US street address with town, only when the place is not one of their points of interest.",

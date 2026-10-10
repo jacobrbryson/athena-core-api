@@ -362,6 +362,99 @@ describe("propose", () => {
 	});
 });
 
+describe("attempt: saying why there is no card (2026-10-10)", () => {
+	test("invalid params come back with normalize()'s own reason", async () => {
+		const { proposal, rejected } = await actions.attempt(PROFILE, 1, {
+			id: "create_calendar_event",
+			params: { title: "Dentist" },
+		});
+		expect(proposal).toBeNull();
+		expect(rejected).toMatchObject({ stage: "params", actionId: "create_calendar_event" });
+		expect(rejected.reason).toMatch(/start/i);
+	});
+
+	test("an unknown or unavailable action says which", async () => {
+		expect((await actions.attempt(PROFILE, 1, { id: "nope", params: {} })).rejected.stage).toBe("unknown");
+		credentials.list.mockResolvedValue([]);
+		const out = await actions.attempt(PROFILE, 1, { id: "create_calendar_event", params: {} });
+		expect(out.rejected).toMatchObject({ stage: "unavailable", actionId: "create_calendar_event" });
+	});
+
+	test("a rejection writes nothing", async () => {
+		await actions.attempt(PROFILE, 1, { id: "create_calendar_event", params: { title: "x" } });
+		expect(pool.query).not.toHaveBeenCalledWith(expect.stringContaining("INSERT INTO athena_action"), expect.anything());
+	});
+
+	test("a standing execution that fails at the provider returns the failed card and the reason", async () => {
+		pool.query.mockImplementation(async (sql) => {
+			if (sql.includes("FROM athena_action_authority")) return [[{ id: 3, expires_at: null }]];
+			if (sql.includes("INSERT INTO athena_action\n")) return [{ affectedRows: 1 }];
+			if (sql.includes("SET status = 'executing'")) return [{ affectedRows: 1 }];
+			if (sql.includes("SELECT action_id, params")) return [[actionRow()]];
+			if (sql.includes("FROM athena_action WHERE uuid"))
+				return [[actionRow({ status: "failed", error: "Calendar said no" })]];
+			return [[], {}];
+		});
+		googleCalendar.createEvent.mockRejectedValue(new Error("Calendar said no"));
+		const out = await actions.attempt(PROFILE, 1, {
+			id: "create_calendar_event",
+			params: { title: "Dentist", ...soon() },
+		});
+		expect(out.proposal).toMatchObject({ status: "failed" });
+		expect(out.rejected).toMatchObject({ stage: "execute", reason: "Calendar said no" });
+		// propose() keeps its old contract: the execution error is thrown.
+		await expect(
+			actions.propose(PROFILE, 1, { id: "create_calendar_event", params: { title: "Dentist", ...soon() } })
+		).rejects.toThrow(/Calendar said no/);
+	});
+});
+
+describe("supersedes: replacing a card (2026-10-10)", () => {
+	const OLD = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+	function stored({ withdrawn = 1 } = {}) {
+		pool.query.mockImplementation(async (sql) => {
+			if (sql.includes("INSERT INTO athena_action\n")) return [{ affectedRows: 1 }];
+			if (sql.includes("Replaced by a corrected proposal")) return [{ affectedRows: withdrawn }];
+			if (sql.includes("FROM athena_action WHERE uuid")) return [[actionRow()]];
+			return [[], {}];
+		});
+	}
+	const corrected = (supersedes) => ({
+		id: "create_calendar_event",
+		params: { title: "Text your brother", ...soon() },
+		supersedes,
+	});
+
+	test("the old card is withdrawn only after the new one exists, scoped to this person", async () => {
+		stored();
+		const out = await actions.propose(PROFILE, 1, corrected(OLD));
+		expect(out.supersedes).toBe(OLD);
+		const calls = pool.query.mock.calls.map((c) => c[0]);
+		const insertAt = calls.findIndex((q) => q.includes("INSERT INTO athena_action\n"));
+		const withdrawAt = calls.findIndex((q) => q.includes("Replaced by a corrected proposal"));
+		expect(withdrawAt).toBeGreaterThan(insertAt);
+		const withdraw = pool.query.mock.calls[withdrawAt];
+		expect(withdraw[0]).toContain("status = 'pending'");
+		expect(withdraw[0]).toContain("profile_id = ?");
+		expect(withdraw[1]).toEqual([OLD, PROFILE]);
+		expect(pool.query).toHaveBeenCalledWith(expect.stringContaining("athena_access_audit"), [PROFILE.toString(), "action_superseded", "create_calendar_event"]);
+	});
+
+	test("a rejected correction leaves the old card alone", async () => {
+		stored();
+		await actions.propose(PROFILE, 1, { id: "create_calendar_event", params: { title: "x" }, supersedes: OLD });
+		expect(pool.query).not.toHaveBeenCalledWith(expect.stringContaining("Replaced by a corrected proposal"), expect.anything());
+	});
+
+	test("nothing to withdraw (not theirs, not pending, or not a uuid) changes nothing", async () => {
+		stored({ withdrawn: 0 });
+		expect((await actions.propose(PROFILE, 1, corrected(OLD))).supersedes).toBeUndefined();
+		stored();
+		expect((await actions.propose(PROFILE, 1, corrected("'; DROP TABLE x; --"))).supersedes).toBeUndefined();
+		expect(pool.query).not.toHaveBeenCalledWith(expect.stringContaining("Replaced by"), [expect.stringContaining("DROP"), PROFILE]);
+	});
+});
+
 describe("investigate_code (coding agents, 2026-10-09)", () => {
 	const action = registry.get("investigate_code");
 	const ctx = { profileId: PROFILE };
@@ -696,6 +789,33 @@ describe("promptBlock", () => {
 
 	test("it caps her at one proposal per reply", () => {
 		expect(actions.promptBlock(registry.ACTIONS)).toMatch(/at most ONE action per reply/i);
+	});
+
+	test("it tells her to offer before proposing, and never to stop at \"I can't\"", () => {
+		const block = actions.promptBlock(registry.ACTIONS);
+		expect(block).toMatch(/Offer first, then propose/);
+		expect(block).toMatch(/Never leave them at "I can't"/);
+	});
+
+	test("each action's alternatives are shown with it", () => {
+		const block = actions.promptBlock(registry.ACTIONS.filter((a) => a.id === "remind_at_place"));
+		expect(block).toMatch(/If this doesn't fit: .*calendar event/);
+	});
+});
+
+describe("pendingBlock", () => {
+	test("nothing pending means no block", () => {
+		expect(actions.pendingBlock([])).toBeNull();
+		expect(actions.pendingBlock(null)).toBeNull();
+	});
+
+	test("names each waiting card by uuid and its stored summary", () => {
+		const block = actions.pendingBlock([
+			{ uuid: UUID, action_id: "create_calendar_event", summary: 'Add "Text your brother" at 7:00 pm' },
+		]);
+		expect(block).toContain(UUID);
+		expect(block).toContain('Add "Text your brother" at 7:00 pm');
+		expect(block).toMatch(/supersedes/);
 	});
 });
 

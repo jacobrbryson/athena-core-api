@@ -17,10 +17,16 @@
  * panel's "what I almost said". In memory on purpose for now: the owner chose
  * to see whether it earns a table before adding one, so it resets on deploy.
  *
+ * Since 2026-10-10 it also asks whether she is guessing which thing they mean
+ * ("the games" was the wrong games), and it reads drafts that propose an
+ * action — checked only for being the thing they asked for, and only ever
+ * turned into a question.
+ *
  * Adults only, like web search. Never throws and never makes a reply worse:
  * any failure, timeout or unusable rewrite sends the draft as written.
  * The critique is model output — it may trigger reads and a rewrite, never
- * an action (a draft that proposes an action is not reflected on at all).
+ * an action: a rewrite that proposes anything is discarded, so the only card
+ * that can come out of a reflected turn is the one the draft already had.
  */
 const llm = require("./llm");
 const jev = require("./llm/adapters/jev");
@@ -63,34 +69,69 @@ function withTimeout(promise, ms, what) {
 	]).finally(() => clearTimeout(timer));
 }
 
-/** Jev's probability that the draft states checkable facts, or null when it can't say. */
-async function screen(message, draft) {
+// Asked of every draft beside `factual`: is she guessing what they meant?
+// 2026-10-10: "weather for the games today" was answered about Cleveland's
+// playoff game while the person's own soccer games sat on their calendar.
+// The draft stated nothing false about Cleveland; it was about the wrong
+// games, which a fact-check alone never catches.
+const ASSUMES_QUESTION = {
+	type: "noul",
+	instructions:
+		"Does the reply (or what it offers to set up) assume which specific thing the person means — " +
+		"which event, game, person, place or time — when what they said could mean something else, " +
+		"or when it depends on their own plans or calendar?",
+	criteria: {
+		true: "Yes — it picks one meaning they didn't spell out",
+		false: "No — what they meant is clear from what they said",
+	},
+};
+
+/**
+ * Jev's probability that the draft needs a second look, or null when it can't
+ * say: the higher of "states checkable facts" and "assumes what they meant".
+ * A draft that proposes an action is asked only the second — the card is the
+ * fact, and the risk is that it's the wrong one.
+ */
+async function screen(message, draft, { proposing = false } = {}) {
 	if (!(await jev.configured())) return null;
+	const questions = { assumes: ASSUMES_QUESTION };
+	if (!proposing) {
+		questions.factual = {
+			type: "noul",
+			instructions:
+				"Does the reply state specific facts about the world that could be checked and could be wrong — " +
+				"numbers, prices, dates, times, scores, names, news, schedules, opening hours, product details, " +
+				"or claims about what is true right now?",
+			criteria: {
+				true: "Yes — it asserts checkable facts",
+				false: "No — it is conversation, feelings, opinions, questions, or the person's own plans",
+			},
+		};
+	}
 	const out = await llm.decide({
 		task: "screen",
 		state: clip(`The person said: ${message}\n\nThe reply about to be sent: ${draft}`, 2000),
-		questions: {
-			factual: {
-				type: "noul",
-				instructions:
-					"Does the reply state specific facts about the world that could be checked and could be wrong — " +
-					"numbers, prices, dates, times, scores, names, news, schedules, opening hours, product details, " +
-					"or claims about what is true right now?",
-				criteria: {
-					true: "Yes — it asserts checkable facts",
-					false: "No — it is conversation, feelings, opinions, questions, or the person's own plans",
-				},
-			},
-		},
+		questions,
 		timeoutMs: SCREEN_TIMEOUT_MS,
 	});
-	const p = Number(out?.answers?.factual?.noul);
-	return Number.isFinite(p) ? p : null;
+	const scores = Object.keys(questions)
+		.map((k) => Number(out?.answers?.[k]?.noul))
+		.filter(Number.isFinite);
+	return scores.length ? Math.max(...scores) : null;
 }
 
-function critiquePrompt({ message, draft, context, searched, today }) {
+function critiquePrompt({ message, draft, context, searched, today, proposal }) {
+	let proposed = null;
+	if (proposal) {
+		try {
+			proposed = clip(JSON.stringify({ id: proposal.id, params: proposal.params }), 800);
+		} catch {
+			proposed = "(unreadable)";
+		}
+	}
 	return [
-		"You are checking a reply that Athena, an AI companion, is about to send. Judge one thing only: factual accuracy.",
+		"You are checking a reply that Athena, an AI companion, is about to send. Judge two things only:",
+		"factual accuracy, and whether she is guessing which thing the person means.",
 		"Tone, length and helpfulness are not your concern.",
 		"",
 		`Today's date: ${today}.`,
@@ -103,25 +144,36 @@ function critiquePrompt({ message, draft, context, searched, today }) {
 		"",
 		"# Her draft reply",
 		draft,
+		...(proposed
+			? [
+					"",
+					"# What she is about to put on a card for them to approve",
+					proposed,
+					"Judge only whether it is what they asked for: the right event, place, time and words. A card is",
+					'"ok" when they spelled those out or they are in the conversation or her data above.',
+				]
+			: []),
 		"",
 		"# Your verdict",
-		'"ok" — every specific claim is supported by what she had, is about the person themselves, or is stable general knowledge that is very unlikely to be wrong.',
-		searched
-			? '"search" is not available: she already searched the web this turn and the results are above. Use "revise" if the draft goes beyond them.'
-			: '"search" — a claim is about something current or checkable (news, scores, prices, hours, releases, recent events) and a web search would settle it. Put the search in `query`, written the way a person would type it.',
-		'"revise" — a claim is unsupported and a search would not help (for example, a guess about the person\'s own data she doesn\'t have).',
-		"List each unsupported claim in `problems`, one short line each. Empty `problems` and empty `query` for \"ok\".",
+		'"ok" — every specific claim is supported by what she had, is about the person themselves, or is stable general knowledge that is very unlikely to be wrong; and what she took them to mean is what they said or is settled by her data.',
+		proposed
+			? '"search" is not available for a card.'
+			: searched
+				? '"search" is not available: she already searched the web this turn and the results are above. Use "revise" if the draft goes beyond them.'
+				: '"search" — a claim is about something current or checkable (news, scores, prices, hours, releases, recent events) and a web search would settle it. Put the search in `query`, written the way a person would type it.',
+		'"revise" — a claim is unsupported and a search would not help (for example, a guess about the person\'s own data she doesn\'t have), or she picked one meaning of something ambiguous ("the games" could be their kids\' games or a pro team\'s) that nothing above settles.',
+		"List each problem in `problems`, one short line each. Empty `problems` and empty `query` for \"ok\".",
 		"Return JSON only.",
 	].join("\n");
 }
 
 /** The critic's verdict, or null when it couldn't give a usable one. */
-async function critique({ message, draft, context, searched, audience, avoid }) {
+async function critique({ message, draft, context, searched, audience, avoid, proposal = null }) {
 	const today = new Date().toISOString().slice(0, 10);
 	const out = await withTimeout(
 		llm.generateJson({
 			task: "critique",
-			contents: critiquePrompt({ message, draft, context, searched, today }),
+			contents: critiquePrompt({ message, draft, context, searched, today, proposal }),
 			schema: CRITIQUE_SCHEMA,
 			audience,
 			avoid,
@@ -133,8 +185,9 @@ async function critique({ message, draft, context, searched, audience, avoid }) 
 	const v = out.data;
 	let verdict = v.verdict;
 	const query = typeof v.query === "string" ? v.query.trim() : "";
-	// A search with nothing to search for, or a second search in one turn, is a revise.
-	if (verdict === "search" && (searched || !query)) verdict = "revise";
+	// A search with nothing to search for, a second search in one turn, or a
+	// search about a card is a revise.
+	if (verdict === "search" && (searched || !query || proposal)) verdict = "revise";
 	return {
 		verdict,
 		problems: Array.isArray(v.problems) ? v.problems.filter((p) => typeof p === "string").slice(0, 5) : [],
@@ -144,7 +197,7 @@ async function critique({ message, draft, context, searched, audience, avoid }) 
 }
 
 /** What the rewrite is told about its own first draft. */
-function revisionNote(draft, problems) {
+function revisionNote(draft, problems, { proposing = false } = {}) {
 	return [
 		"# Before you answer: your first draft",
 		"You drafted a reply to this message and caught problems in it before sending it.",
@@ -156,7 +209,9 @@ function revisionNote(draft, problems) {
 		...problems.map((p) => `- ${p}`),
 		"",
 		"Write the reply again, keeping its voice. Use anything above that settles these points.",
-		"Where nothing does, don't state the claim — say plainly that you're not sure, or offer to look it up.",
+		proposing
+			? "Don't propose anything this time. Say back what you'd set up and ask the one question that settles it (\"Your soccer game at 5:30, or the Guardians?\"), so they can answer in a word."
+			: "Where nothing does, don't state the claim — say plainly that you're not sure, offer to look it up, or ask the one question that settles which thing they mean.",
 		"Never mention this draft or that you revised anything.",
 	].join("\n");
 }
@@ -200,11 +255,17 @@ async function reflect({
 }) {
 	const started = Date.now();
 	const keep = { reply: draft, web: null };
-	if (audience !== "adult" || !draft?.response || draft.proposed_action || draft.lyrics) return keep;
+	if (audience !== "adult" || !draft?.response || draft.lyrics) return keep;
+	// A draft that proposes something is checked for one thing — is it the
+	// thing they meant? — and can only become a question. The monologue never
+	// writes a proposal of its own; the card, if any, is the draft's.
+	const proposal = draft.proposed_action || null;
+	const proposing = !!proposal;
 
 	const record = {
 		at: new Date().toISOString(),
 		message: clip(message, 300),
+		proposed: proposing ? String(proposal.id || "").slice(0, 60) || null : null,
 		draft: draft.response,
 		screen: null,
 		verdict: null,
@@ -222,7 +283,7 @@ async function reflect({
 	};
 
 	try {
-		record.screen = await screen(message, draft.response);
+		record.screen = await screen(message, draft.response, { proposing });
 	} catch (err) {
 		console.warn("[monologue] screen failed:", err.message);
 	}
@@ -237,6 +298,7 @@ async function reflect({
 			searched,
 			audience,
 			avoid: draftEndpointId,
+			proposal,
 		});
 	} catch (err) {
 		console.warn("[monologue] critique failed:", err.message);
@@ -260,7 +322,7 @@ async function reflect({
 		record.sources = (web?.sources || []).map((s) => s.title);
 	}
 
-	const extraContext = [web?.block, revisionNote(draft.response, verdict.problems)]
+	const extraContext = [web?.block, revisionNote(draft.response, verdict.problems, { proposing })]
 		.filter(Boolean)
 		.join("\n\n");
 	let revised = null;
