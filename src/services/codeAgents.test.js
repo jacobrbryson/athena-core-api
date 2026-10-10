@@ -166,3 +166,85 @@ describe("promptBlock", () => {
 		warn.mockRestore();
 	});
 });
+
+describe("fixes", () => {
+	const REF = "jacobrbryson/athena-core-api#20";
+
+	test("openFix opens an athena-fix issue, adding the Codex label only when asked", async () => {
+		global.fetch.mockResolvedValue(respond({ number: 20, html_url: "https://github.com/x/20" }));
+		const out = await codeAgents.openFix({
+			repo: "core_api",
+			change: "Use the sprint's own date range in the Jira query",
+			investigation: "jacobrbryson/athena-core-api#12",
+			agent: "claude",
+		});
+		expect(out.ref).toBe(REF);
+		let body = JSON.parse(global.fetch.mock.calls[0][1].body);
+		expect(body.labels).toEqual([codeAgents.FIX_LABEL]);
+		expect(body.title).toMatch(/^Athena fix: Use the sprint/);
+		expect(body.body).toContain("jacobrbryson/athena-core-api#12");
+		expect(body.body).toMatch(/protected-path check/);
+
+		await codeAgents.openFix({ repo: "core_api", change: "Something specific enough", agent: "codex" });
+		body = JSON.parse(global.fetch.mock.calls[1][1].body);
+		expect(body.labels).toEqual([codeAgents.FIX_LABEL, codeAgents.CODEX_FIX_LABEL]);
+	});
+
+	function comments(list) {
+		return respond(list.map((body, i) => ({ body, created_at: `t${i}` })));
+	}
+
+	test("fixStatus reads each outcome the workflow reports", async () => {
+		global.fetch.mockResolvedValueOnce(comments([]));
+		expect(await codeAgents.fixStatus(REF)).toEqual({ state: "working" });
+
+		codeAgents._reset();
+		global.fetch.mockResolvedValueOnce(comments(["<!-- athena-fix-result:none -->\nNo change made."]));
+		expect(await codeAgents.fixStatus(REF)).toEqual({ state: "no_change" });
+
+		codeAgents._reset();
+		global.fetch.mockResolvedValueOnce(comments(["<!-- athena-fix-result:failed -->"]));
+		expect(await codeAgents.fixStatus(REF)).toEqual({ state: "failed" });
+	});
+
+	test("fixStatus follows the pull request to merged, open or closed", async () => {
+		const pr = "https://github.com/jacobrbryson/athena-core-api/pull/21";
+		for (const [issue, state] of [
+			[{ state: "closed", pull_request: { merged_at: "2026-10-10T12:00:00Z" } }, "merged"],
+			[{ state: "open", pull_request: { merged_at: null } }, "open"],
+			[{ state: "closed", pull_request: { merged_at: null } }, "closed"],
+		]) {
+			codeAgents._reset();
+			global.fetch.mockReset();
+			global.fetch.mockResolvedValueOnce(comments([`<!-- athena-fix-pr: ${pr} -->\nPull request opened.`])).mockResolvedValueOnce(respond(issue));
+			expect(await codeAgents.fixStatus(REF)).toEqual({ state, url: pr });
+			expect(global.fetch.mock.calls[1][0]).toBe("https://api.github.com/repos/jacobrbryson/athena-core-api/issues/21");
+		}
+	});
+
+	test("fixStatus never follows a pull request link into another repository", async () => {
+		global.fetch.mockResolvedValueOnce(comments(["<!-- athena-fix-pr: https://github.com/evil/repo/pull/1 -->"]));
+		expect(await codeAgents.fixStatus(REF)).toEqual({ state: "open", url: "https://github.com/evil/repo/pull/1" });
+		expect(global.fetch).toHaveBeenCalledTimes(1);
+	});
+
+	test("promptBlock raises a merged fix once, then only when asked", async () => {
+		pool.query.mockImplementation(async (sql) => {
+			if (sql.includes("FROM profile")) return [[{ google_id: OWNER }]];
+			if (sql.includes("FROM athena_action"))
+				return [[{ uuid: "f1", action_id: "fix_code", params: JSON.stringify({ repo: "core_api", change: "Fix the Jira range" }), result_ref: REF, executed_at: new Date() }]];
+			return [[]];
+		});
+		const pr = "https://github.com/jacobrbryson/athena-core-api/pull/21";
+		global.fetch.mockImplementation(async (url) =>
+			url.endsWith("/issues/21") ? respond({ state: "closed", pull_request: { merged_at: "t" } }) : comments([`<!-- athena-fix-pr: ${pr} -->`])
+		);
+		const first = await codeAgents.promptBlock(PROFILE, "morning");
+		expect(first).toContain('Fix in core_api: "Fix the Jira range"');
+		expect(first).toMatch(/merged, and it deploys automatically/);
+		expect(first).toContain("(new, mention it)");
+		expect(first).toMatch(/you never merge or deploy anything yourself/);
+		expect(await codeAgents.promptBlock(PROFILE, "morning")).toBeNull();
+		expect(await codeAgents.promptBlock(PROFILE, "did the fix deploy?")).not.toContain("(new, mention it)");
+	});
+});

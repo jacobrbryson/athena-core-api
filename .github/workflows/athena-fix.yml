@@ -1,0 +1,278 @@
+# Athena fix — an agent writes a fix, and it merges only when every required
+# check passes.
+#
+# Authorized by the owner on 2026-10-10 (workspace AGENTS.md, "Code fixes").
+# Athena opens an issue labeled `athena-fix` (core_api action `fix_code`, which
+# always needs the owner's approval). Two jobs, so the agent never sits next to
+# anything that can push:
+#
+#   edit     The agent changes files in a read-only checkout. It can read its
+#            own API key and nothing else, has no shell, and its only output is
+#            a patch.
+#   publish  No agent. In the `athena-publish` environment, it reads the GitHub
+#            App's key, mints a token scoped to this repo (contents + pull
+#            requests only), pushes `athena/fix-<issue>-<agent>`, opens the pull
+#            request and turns on auto-merge.
+#
+# Google gives out the App key only to the publish job: the `github-fix` pool
+# accepts only this file on main in Athena's four repos, and only a job in the
+# `athena-publish` environment may become the service account that reads it.
+# The App has no Workflows permission, so a patch touching .github/ cannot be
+# pushed at all; anything else protected fails the required "Protected paths"
+# check, and branch protection decides whether the pull request merges.
+#
+# The same file lives in each of Athena's repos; keep them identical.
+name: Athena fix
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: athena-fix-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+env:
+  GCP_PROVIDER: projects/12367074465/locations/global/workloadIdentityPools/github-fix/providers/athena-fix
+  AGENT: ${{ contains(github.event.issue.labels.*.name, 'athena-fix-codex') && 'codex' || 'claude' }}
+
+jobs:
+  edit:
+    if: contains(github.event.issue.labels.*.name, 'athena-fix') && github.event.issue.user.login == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Sign in to Google
+        id: gcp
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_PROVIDER }}
+          service_account: athena-gh-agents@athena-476423.iam.gserviceaccount.com
+          token_format: access_token
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Read the agent's API key
+        env:
+          TOKEN: ${{ steps.gcp.outputs.access_token }}
+        run: |
+          name=$([ "$AGENT" = codex ] && echo OPENAI_API_KEY || echo ANTHROPIC_API_KEY)
+          key=$(curl -sf -H "Authorization: Bearer $TOKEN" \
+            "https://secretmanager.googleapis.com/v1/projects/athena-476423/secrets/$name/versions/latest:access" \
+            | jq -r '.payload.data' | base64 -d)
+          [ -n "$key" ] || { echo "Could not read $name"; exit 1; }
+          echo "::add-mask::$key"
+          echo "$name=$key" >> "$GITHUB_ENV"
+
+      - name: Write the task
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          {
+            printf '%s\n\n' "You are fixing a bug in this repository for Athena. Make the smallest change that fixes it, in the style of the surrounding code, and add or update a test when there is one to update. Do not touch .github/, Dockerfile, cloudbuild.yaml, AGENTS.md, package.json or lockfiles. When you finish, reply with a short summary of what you changed and why."
+            printf '# %s\n\n%s\n' "$ISSUE_TITLE" "$ISSUE_BODY"
+          } > "$RUNNER_TEMP/task.md"
+
+      - uses: actions/setup-node@v4
+        if: env.AGENT == 'claude'
+        with:
+          node-version: 22
+
+      - name: Claude Code writes the fix
+        if: env.AGENT == 'claude'
+        run: |
+          npx -y @anthropic-ai/claude-code -p "$(cat "$RUNNER_TEMP/task.md")" \
+            --allowedTools "Read,Glob,Grep,Edit,MultiEdit,Write" \
+            --disallowedTools "Bash,WebFetch,WebSearch,NotebookEdit" \
+            --max-turns 60 \
+            --output-format text > "$RUNNER_TEMP/summary.md"
+
+      - name: Codex writes the fix
+        id: codex
+        if: env.AGENT == 'codex'
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ env.OPENAI_API_KEY }}
+          prompt-file: ${{ runner.temp }}/task.md
+          permission-profile: ":workspace"
+
+      - name: Package the change as a patch
+        env:
+          CODEX_SUMMARY: ${{ steps.codex.outputs.final-message }}
+        run: |
+          if [ "$AGENT" = codex ]; then printf '%s\n' "$CODEX_SUMMARY" > "$RUNNER_TEMP/summary.md"; fi
+          mkdir -p "$RUNNER_TEMP/out"
+          git add -A
+          git diff --cached --binary > "$RUNNER_TEMP/out/fix.patch"
+          git diff --cached --name-only > "$RUNNER_TEMP/out/files.txt"
+          cp "$RUNNER_TEMP/summary.md" "$RUNNER_TEMP/out/summary.md"
+          echo "Changed files:"; cat "$RUNNER_TEMP/out/files.txt"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: athena-fix
+          path: ${{ runner.temp }}/out
+          retention-days: 7
+
+  publish:
+    needs: edit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: athena-publish
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: athena-fix
+          path: ${{ runner.temp }}/fix
+
+      - name: Stop if the agent changed nothing
+        id: empty
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          if [ ! -s "$RUNNER_TEMP/fix/fix.patch" ]; then
+            {
+              echo "<!-- athena-fix-result:none -->"
+              echo "**No change made.** The ${AGENT} agent finished without changing any files."
+              echo; cat "$RUNNER_TEMP/fix/summary.md"
+            } > "$RUNNER_TEMP/comment.md"
+            gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/comment.md"
+            echo "empty=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sign in to Google
+        if: steps.empty.outputs.empty != 'true'
+        id: gcp
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_PROVIDER }}
+          service_account: athena-gh-fixer@athena-476423.iam.gserviceaccount.com
+          token_format: access_token
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Mint a token for this repo only
+        if: steps.empty.outputs.empty != 'true'
+        env:
+          TOKEN: ${{ steps.gcp.outputs.access_token }}
+        run: |
+          read_secret() {
+            curl -sf -H "Authorization: Bearer $TOKEN" \
+              "https://secretmanager.googleapis.com/v1/projects/athena-476423/secrets/$1/versions/latest:access" \
+              | jq -r '.payload.data' | base64 -d
+          }
+          APP_ID=$(read_secret GITHUB_APP_ID) APP_KEY=$(read_secret GITHUB_APP_PRIVATE_KEY) node -e '
+            const crypto = require("crypto");
+            const b = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+            const now = Math.floor(Date.now() / 1000);
+            const head = b({ alg: "RS256", typ: "JWT" }) + "." + b({ iat: now - 60, exp: now + 540, iss: process.env.APP_ID });
+            const jwt = head + "." + crypto.sign("RSA-SHA256", Buffer.from(head), process.env.APP_KEY).toString("base64url");
+            const h = { Authorization: "Bearer " + jwt, Accept: "application/vnd.github+json", "User-Agent": "athena-fix" };
+            const [owner, repo] = process.env.GITHUB_REPOSITORY.split("/");
+            (async () => {
+              const inst = await (await fetch(`https://api.github.com/repos/${owner}/${repo}/installation`, { headers: h })).json();
+              const res = await fetch(`https://api.github.com/app/installations/${inst.id}/access_tokens`, {
+                method: "POST", headers: h,
+                body: JSON.stringify({ repositories: [repo], permissions: { contents: "write", pull_requests: "write" } }),
+              });
+              const t = await res.json();
+              if (!t.token) { console.error("No token:", res.status); process.exit(1); }
+              console.log("::add-mask::" + t.token);
+              require("fs").appendFileSync(process.env.GITHUB_ENV, "APP_TOKEN=" + t.token + "\n");
+            })();
+          '
+
+      - name: Push the branch and open the pull request
+        if: steps.empty.outputs.empty != 'true'
+        id: pr
+        env:
+          GH_TOKEN: ${{ env.APP_TOKEN }}
+          ISSUE: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+        run: |
+          set -euo pipefail
+          git clone --quiet --depth 1 "https://x-access-token:${APP_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" repo
+          cd repo
+          git config user.name "athena-companion-agents[bot]"
+          git config user.email "athena-companion-agents[bot]@users.noreply.github.com"
+          branch="athena/fix-${ISSUE}-${AGENT}"
+          git checkout -b "$branch"
+          git apply --index "$RUNNER_TEMP/fix/fix.patch"
+          git commit --quiet -m "Athena fix #${ISSUE}: ${ISSUE_TITLE#Athena fix: }" -m "Written by the ${AGENT} agent for issue #${ISSUE}."
+          git push --quiet origin "$branch"
+          {
+            cat "$RUNNER_TEMP/fix/summary.md"
+            echo
+            echo "**Files changed:**"; sed 's/^/- `/; s/$/`/' "$RUNNER_TEMP/fix/files.txt"
+            echo
+            echo "Closes #${ISSUE}. Written by the ${AGENT} agent at Athena's request, approved by the owner."
+            echo "Merges automatically once every required check passes."
+          } > "$RUNNER_TEMP/pr.md"
+          url=$(gh pr create --base main --head "$branch" --title "Athena fix: ${ISSUE_TITLE#Athena fix: }" --body-file "$RUNNER_TEMP/pr.md")
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+          # Auto-merge only under branch protection that requires both checks.
+          # Without it, "auto-merge" could mean merging at once, so the pull
+          # request is left for the owner instead. Fails closed: an unreadable
+          # rule counts as missing.
+          classic=$(gh api "repos/$GITHUB_REPOSITORY/branches/main" \
+            --jq '.protection.required_status_checks.contexts // [] | .[]' 2>/dev/null || true)
+          rules=$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/main" \
+            --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context' 2>/dev/null || true)
+          required=$(printf '%s\n%s\n' "$classic" "$rules")
+          if grep -qx 'ci' <<<"$required" && grep -qx 'protected-paths' <<<"$required"; then
+            gh pr merge "$url" --auto --squash || echo "automerge=failed" >> "$GITHUB_OUTPUT"
+          else
+            echo "automerge=unprotected" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report back on the issue
+        if: always() && steps.empty.outputs.empty != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+          URL: ${{ steps.pr.outputs.url }}
+          AUTOMERGE: ${{ steps.pr.outputs.automerge }}
+        run: |
+          {
+            if [ -n "$URL" ]; then
+              echo "<!-- athena-fix-pr: $URL -->"
+              echo "**Pull request opened:** $URL"
+              if [ "$AUTOMERGE" = failed ]; then echo "Auto-merge could not be turned on; it needs a human merge."; fi
+              if [ "$AUTOMERGE" = unprotected ]; then echo "Auto-merge was not turned on: \`main\` does not yet require the \`ci\` and \`protected-paths\` checks, so this needs a human merge."; fi
+            else
+              echo "<!-- athena-fix-result:failed -->"
+              echo "**The fix couldn't be published.** See the workflow run for details."
+            fi
+          } > "$RUNNER_TEMP/comment.md"
+          gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/comment.md"
+
+  edit-failed:
+    needs: edit
+    if: failure() && contains(github.event.issue.labels.*.name, 'athena-fix') && github.event.issue.user.login == github.repository_owner
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body "<!-- athena-fix-result:failed -->
+          **The ${AGENT} agent couldn't finish this fix.** See the workflow run for details."

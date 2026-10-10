@@ -6,7 +6,7 @@ where: the ⋯ menu (top right) → Actions
 status: partial
 surfaces: [companion]
 audiences: [adult]
-triggers: [investigate, look into the code, claude code, codex, why is it broken, debug, find the bug, add to my calendar, put it on my calendar, book, schedule it, schedule that, make an event, create an event, can you do it, do it for me, remember that, actions, approve, without asking]
+triggers: [investigate, look into the code, fix it, fix that, fix the bug, pull request, merge, deploy the fix, claude code, codex, why is it broken, debug, find the bug, add to my calendar, put it on my calendar, book, schedule it, schedule that, make an event, create an event, can you do it, do it for me, remember that, actions, approve, without asking]
 ---
 
 ## What I can do
@@ -43,6 +43,11 @@ Two things I can propose today:
   likely cause; they can't change anything. Their findings take a few minutes,
   and I'll tell you what they found when they're back, or when you ask. Only
   for the owner's account.
+- **Have a coding agent fix it** — usually right after an investigation.
+  Claude Code writes the fix (or Codex, if you'd rather) and opens a pull
+  request, which merges and deploys by itself only if every check passes. I
+  always ask first for this one, every time, and I'll tell you when it's
+  merged, or if a check stopped it. Only for the owner's account.
 
 **When there's more than one way to do it, I ask first.** "I can put an
 alert on your calendar for 7, or remind you when you pull into the driveway —
@@ -110,9 +115,16 @@ Approval cards work on your paired phone or car too, not just in this browser.
 - **I can't schedule more than a year out**, or anything in the past, or a
   single event longer than two weeks.
 - **One proposal per reply.** I won't queue up a batch of changes.
-- **Coding agents only investigate.** They read the code and report; fixing
-  is still up to the owner. Each investigation opens an issue on GitHub, and
-  it only works in my four app repositories.
+- **I never merge or deploy code myself.** A fix merges only through GitHub's
+  auto-merge, after every required check passes, and Cloud Build deploys it.
+  Anything touching security, sign-in, permissions, my actions, dependencies or
+  deployment is refused by a check before it can merge — the owner changes
+  those by hand.
+- **A fix can't be undone with a tap.** Once merged it's live; reversing it
+  is another fix. That's why I ask every time and never take a standing "yes"
+  for it.
+- **Coding agents only work in my four app repositories**, and every
+  investigation or fix opens an issue on GitHub there.
 - **Children and Guardians can't approve anything**, and I won't offer them
   actions at all. This is the account owner's decision.
 - **A look can't be undone.** Adding an event or saving a fact are things you
@@ -154,6 +166,18 @@ Approval cards work on your paired phone or car too, not just in this browser.
   `GITHUB_AGENT_TOKEN` and `CODE_AGENT_GOOGLE_IDS` in Secret Manager; offered
   only via the registry's `availableTo` hook. Tests:
   `src/services/codeAgents.test.js`.
+- Code fixes (owner-authorized 2026-10-10, workspace AGENTS.md "Code
+  fixes"): `fix_code` in the registry (`standing: false`, never grantable),
+  `openFix` / `fixStatus` in `src/services/codeAgents.js` (issue labeled
+  `athena-fix`, plus `athena-fix-codex` for Codex; status read from the
+  `<!-- athena-fix-pr: … -->` / `athena-fix-result` comments and the PR's
+  merged state). Workflow `.github/workflows/athena-fix.yml`: an `edit` job
+  (agent, read-only checkout, no shell, emits a patch) and a `publish` job in
+  the `athena-publish` environment (GitHub App token minted for one repo, push
+  `athena/fix-<n>-<agent>`, PR, auto-merge). Required checks: `ci` and
+  `protected-paths` (`.github/workflows/protected-paths.yml`). Secrets:
+  `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY` via the `github-fix` pool and
+  service account `athena-gh-fixer`.
 - No dead ends (2026-10-10): `actions.attempt()` returns `{ proposal,
   rejected: { stage, reason } }`; `propose()` is a wrapper that keeps the old
   contract. `gemini.js` gives one repair pass (`actionRepairNote`) and then

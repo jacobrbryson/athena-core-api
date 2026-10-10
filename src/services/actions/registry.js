@@ -405,6 +405,79 @@ const ACTIONS = [
 		},
 	},
 
+	// Code fixes, authorized by the owner 2026-10-10 (workspace AGENTS.md,
+	// "Code fixes") — phase 4. Opens an issue labeled `athena-fix`; the repo's
+	// athena-fix workflow has one agent write the change and opens a pull
+	// request that GitHub auto-merges only when every required check passes,
+	// including the protected-path check. Athena never pushes or merges.
+	// Never standing: the owner approves every fix.
+	{
+		id: "fix_code",
+		label: "Have a coding agent fix a bug",
+		provider: null,
+		consentType: "action_authority",
+		// A merged fix deploys. Reverting it is another pull request, not an undo.
+		reversible: false,
+		standing: false,
+		describe:
+			"Have a coding agent change your own source code to fix something — usually after an " +
+			"investigation found the cause. One agent writes the fix and opens a pull request, which merges " +
+			"and deploys by itself only if every check passes. Say plainly that approving it can change " +
+			"and redeploy the app. Not for anything touching security, sign-in, permissions or your actions: " +
+			"those changes are refused automatically.",
+		params: {
+			repo: "Which codebase, from the same list as investigate_code. Required.",
+			change:
+				"What to change, specifically: the file or behavior, what it does now and what it should do. " +
+				"Required.",
+			investigation:
+				'The investigation it follows from, as its reference ("owner/repo#12"), when there is one. Optional.',
+			agent: '"claude" (default) or "codex" — who writes the fix. Optional.',
+		},
+
+		availableTo(profileId) {
+			return codeAgents.mayUse(profileId);
+		},
+
+		async normalize(raw = {}, ctx = {}) {
+			const repo = str(raw.repo, 40);
+			if (!repo || !Object.prototype.hasOwnProperty.call(codeAgents.REPOS, repo)) {
+				throw invalid(`Repo must be one of: ${Object.keys(codeAgents.REPOS).join(", ")}`);
+			}
+			const change = str(raw.change, 1500);
+			if (!change || change.length < 20) throw invalid("Say exactly what to change");
+			const agent = raw.agent === undefined || raw.agent === null || raw.agent === "" ? "claude" : raw.agent;
+			if (agent !== "claude" && agent !== "codex") throw invalid('Agent must be "claude" or "codex"');
+			let investigation = null;
+			if (raw.investigation) {
+				const ref = codeAgents.parseRef(str(raw.investigation, 120));
+				// Only an investigation in the same repository; anything else is dropped
+				// rather than pointing the agent at an unrelated issue.
+				if (!ref || ref.full !== codeAgents.REPOS[repo].full) {
+					throw invalid("The investigation must be one in the same repository");
+				}
+				investigation = `${ref.full}#${ref.number}`;
+			}
+			if (!ctx.profileId || !(await codeAgents.mayUse(ctx.profileId))) {
+				throw invalid("Coding agents are not available to this account");
+			}
+			return { repo, change, agent, ...(investigation ? { investigation } : {}) };
+		},
+
+		summarize(p) {
+			const who = p.agent === "codex" ? "Codex" : "Claude Code";
+			return `Have ${who} fix ${p.repo}: ${p.change} — merges and deploys by itself if every check passes`.slice(0, 500);
+		},
+
+		async execute(profileId, params) {
+			if (!(await codeAgents.mayUse(profileId))) {
+				throw new Error("Coding agents are not available to this account");
+			}
+			const { ref } = await codeAgents.openFix(params);
+			return { ref, detail: null };
+		},
+	},
+
 	// Place reminders (services/placeReminders.js), added on the owner's
 	// instruction 2026-10-04: "next time I'm at Missy's, remind me to ...".
 	// The card is the address check — it names the exact point that will be

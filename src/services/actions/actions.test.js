@@ -18,6 +18,11 @@ jest.mock("../codeAgents", () => ({
 	REPOS: { core_api: { full: "o/core", about: "backend" }, companion: { full: "o/companion", about: "app" } },
 	mayUse: jest.fn(async () => false),
 	openInvestigation: jest.fn(),
+	openFix: jest.fn(),
+	parseRef: (ref) => {
+		const m = /^([\w.-]+\/[\w.-]+)#(\d+)$/.exec(String(ref || ""));
+		return m ? { full: m[1], number: Number(m[2]) } : null;
+	},
 }));
 jest.mock("../memory", () => ({
 	CATEGORIES: new Set(["interest", "routine", "other"]),
@@ -505,6 +510,56 @@ describe("investigate_code (coding agents, 2026-10-09)", () => {
 		expect(offered).not.toContain("investigate_code");
 		// A failing check removes only that action, never the others.
 		expect(offered).toContain("remember_fact");
+	});
+});
+
+describe("fix_code (code fixes, owner-authorized 2026-10-10)", () => {
+	const action = registry.get("fix_code");
+	const ctx = { profileId: PROFILE };
+	const ok = { repo: "core_api", change: "Use the sprint's own date range in the Jira query instead of 30 days" };
+
+	beforeEach(() => codeAgents.mayUse.mockResolvedValue(true));
+
+	test("is never eligible for a standing approval, and says it can't be undone", async () => {
+		expect(action.standing).toBe(false);
+		expect(action.reversible).toBe(false);
+		await expect(actions.grantAuthority(PROFILE, "fix_code")).rejects.toMatchObject({ code: "standing_not_allowed" });
+	});
+
+	test("accepts a listed repo and a specific change, defaulting to Claude, and keeps nothing else", async () => {
+		const p = await action.normalize({ ...ok, branch: "main", merge: "now", files: ["x"] }, ctx);
+		expect(p).toEqual({ ...ok, agent: "claude" });
+		expect(await action.normalize({ ...ok, agent: "codex" }, ctx)).toMatchObject({ agent: "codex" });
+	});
+
+	test("keeps an investigation only from the same repository", async () => {
+		expect(await action.normalize({ ...ok, investigation: "o/core#12" }, ctx)).toMatchObject({ investigation: "o/core#12" });
+		await expect(action.normalize({ ...ok, investigation: "o/companion#3" }, ctx)).rejects.toThrow(/same repository/);
+		await expect(action.normalize({ ...ok, investigation: "someone/else#1" }, ctx)).rejects.toThrow(/same repository/);
+		await expect(action.normalize({ ...ok, investigation: "not a ref" }, ctx)).rejects.toThrow(/same repository/);
+	});
+
+	test("refuses an unlisted repo, a vague change, or an unknown agent", async () => {
+		await expect(action.normalize({ ...ok, repo: "o/core" }, ctx)).rejects.toThrow(/Repo must be one of/);
+		await expect(action.normalize({ ...ok, change: "fix it" }, ctx)).rejects.toThrow(/exactly what to change/);
+		await expect(action.normalize({ ...ok, agent: "gpt" }, ctx)).rejects.toThrow(/Agent must be/);
+	});
+
+	test("refuses anyone not on the owner's list, at proposal and at execution", async () => {
+		codeAgents.mayUse.mockResolvedValue(false);
+		await expect(action.normalize(ok, ctx)).rejects.toThrow(/not available/);
+		await expect(action.execute(PROFILE, { ...ok, agent: "claude" })).rejects.toThrow(/not available/);
+		expect(codeAgents.openFix).not.toHaveBeenCalled();
+	});
+
+	test("executes by opening the fix and records its reference", async () => {
+		codeAgents.openFix.mockResolvedValue({ ref: "o/core#13", url: "https://x", number: 13 });
+		expect(await action.execute(PROFILE, { ...ok, agent: "claude" })).toEqual({ ref: "o/core#13", detail: null });
+		expect(codeAgents.openFix).toHaveBeenCalledWith({ ...ok, agent: "claude" });
+	});
+
+	test("its card says it merges and deploys by itself", () => {
+		expect(action.summarize({ ...ok, agent: "claude" })).toMatch(/merges and deploys by itself/);
 	});
 });
 

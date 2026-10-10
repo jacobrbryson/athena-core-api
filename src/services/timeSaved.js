@@ -31,6 +31,9 @@ const MINUTES = {
   // Writing the bug up and finding the right file yourself. The debugging the
   // agents do is worth more, but how much varies too much to claim it.
   investigate_code: 5,
+  // Writing, testing and shipping a small fix yourself, kept low: many fixes
+  // are bigger, and one that doesn't merge saved nothing.
+  fix_code: 10,
 };
 
 const labels = new Map(ACTIONS.map((a) => [a.id, a.label]));

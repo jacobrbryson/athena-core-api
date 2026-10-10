@@ -1,5 +1,11 @@
 # Capability ledger
 
+- 2026-10-10 — Coding agents can fix, not just investigate: with the owner's
+  approval every time, Claude Code (or Codex) writes the fix and opens a pull
+  request that merges and deploys only when CI and the protected-path check
+  pass; Athena reports when it's merged or blocked — `actions.md`
+  (status: partial)
+
 - 2026-10-09 — Coding agents, investigate only: tell Athena something in her
   apps is wrong and she can have Claude Code and Codex read the code (read-only)
   and report the likely cause, then explains their findings in chat. Owner's
@@ -390,3 +396,4 @@ See [`README.md`](README.md) for the full contract.
 - 2026-10-09 — Jira now lists only your issues in the current sprint (still not Done); backlog and future-sprint tickets no longer show on the dashboard or in what I read about your work, and an OAuth-linked site is read up to 25 issues instead of 10 — `jira.md` (status: live)
 - 2026-10-09 — Ask how far a place is ("How far away is Statesville Soccer Complex?") and I look up the real drive on Google Maps, with traffic. I measure from home or from where your phone is right now, and ask which you mean when those are different places. I can't save to your Google Maps lists, because Google doesn't let apps write to them — `travel-distance.md` (status: partial)
 - 2026-10-10 — When something I propose is turned down before it reaches you, I see why and fix it, offer the nearest thing I can do, or ask the one question I need — no more "scratch that" and silence. When there's more than one way to do something I ask which you want before making a card, and you can change a waiting card ("make it 2:00") and I replace it instead of adding a second — `actions.md` (status: partial)
+- 2026-10-10 — I look things up before I answer instead of guessing: your calendar, the weather at an event's place and time (US National Weather Service, up to a week out), and web searches I write myself once I know what you mean — never with family names, health or email contents in them. Your own calendar comes before the web, so "the games" means your games — `looking-things-up.md` (status: partial)
