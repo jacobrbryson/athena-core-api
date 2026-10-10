@@ -32,22 +32,45 @@ async function getJson(url) {
 const round = (value) => Number(Number(value).toFixed(4));
 
 /**
- * Hour-by-hour for the next `hours`, plus a one-line read on whether outdoor
- * plans survive it. Returns null — never a guess — when the point is outside
- * NWS coverage or the service is unreachable.
+ * The raw hourly periods for a point (about a week of them), cached. Null
+ * when the point is outside NWS coverage or the service is unreachable.
  */
-async function forecast(latitude, longitude, { hours = 8 } = {}) {
-	if (!Number.isFinite(Number(latitude)) || !Number.isFinite(Number(longitude))) return null;
+async function hourlyFor(latitude, longitude) {
 	const key = `${round(latitude)},${round(longitude)}`;
 	const hit = cache.get(key);
 	if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value;
+	const point = await getJson(`${HOST}/points/${key}`);
+	const hourlyUrl = point?.properties?.forecastHourly;
+	if (!hourlyUrl || !hourlyUrl.startsWith(HOST)) return null;
+	const hourly = await getJson(hourlyUrl);
+	const periods = hourly?.properties?.periods || [];
+	if (!periods.length) return null;
+	const where = point?.properties?.relativeLocation?.properties;
+	const value = { place: where ? `${where.city}, ${where.state}` : null, periods };
+	cache.set(key, { at: Date.now(), value });
+	if (cache.size > 64) cache.delete(cache.keys().next().value);
+	return value;
+}
 
+/**
+ * Hour-by-hour for `hours` starting now — or starting at `from` (an ISO time,
+ * up to about a week out: "the 5:30 game tomorrow") — plus a one-line read on
+ * whether outdoor plans survive it. Returns null — never a guess — when the
+ * point is outside NWS coverage, the service is unreachable, or `from` is
+ * beyond what NWS forecasts.
+ */
+async function forecast(latitude, longitude, { hours = 8, from = null } = {}) {
+	if (!Number.isFinite(Number(latitude)) || !Number.isFinite(Number(longitude))) return null;
 	try {
-		const point = await getJson(`${HOST}/points/${key}`);
-		const hourlyUrl = point?.properties?.forecastHourly;
-		if (!hourlyUrl || !hourlyUrl.startsWith(HOST)) return null;
-		const hourly = await getJson(hourlyUrl);
-		const periods = (hourly?.properties?.periods || []).slice(0, Math.max(1, Math.min(hours, 24)));
+		const raw = await hourlyFor(latitude, longitude);
+		if (!raw) return null;
+		const startAt = from ? new Date(from).getTime() : NaN;
+		// The period that contains `from`, or the first one when there is no `from`.
+		const first = Number.isFinite(startAt)
+			? raw.periods.findIndex((p) => new Date(p.endTime || p.startTime).getTime() > startAt)
+			: 0;
+		if (first < 0) return null;
+		const periods = raw.periods.slice(first, first + Math.max(1, Math.min(hours, 24)));
 		if (!periods.length) return null;
 
 		const window = periods.map((p) => ({
@@ -59,10 +82,8 @@ async function forecast(latitude, longitude, { hours = 8 } = {}) {
 		}));
 		const wettest = Math.max(...window.map((h) => h.precipitationChance ?? 0));
 		const raining = /rain|shower|storm|thunder|sleet|snow|ice/i;
-		const value = {
-			place: point?.properties?.relativeLocation?.properties
-				? `${point.properties.relativeLocation.properties.city}, ${point.properties.relativeLocation.properties.state}`
-				: null,
+		return {
+			place: raw.place,
 			now: window[0],
 			hours: window,
 			maxPrecipitationChance: Number.isFinite(wettest) ? wettest : null,
@@ -72,9 +93,6 @@ async function forecast(latitude, longitude, { hours = 8 } = {}) {
 			outdoorOutlook: window.some((h) => raining.test(h.shortForecast || "")) || wettest >= 50 ? "wet" : "fine",
 			checkedAt: new Date().toISOString(),
 		};
-		cache.set(key, { at: Date.now(), value });
-		if (cache.size > 64) cache.delete(cache.keys().next().value);
-		return value;
 	} catch (err) {
 		console.warn("[weather] unavailable:", err.message);
 		return null;

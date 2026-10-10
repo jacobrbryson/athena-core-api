@@ -78,7 +78,9 @@ function withTimeout(promise, ms) {
 function formatBlock(result) {
 	const lines = [
 		"# From the web (you searched this just now)",
-		"You looked this up a moment ago. Use it for anything current, and let it overrule what you remember.",
+		"You looked this up a moment ago. For facts about the world, use it and let it overrule what you remember.",
+		"It knows nothing about this person: when it's about a different event, team or place than their own calendar",
+		"or plans show (\"the games\" were their kids' games, not a pro team's), go with theirs, or ask which they mean.",
 		"Where it doesn't settle the question, say so rather than filling the gap. Mention a source by name when it matters (\"according to Reuters\");",
 		"the links are shown under your reply, so never read out a URL.",
 		"",

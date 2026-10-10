@@ -16,6 +16,7 @@ const missionService = require("../services/mission");
 const selfKnowledge = require("../services/selfKnowledge");
 const actions = require("../services/actions");
 const capabilityGaps = require("../services/capabilityGaps");
+const needs = require("../services/needs");
 const initiative = require("../services/initiative");
 const nearbyIncidents = require("../services/pulsepoint/watch");
 const familyHealth = require("../services/familyHealth");
@@ -78,6 +79,15 @@ const DOUBLE_CHECK_FILLER = {
   key: "double-check",
   text: "Hm, let me double-check that…",
 };
+
+// Said while she reads what she asked for in `needs`, when nothing has been
+// said yet this turn. Fixed text, like every filler line.
+const CHECKING_FILLER = { key: "checking", text: "Let me check, one sec…" };
+// Lookups she may ask for before answering: two rounds is calendar → the
+// weather at that event. The write after the last round is told to answer.
+const MAX_NEED_ROUNDS = 2;
+// Past this, no further round starts; she answers with what she has.
+const NEED_BUDGET_MS = 7000;
 
 /**
  * What the second pass is told when her proposal was turned down. The reason
@@ -267,10 +277,17 @@ async function processAiResponse(session, message, clients, ctx = {}) {
           onRead,
         )
       : Promise.resolve(null);
+    // A guessed (not asked-for) search used to go out with the person's raw
+    // words — "weather for the games today" came back about Cleveland. Where
+    // she can ask for a search herself (services/needs: adults with a
+    // profile), she writes the query once she knows what they mean; only an
+    // explicit "look it up" still searches up front.
+    const selfServe =
+      !!session.profile_id && groundingAudience === "adult" && !ctx.guardian;
     const webGrounding = webGroundingFor(
       message,
       groundingAudience,
-      guessPromise,
+      selfServe ? null : guessPromise,
     );
 
     let integrationContext = null;
@@ -537,9 +554,19 @@ async function processAiResponse(session, message, clients, ctx = {}) {
         .filter(Boolean)
         .join("\n\n");
 
+    // What she may ask to have read before she answers (services/needs).
+    // Same audience as actions: adults with a profile, never a Guardian
+    // session. Empty means the old "no lookups mid-reply" rule stands.
+    const needIds = mayPropose
+      ? await needs
+          .available(session.profile_id, { audience: memoryCtx.audience })
+          .catch(() => [])
+      : [];
+
     const promptOptions = {
       capabilityBlock,
       actionBlock,
+      needsBlock: needs.promptBlock(needIds),
       initiativeBlock,
       guardian: ctx.guardian,
       onboarding: ctx.onboarding,
@@ -568,9 +595,13 @@ async function processAiResponse(session, message, clients, ctx = {}) {
     // output isn't valid reply JSON is skipped in favor of the next one
     // instead of silently dropping the reply. Returns { reply, endpointId }
     // or null when no attempt produced a usable reply.
-    const writeReply = async ({ extraContext = null, prefer } = {}) => {
+    // Lookups are open only for the first draft and the needs rounds; every
+    // later rewrite (monologue, action repair) is told to answer.
+    let lookupsOpen = true;
+    const writeReply = async ({ extraContext = null, prefer, needsFinal = !lookupsOpen } = {}) => {
       const prompt = await generatePrompt(session, topics || [], message, {
         ...promptOptions,
+        ...(needsFinal ? { needsBlock: needs.promptBlock(needIds, { final: true }) } : {}),
         integrationContext:
           [integrationContext, extraContext].filter(Boolean).join("\n\n") ||
           null,
@@ -608,14 +639,70 @@ async function processAiResponse(session, message, clients, ctx = {}) {
 
     // A reply resting on search results goes to the frontier first: a small
     // local model is likeliest to embellish what it was handed.
-    const drafted = await writeReply({ prefer: web ? "frontier" : undefined });
+    let drafted = await writeReply({ prefer: web ? "frontier" : undefined });
+
+    // Lookups she asked for (services/needs). A draft with `needs` is not
+    // sent: what she asked for is read, added to the context everything after
+    // this sees (the monologue, an action repair), and the reply is written
+    // again. Bounded by rounds and time; the last write is told to answer.
+    let webUsed = web;
+    let searchedByNeed = false;
+    if (drafted?.reply && needIds.length) {
+      const started = Date.now();
+      const done = new Set();
+      let spoke = !!ctx.fillerSpoken;
+      for (let round = 1; round <= MAX_NEED_ROUNDS; round++) {
+        const wanted = needs.clean(drafted?.reply?.needs, needIds, done);
+        if (!wanted.length || Date.now() - started > NEED_BUDGET_MS) break;
+        console.info(
+          `[gemini] needs round ${round}:`,
+          wanted.map((n) => n.source).join(", "),
+        );
+        if (!spoke) {
+          broadcastToSession(clients, session.uuid, {
+            rpc: "filler",
+            filler: CHECKING_FILLER,
+          });
+          spoke = true;
+        }
+        const got = await needs.fetch(session.profile_id, wanted, {
+          audience: memoryCtx.audience,
+          timeZone: ctx.companion?.timezone,
+          onRead,
+        });
+        got.read.forEach((k) => done.add(k));
+        if (got.blocks.length)
+          integrationContext = [integrationContext, ...got.blocks]
+            .filter(Boolean)
+            .join("\n\n");
+        if (got.sources.length) {
+          searchedByNeed = true;
+          webUsed = {
+            sources: [...(webUsed?.sources || []), ...got.sources],
+          };
+        }
+        const again = await writeReply({
+          prefer: web || searchedByNeed ? "frontier" : undefined,
+          needsFinal: round === MAX_NEED_ROUNDS,
+        });
+        // A failed rewrite keeps the last usable draft — unless that draft
+        // was only "Let me check.", which is worse than the apology below.
+        if (again?.reply) drafted = again;
+        else {
+          drafted = null;
+          break;
+        }
+      }
+    }
+    lookupsOpen = false;
+    if (drafted?.reply) delete drafted.reply.needs;
+
     let parsedResponse = drafted?.reply;
     let fellBack = false;
 
     // The inner monologue: a second look at the draft before she says it —
     // and a search plus a rewrite when it states something she can't support.
     // Adults only; never throws; keeps the draft on any failure.
-    let webUsed = web;
     if (parsedResponse && mayPropose) {
       const reflected = await monologue.reflect({
         profileId: session.profile_id,
@@ -624,7 +711,7 @@ async function processAiResponse(session, message, clients, ctx = {}) {
         draft: parsedResponse,
         draftEndpointId: drafted.endpointId,
         context: integrationContext,
-        searched: !!web,
+        searched: !!web || searchedByNeed,
         rewrite: async (opts) => (await writeReply(opts))?.reply || null,
         search: (query) =>
           webSearch.buildContext(query, { audience: memoryCtx.audience }),

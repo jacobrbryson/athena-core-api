@@ -350,8 +350,26 @@ async function buildContext(profileId, message, { audience, fix = currentFix } =
 	}
 }
 
+/**
+ * A named place ("Clague Park", "the soccer complex") as a point, found near
+ * home when there is one. For other grounding (services/needs: weather at an
+ * event). Null when there is no key or nothing matched; never throws.
+ */
+async function locate(profileId, query) {
+	try {
+		const apiKey = await secrets.getSecret("GOOGLE_MAPS_API_KEY").catch(() => null);
+		if (!apiKey || typeof query !== "string" || !query.trim()) return null;
+		const home = profileId ? await homeOf(profileId) : null;
+		const place = await findPlace(apiKey, query.trim().slice(0, 200), home);
+		return place && geo.isPoint(place) ? place : null;
+	} catch (err) {
+		console.warn("[travel] locate failed:", err.message);
+		return null;
+	}
+}
+
 function reset() {
 	pending.clear();
 }
 
-module.exports = { matches, destinationOf, namedOrigin, followUpChoice, buildContext, currentFix, reset };
+module.exports = { matches, destinationOf, namedOrigin, followUpChoice, buildContext, currentFix, homeOf, locate, reset };

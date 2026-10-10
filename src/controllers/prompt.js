@@ -1,5 +1,6 @@
 const { getMemorySummaryForProfileId } = require("../services/memory");
 const { buildClockBlock } = require("../services/clock");
+const { NEEDS_SCHEMA } = require("../services/needsSchema");
 
 /**
  * Prompt builder. Selects a prompt *strategy* based on the session's
@@ -30,6 +31,11 @@ const RESPONSE_SCHEMA = {
     // then the short line she says first. Only changes how the voice
     // performs the text; it does nothing else.
     lyrics: { type: "string" },
+    // Optional. Sources she wants read before she answers (services/needs).
+    // A draft that fills this is not sent: gemini.js reads what she asked
+    // for and the reply is written again. Read-only, adults only, and each
+    // source is offered only when the person has connected it.
+    needs: NEEDS_SCHEMA,
     // Optional. One thing Athena wants to DO rather than say — see
     // services/actions. Filling this in does NOT perform anything: the
     // backend validates it against the action registry, creates a pending
@@ -841,7 +847,10 @@ async function generatePrompt(session, sessionTopics, message, options = {}) {
     if (options.fillerSpoken)
       systemPrompt += `\n\n# Already said
 You have just said aloud: "${options.fillerSpoken}" Do not say it again or announce that you are checking — go straight to the answer, as if continuing that sentence.`;
-    systemPrompt += `\n\n# No lookups mid-reply
+    // When she can ask for sources (services/needs) that block replaces this
+    // one: she CAN look things up, by asking before she answers.
+    if (options.needsBlock) systemPrompt += `\n\n${options.needsBlock}`;
+    else systemPrompt += `\n\n# No lookups mid-reply
 You cannot fetch, check or look anything up while answering. Everything you can see this turn is already in this prompt. Never say "let me check", "one moment", "I'll look" or anything that promises an answer later — there is no later. If the data they asked about is not above, say plainly you don't have it in front of you right now and suggest they ask again mentioning it directly (for example "what's on my calendar tonight?").`;
     // What she can DO this turn, scoped to what this person has linked and
     // consented to. Null (the common case) means she is read-only right now
