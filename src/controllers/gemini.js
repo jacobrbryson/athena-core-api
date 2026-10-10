@@ -23,6 +23,7 @@ const familyHealth = require("../services/familyHealth");
 const community = require("../services/community");
 const websites = require("../services/websites");
 const placeReminders = require("../services/placeReminders");
+const timeReminders = require("../services/timeReminders");
 const dreams = require("../services/dreams");
 const { audienceForSession } = require("../services/audience");
 const sessionParticipants = require("../services/sessionParticipant");
@@ -508,7 +509,14 @@ async function processAiResponse(session, message, clients, ctx = {}) {
     // location sharing is on so she never promises one that cannot fire.
     if (mayPropose) {
       try {
-        const reminderBlock = await placeReminders.promptBlock(session.profile_id);
+        const reminderBlock = [
+          await placeReminders.promptBlock(session.profile_id),
+          await timeReminders
+            .promptBlock(session.profile_id)
+            .catch(() => null),
+        ]
+          .filter(Boolean)
+          .join("\n\n");
         if (reminderBlock)
           initiativeBlock = initiativeBlock
             ? [initiativeBlock, reminderBlock].join("\n\n")

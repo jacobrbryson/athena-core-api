@@ -53,6 +53,11 @@ const ARRIVAL_RADIUS_M = 300;
 const radiusOf = (row) => Math.max(Number(row.radius_m) || 0, ARRIVAL_RADIUS_M);
 /** Android allows 100 fences per app; leave room and keep the list readable. */
 const MAX_ARMED = 50;
+/**
+ * Once a condition is met ("you were at the gym"), how long the reminder
+ * waits for the place it fires at before it expires and they're asked about it.
+ */
+const AFTER_MET_HOURS = 12;
 /** Arrivals inside this window after the last one are the same visit. */
 const SAME_VISIT_HOURS = 8;
 /** A position older than this is where they were, not where they are. */
@@ -60,6 +65,8 @@ const ARRIVAL_FRESH_MS = 15 * 60_000;
 /** Slack on top of the fence for GPS error; accuracy is capped so a 5 km fix can't count. */
 const MAX_ACCURACY_M = 250;
 const SLACK_M = 50;
+/** The "still want it?" card after a conditional reminder expires. */
+const EXPIRED_NUDGE_TTL_S = 12 * 60 * 60;
 /** The in-app card stays this long if the push didn't reach them. */
 const NUDGE_TTL_S = 2 * 60 * 60;
 const METERS_PER_MILE = 1609.344;
@@ -68,6 +75,7 @@ const invalid = (message) => Object.assign(new Error(message), { status: 400, co
 const bad = (message, status = 400) => Object.assign(new Error(message), { status });
 const trim = (value, max) => (typeof value === "string" && value.trim() ? value.trim().slice(0, max) : null);
 /** "Missy's house" and "missys  house" are the same name; punctuation and case aren't. */
+const HOME_WORDS = new Set(["home", "my house", "our house", "the house", "my home", "house"]);
 const nameKey = (value) => String(value || "").toLowerCase().replace(/[’']/g, "").replace(/[^a-z0-9]+/g, " ").trim();
 
 function toReminder(row) {
@@ -82,6 +90,16 @@ function toReminder(row) {
 		reminder: row.text,
 		repeats: row.repeats === 1 || row.repeats === true,
 		status: row.status,
+		// "When I get home FROM THE GYM": what has to happen first, and whether it has.
+		condition: row.after_kind
+			? {
+					kind: row.after_kind,
+					label: row.after_label || null,
+					after: row.after_at || null,
+					metAt: row.condition_met_at || null,
+				}
+			: null,
+		expiresAt: row.expires_at || null,
 		fireCount: Number(row.fire_count || 0),
 		lastFiredAt: row.last_fired_at || null,
 		doneAt: row.done_at || null,
@@ -103,7 +121,11 @@ async function resolvePlace(profileId, raw = {}) {
 	if (placeRef) {
 		const places = await watch.listPlaces(profileId);
 		const wanted = nameKey(placeRef);
-		const found = places.find((p) => p.uuid === placeRef) || places.find((p) => nameKey(p.name) === wanted);
+		const found =
+			places.find((p) => p.uuid === placeRef) ||
+			places.find((p) => nameKey(p.name) === wanted) ||
+			// "When I get home": the point of interest marked as home, whatever it's called.
+			(HOME_WORDS.has(wanted) ? places.find((p) => p.kind === "home") : null);
 		if (found && geo.isPoint(found)) {
 			return {
 				place_uuid: found.uuid,
@@ -136,7 +158,7 @@ async function resolvePlace(profileId, raw = {}) {
 
 async function armedCount(profileId) {
 	const [rows] = await pool.query(
-		"SELECT COUNT(*) AS n FROM athena_place_reminder WHERE profile_id = ? AND status = 'armed'",
+		"SELECT COUNT(*) AS n FROM athena_place_reminder WHERE profile_id = ? AND status IN ('armed', 'waiting')",
 		[profileId]
 	);
 	return Number(rows[0]?.n || 0);
@@ -148,10 +170,12 @@ async function create(profileId, params, { actionUuid = null } = {}) {
 		throw bad(`You already have ${MAX_ARMED} place reminders waiting; remove one on the Community page first.`, 409);
 	}
 	const uuid = randomUUID();
+	const after = params.after || null;
 	await pool.query(
 		`INSERT INTO athena_place_reminder
-			(uuid, profile_id, place_uuid, place_name, address, latitude, longitude, radius_m, text, repeats, action_uuid)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			(uuid, profile_id, place_uuid, place_name, address, latitude, longitude, radius_m, text, repeats, action_uuid,
+			 status, after_kind, after_label, after_latitude, after_longitude, after_at, expires_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		[
 			uuid,
 			profileId,
@@ -164,6 +188,13 @@ async function create(profileId, params, { actionUuid = null } = {}) {
 			params.reminder,
 			params.repeats === "every_visit" ? 1 : 0,
 			actionUuid,
+			after ? "waiting" : "armed",
+			after?.kind || null,
+			after?.label || null,
+			after?.latitude ?? null,
+			after?.longitude ?? null,
+			after?.at ? new Date(after.at) : null,
+			after?.expires_at ? new Date(after.expires_at) : null,
 		]
 	);
 	const pref = await location.getPref(profileId).catch(() => ({ enabled: false }));
@@ -174,8 +205,9 @@ async function create(profileId, params, { actionUuid = null } = {}) {
 async function list(profileId) {
 	const [rows] = await pool.query(
 		`SELECT * FROM athena_place_reminder
-		 WHERE profile_id = ? AND (status = 'armed' OR (status = 'done' AND done_at >= NOW() - INTERVAL 14 DAY))
-		 ORDER BY status = 'armed' DESC, created_at DESC LIMIT 100`,
+		 WHERE profile_id = ? AND (status IN ('armed', 'waiting')
+		   OR (status IN ('done', 'expired') AND COALESCE(done_at, expires_at) >= NOW() - INTERVAL 14 DAY))
+		 ORDER BY status IN ('armed', 'waiting') DESC, created_at DESC LIMIT 100`,
 		[profileId]
 	);
 	return rows.map(toReminder);
@@ -183,7 +215,7 @@ async function list(profileId) {
 
 async function cancel(profileId, uuid) {
 	const [result] = await pool.query(
-		"UPDATE athena_place_reminder SET status = 'cancelled' WHERE profile_id = ? AND uuid = ? AND status = 'armed'",
+		"UPDATE athena_place_reminder SET status = 'cancelled' WHERE profile_id = ? AND uuid = ? AND status IN ('armed', 'waiting')",
 		[profileId, String(uuid || "")]
 	);
 	if (!result.affectedRows) throw bad("That reminder isn't waiting any more.", 404);
@@ -198,19 +230,28 @@ async function geofences(profileId) {
 	const pref = await location.getPref(profileId);
 	if (!pref.enabled) return { enabled: false, fences: [] };
 	const [rows] = await pool.query(
-		`SELECT uuid, latitude, longitude, radius_m FROM athena_place_reminder
-		 WHERE profile_id = ? AND status = 'armed' ORDER BY created_at LIMIT ?`,
+		`SELECT uuid, status, latitude, longitude, radius_m, after_kind, after_latitude, after_longitude
+		 FROM athena_place_reminder
+		 WHERE profile_id = ? AND status IN ('armed', 'waiting') ORDER BY created_at LIMIT ?`,
 		[profileId, MAX_ARMED]
 	);
-	return {
-		enabled: true,
-		fences: rows.map((r) => ({
-			id: r.uuid,
-			latitude: Number(r.latitude),
-			longitude: Number(r.longitude),
-			radius_m: radiusOf(r),
-		})),
-	};
+	const fences = [];
+	for (const r of rows) {
+		fences.push({ id: r.uuid, latitude: Number(r.latitude), longitude: Number(r.longitude), radius_m: radiusOf(r) });
+		// The condition's own fence ("the gym"), held from the start so the
+		// phone needn't re-sync when it is met. It reports only "was there";
+		// the server decides what that means (arrived()).
+		if (r.status === "waiting" && r.after_kind === "place" && r.after_latitude != null) {
+			fences.push({
+				id: `${r.uuid}:after`,
+				latitude: Number(r.after_latitude),
+				longitude: Number(r.after_longitude),
+				radius_m: ARRIVAL_RADIUS_M,
+			});
+		}
+	}
+	// Android allows 100 per app.
+	return { enabled: true, fences: fences.slice(0, 2 * MAX_ARMED) };
 }
 
 function wording(row) {
@@ -234,15 +275,48 @@ async function arrived(profileId, deviceId, body = {}, { now = Date.now() } = {}
 	const accuracy = Math.min(Math.max(Number(body.accuracy_m) || 0, 0), MAX_ACCURACY_M);
 
 	const [rows] = await pool.query(
-		"SELECT * FROM athena_place_reminder WHERE profile_id = ? AND status = 'armed'",
+		"SELECT * FROM athena_place_reminder WHERE profile_id = ? AND status IN ('armed', 'waiting')",
 		[profileId]
 	);
-	const fired = [];
-	for (const row of rows) {
-		const miles = geo.milesBetween(here, { latitude: Number(row.latitude), longitude: Number(row.longitude) });
-		if (miles === null) continue;
+	const at = new Date(now);
+	/** Metres from here to a point, or null when it is outside the fence. */
+	const inside = (latitude, longitude, radius) => {
+		const miles = geo.milesBetween(here, { latitude: Number(latitude), longitude: Number(longitude) });
+		if (miles === null) return null;
 		const meters = miles * METERS_PER_MILE;
-		if (meters > (radiusOf(row)) + accuracy + SLACK_M) continue;
+		return meters > radius + accuracy + SLACK_M ? null : meters;
+	};
+	const fired = [];
+	const met = [];
+	for (const row of rows) {
+		// Past its window: the expiry sweep asks them about it; it never fires late.
+		if (row.expires_at && new Date(row.expires_at) <= at) continue;
+
+		// "From the gym": being at the condition's place meets the condition and
+		// nothing more. Home must still come after it.
+		if (row.status === "waiting" && row.after_kind === "place" && row.after_latitude != null) {
+			if (inside(row.after_latitude, row.after_longitude, ARRIVAL_RADIUS_M) !== null) {
+				const [claim] = await pool.query(
+					`UPDATE athena_place_reminder SET status = 'armed', condition_met_at = ?, expires_at = ?
+					 WHERE id = ? AND status = 'waiting'`,
+					[at, new Date(now + AFTER_MET_HOURS * 3600_000), row.id]
+				);
+				if (claim.affectedRows) met.push({ uuid: row.uuid });
+			}
+			continue;
+		}
+
+		const meters = inside(row.latitude, row.longitude, radiusOf(row));
+		if (meters === null) continue;
+
+		// "After the last game": a time condition is checked on arrival.
+		if (row.status === "waiting") {
+			if (!(row.after_kind === "time" && row.after_at && new Date(row.after_at) <= at)) continue;
+			await pool.query(
+				"UPDATE athena_place_reminder SET status = 'armed', condition_met_at = ? WHERE id = ? AND status = 'waiting'",
+				[at, row.id]
+			);
+		}
 
 		// Claim this visit. A second arrival in the same visit (a fence
 		// re-registered while they're still there, two phones) changes nothing.
@@ -283,7 +357,56 @@ async function arrived(profileId, deviceId, body = {}, { now = Date.now() } = {}
 		}
 		fired.push({ uuid: row.uuid, pushed: reached });
 	}
-	return { fired };
+	return { fired, met };
+}
+
+/**
+ * Conditional reminders whose window closed before they could fire. Never
+ * dropped silently (owner's choice, 2026-10-10): each becomes 'expired' and
+ * the person is asked once whether they still want it. Run by the
+ * athena-reminders job; safe to run concurrently with itself.
+ */
+async function expireDue({ now = new Date() } = {}) {
+	const [rows] = await pool.query(
+		`SELECT * FROM athena_place_reminder
+		 WHERE status IN ('armed', 'waiting') AND expires_at IS NOT NULL AND expires_at <= ? LIMIT 100`,
+		[now]
+	);
+	const push = require("./push");
+	let asked = 0;
+	for (const row of rows) {
+		const [claim] = await pool.query(
+			`UPDATE athena_place_reminder SET status = 'expired', expiry_asked_at = ?
+			 WHERE id = ? AND status IN ('armed', 'waiting')`,
+			[now, row.id]
+		);
+		if (!claim.affectedRows) continue;
+		const why =
+			row.status === "waiting"
+				? `it looks like you didn't make it to ${row.after_label || "the first place"}`
+				: `you didn't get to ${row.place_name} in time`;
+		const text = `I didn't get to remind you to "${row.text}" — ${why}. Still want it? Just tell me and I'll set it again.`.slice(0, 500);
+		const uuid = randomUUID();
+		await pool.query(
+			`INSERT IGNORE INTO athena_nudge
+				(uuid, profile_id, trigger_id, dedupe_key, urgency, text, facts, expires_at)
+			 VALUES (?, ?, ?, ?, 'normal', ?, ?, ?)`,
+			[
+				uuid,
+				row.profile_id,
+				TRIGGER_ID,
+				`${row.uuid}:expired`,
+				text,
+				JSON.stringify({ reminderUuid: row.uuid, expired: true, placeName: row.place_name, after: row.after_label }),
+				new Date(now.getTime() + EXPIRED_NUDGE_TTL_S * 1000),
+			]
+		);
+		await push
+			.deliverNudge(row.profile_id, { uuid, text, trigger_id: TRIGGER_ID })
+			.catch((error) => ({ sent: 0, error: error.message }));
+		asked += 1;
+	}
+	return { asked };
 }
 
 /**
@@ -295,8 +418,11 @@ async function promptBlock(profileId) {
 	if (!profileId) return null;
 	const [[rows], pref] = await Promise.all([
 		pool.query(
-			`SELECT place_name, address, text, repeats FROM athena_place_reminder
-			 WHERE profile_id = ? AND status = 'armed' ORDER BY created_at LIMIT 20`,
+			`SELECT place_name, address, text, repeats, status, after_kind, after_label, expires_at
+			 FROM athena_place_reminder
+			 WHERE profile_id = ? AND (status IN ('armed', 'waiting')
+			   OR (status = 'expired' AND expiry_asked_at >= NOW() - INTERVAL 1 DAY))
+			 ORDER BY created_at LIMIT 20`,
 			[profileId]
 		),
 		location.getPref(profileId).catch(() => ({ enabled: false })),
@@ -306,7 +432,12 @@ async function promptBlock(profileId) {
 		lines.push("# Place reminders they've set", "");
 		for (const r of rows) {
 			const where = r.address ? `${r.place_name} (${r.address})` : r.place_name;
-			lines.push(`- At ${where}: "${r.text}" — ${r.repeats ? "every visit" : "next visit only"}`);
+			if (r.status === "expired") {
+				lines.push(`- EXPIRED (you asked them if they still want it): at ${where}, after ${r.after_label || "a condition"}: "${r.text}" — if they say yes, propose it again`);
+				continue;
+			}
+			const first = r.after_kind ? `, only after ${r.after_label || "a condition"}${r.status === "armed" ? " (that's happened)" : ""}` : "";
+			lines.push(`- At ${where}${first}: "${r.text}" — ${r.repeats ? "every visit" : "next visit only"}`);
 		}
 		lines.push("", "They can remove one on the Community page; you cannot remove one for them.");
 	}
@@ -324,8 +455,10 @@ module.exports = {
 	TRIGGER_ID,
 	ARRIVAL_RADIUS_M,
 	MAX_ARMED,
+	AFTER_MET_HOURS,
 	resolvePlace,
 	create,
+	expireDue,
 	list,
 	cancel,
 	geofences,

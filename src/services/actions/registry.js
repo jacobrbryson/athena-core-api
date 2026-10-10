@@ -39,6 +39,7 @@ const lookRequests = require("../lookRequests");
 const unsubscribe = require("../unsubscribe");
 const emailDraft = require("../emailDraft");
 const placeReminders = require("../placeReminders");
+const timeReminders = require("../timeReminders");
 const codeAgents = require("../codeAgents");
 
 /** A rejection that is the model's fault, not the person's or the server's. */
@@ -101,6 +102,79 @@ function humanTime(iso, timeZone) {
 	} catch {
 		return iso;
 	}
+}
+
+/**
+ * An instant() string as a Date. An offsetless one is read in `timeZone`
+ * (instant() only lets it through when a zone was given).
+ */
+function whenOf(raw, timeZone) {
+	if (/(?:Z|[+-]\d{2}:?\d{2})$/.test(raw)) return new Date(raw);
+	const asUtc = new Date(`${raw}Z`);
+	// The zone's offset at that moment, from how Intl writes it there.
+	const parts = new Intl.DateTimeFormat("en-US", {
+		timeZone,
+		hourCycle: "h23",
+		year: "numeric",
+		month: "2-digit",
+		day: "2-digit",
+		hour: "2-digit",
+		minute: "2-digit",
+		second: "2-digit",
+	}).formatToParts(asUtc);
+	const get = (t) => Number(parts.find((x) => x.type === t)?.value);
+	const shown = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"), get("second"));
+	return new Date(asUtc.getTime() - (shown - asUtc.getTime()));
+}
+
+/** Longest a reminder's condition may take before she asks about it instead. */
+const MAX_WITHIN_HOURS = 48;
+const DEFAULT_WITHIN_HOURS = 12;
+
+/**
+ * The "after" half of a conditional place reminder, or null when there is
+ * none. A place is resolved like the reminder's own (a point of interest or
+ * a geocoded address — never a guessed point); a time must be a real instant
+ * no more than a week out. Untrusted input, so only these fields survive.
+ */
+async function afterCondition(raw, ctx) {
+	const hasPlace = !!(str(raw.after_place, 80) || str(raw.after_address, 200));
+	const hasTime = !!str(raw.after_time, 40);
+	if (!hasPlace && !hasTime) return null;
+	if (hasPlace && hasTime) throw invalid("Give the condition as a place or a time, not both");
+	const hoursRaw =
+		raw.within_hours === undefined || raw.within_hours === null || raw.within_hours === ""
+			? DEFAULT_WITHIN_HOURS
+			: Number(raw.within_hours);
+	if (!Number.isFinite(hoursRaw) || hoursRaw <= 0) throw invalid("within_hours must be a positive number of hours");
+	const hours = Math.min(hoursRaw, MAX_WITHIN_HOURS);
+	const now = Date.now();
+	if (hasPlace) {
+		const first = await placeReminders.resolvePlace(ctx.profileId, {
+			place: raw.after_place,
+			address: raw.after_address,
+			place_name: raw.after_label,
+		});
+		return {
+			kind: "place",
+			label: (str(raw.after_label, 120) || first.place_name).slice(0, 120),
+			latitude: first.latitude,
+			longitude: first.longitude,
+			expires_at: new Date(now + hours * 3600_000).toISOString(),
+		};
+	}
+	const timeZone = zone(raw.time_zone);
+	const at = instant(raw.after_time, { timeZone });
+	if (!at) throw invalid("after_time needs a UTC offset or a time_zone");
+	const when = whenOf(at, timeZone);
+	if (when.getTime() > now + 7 * 86400_000) throw invalid("after_time can be at most a week out");
+	return {
+		kind: "time",
+		label: (str(raw.after_label, 120) || "that time").slice(0, 120),
+		at: when.toISOString(),
+		expires_at: new Date(Math.max(when.getTime(), now) + hours * 3600_000).toISOString(),
+		...(timeZone ? { time_zone: timeZone } : {}),
+	};
 }
 
 const MAX_EVENT_DAYS = 365;
@@ -478,6 +552,53 @@ const ACTIONS = [
 		},
 	},
 
+	// Time reminders (services/timeReminders.js), added on the owner's
+	// instruction 2026-10-10 after "remind me tomorrow after soccer" had
+	// nowhere to go. Fired by the athena-reminders job once a minute.
+	{
+		id: "remind_at_time",
+		label: "Set a reminder for a time",
+		provider: null,
+		consentType: "action_authority",
+		// Removable from the Community page, and it only ever sends the person a
+		// notification.
+		reversible: true,
+		standing: true,
+		describe:
+			'Remind the person of something at a time: "remind me at 7 to…", "tomorrow ' +
+			'morning remind me…". Say the time back in their words before proposing.',
+		alternatives:
+			'For "when I get to X" use remind_at_place; for "after the game", remind_at_place at ' +
+			"home with after_time, or this at the time the game ends.",
+		params: {
+			reminder: "What to remind them, in a short sentence addressed to them. Required.",
+			at: "When: ISO 8601 with UTC offset (2026-10-11T19:00:00-04:00), or give time_zone. Required.",
+			time_zone: "IANA zone (America/New_York) when `at` carries no offset.",
+		},
+
+		normalize(raw = {}) {
+			const reminder = str(raw.reminder, 300);
+			if (!reminder) throw invalid("A reminder needs something to remind them");
+			const timeZone = zone(raw.time_zone);
+			const at = instant(raw.at, { timeZone });
+			if (!at) throw invalid("A reminder needs a time with a UTC offset or a time_zone");
+			const when = whenOf(at, timeZone);
+			const now = Date.now();
+			if (when.getTime() < now + 30_000) throw invalid("That time has already passed");
+			if (when.getTime() > now + MAX_EVENT_DAYS * 86400_000) throw invalid("Reminders can be at most a year out");
+			return { reminder, at: when.toISOString(), ...(timeZone ? { time_zone: timeZone } : {}) };
+		},
+
+		summarize(p) {
+			return `At ${humanTime(p.at, p.time_zone)}, remind you: "${p.reminder}"`.slice(0, 500);
+		},
+
+		async execute(profileId, params, ctx = {}) {
+			const { uuid } = await timeReminders.create(profileId, params, { actionUuid: ctx.actionUuid || null });
+			return { ref: uuid, detail: null };
+		},
+	},
+
 	// Place reminders (services/placeReminders.js), added on the owner's
 	// instruction 2026-10-04: "next time I'm at Missy's, remind me to ...".
 	// The card is the address check — it names the exact point that will be
@@ -495,19 +616,26 @@ const ACTIONS = [
 			"Set a reminder that fires when the person next arrives at a place — " +
 			'"next time I\'m at Missy\'s, remind me to ...", "whenever I\'m at church, ' +
 			'remind me ...". Before proposing, say back which place you mean and its ' +
-			"address from their points of interest, so they can correct you. Not for " +
-			"time-based reminders.",
+			"address from their points of interest, so they can correct you. It can " +
+			'wait for something to happen first: "when I get home FROM THE GYM" (after_place) ' +
+			'or "when we get home AFTER THE LAST GAME" (after_time = when that calendar event ends). ' +
+			'"Home" is their home point of interest.',
 		alternatives:
-			'For a time ("tomorrow at 7", or "after the game" when the calendar shows when it ends), ' +
-			"offer a short calendar event at that time instead, if they have Google Calendar. If the " +
-			'place isn\'t one of their points of interest ("home" included) and you don\'t know its ' +
-			"street address, ask for the address rather than proposing without one.",
+			'For a plain time ("tomorrow at 7") use remind_at_time. If the place isn\'t one of their ' +
+			"points of interest and you don't know its street address, ask for the address rather " +
+			"than proposing without one.",
 		params: {
 			place: "The point of interest's name exactly as listed in their community, e.g. \"Missy's\". Required unless address is given.",
 			address: "A US street address with town, only when the place is not one of their points of interest.",
 			place_name: "What to call an address-only place, e.g. \"Missy's\". Optional.",
 			reminder: "What to remind them, in a short sentence addressed to them, e.g. \"Bring back her casserole dish\". Required.",
-			repeats: '"next_visit" (default, fires once) or "every_visit" when they said whenever/every time.',
+			repeats: '"next_visit" (default, fires once) or "every_visit" when they said whenever/every time. Always next_visit when there is an after_ condition.',
+			after_place: 'Optional. A place they must visit first ("from the gym"): a point of interest\'s name.',
+			after_address: "Optional. That first place's US street address, when it isn't a point of interest.",
+			after_time:
+				"Optional. Fire only on an arrival after this time: ISO 8601 with offset (or give time_zone), e.g. when the last game on their calendar ends.",
+			after_label: 'Optional. How to say the condition back: "the gym", "the last soccer game".',
+			within_hours: "Optional. How long the condition may take to happen before you ask them about it instead; default 12, at most 48.",
 		},
 
 		async normalize(raw = {}, ctx = {}) {
@@ -519,12 +647,25 @@ const ACTIONS = [
 				throw invalid('Repeats must be "next_visit" or "every_visit"');
 			}
 			const place = await placeReminders.resolvePlace(ctx.profileId, raw);
-			return { ...place, reminder, repeats };
+			const after = await afterCondition(raw, ctx);
+			if (after && repeats === "every_visit") {
+				throw invalid("A reminder that waits for something first fires once; drop every_visit or the condition");
+			}
+			return { ...place, reminder, repeats, ...(after ? { after } : {}) };
 		},
 
 		summarize(p) {
 			const when = p.repeats === "every_visit" ? "Every time" : "Next time";
 			const where = p.address ? `${p.place_name} (${p.address})` : p.place_name;
+			if (p.after) {
+				const until = humanTime(p.after.expires_at, p.after.time_zone);
+				const first =
+					p.after.kind === "place"
+						? `after you've been at ${p.after.label}`
+						: `after ${p.after.label} (${humanTime(p.after.at, p.after.time_zone)})`;
+				const watch = p.after.kind === "place" ? ` I'll watch for you at ${p.after.label} too.` : "";
+				return `When you get to ${where} ${first}, remind you: "${p.reminder}". If that hasn't happened by ${until}, I'll ask you about it.${watch}`.slice(0, 500);
+			}
 			return `${when} you get to ${where}, remind you: "${p.reminder}"`.slice(0, 500);
 		},
 
@@ -1080,6 +1221,7 @@ const BY_ID = new Map(ACTIONS.map((a) => [a.id, a]));
  */
 const PARAM_TYPES = {
 	all_day: { type: "boolean" },
+	within_hours: { type: "number" },
 	email_triage_uuids: { type: "array", items: { type: "string" } },
 	items: {
 		type: "array",

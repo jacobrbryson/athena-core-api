@@ -854,7 +854,7 @@ describe("promptBlock", () => {
 
 	test("each action's alternatives are shown with it", () => {
 		const block = actions.promptBlock(registry.ACTIONS.filter((a) => a.id === "remind_at_place"));
-		expect(block).toMatch(/If this doesn't fit: .*calendar event/);
+		expect(block).toMatch(/If this doesn't fit: .*remind_at_time/);
 	});
 });
 

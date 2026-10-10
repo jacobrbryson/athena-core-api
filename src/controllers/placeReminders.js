@@ -1,4 +1,5 @@
 const placeReminders = require("../services/placeReminders");
+const timeReminders = require("../services/timeReminders");
 const memory = require("../services/memory");
 
 /** The owner's own profile, from a signed-in session or a paired phone's token. */
@@ -22,13 +23,27 @@ function fail(res, err) {
 
 async function list(req, res) {
 	const id = await profileId(req, res); if (!id) return;
-	try { return res.json({ reminders: await placeReminders.list(id) }); } catch (err) { return fail(res, err); }
+	try {
+		const [reminders, times] = await Promise.all([placeReminders.list(id), timeReminders.list(id).catch(() => [])]);
+		return res.json({ reminders, timeReminders: times });
+	} catch (err) { return fail(res, err); }
 }
 
 async function cancel(req, res) {
 	if (req.user?.kind === "device") return res.status(403).json({ success: false, message: "Remove reminders from the Companion app" });
 	const id = await profileId(req, res); if (!id) return;
-	try { return res.json({ success: true, reminders: await placeReminders.cancel(id, req.params.uuid) }); } catch (err) { return fail(res, err); }
+	try {
+		// One Remove button for both kinds: try the place reminder, then the time one.
+		let reminders;
+		try {
+			reminders = await placeReminders.cancel(id, req.params.uuid);
+		} catch (err) {
+			if (err?.status !== 404) throw err;
+			await timeReminders.cancel(id, req.params.uuid);
+			reminders = await placeReminders.list(id);
+		}
+		return res.json({ success: true, reminders, timeReminders: await timeReminders.list(id).catch(() => []) });
+	} catch (err) { return fail(res, err); }
 }
 
 /** The phone's sync: which fences to hold. */

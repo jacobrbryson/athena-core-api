@@ -2,11 +2,11 @@
 id: place-reminders
 title: Place reminders
 summary: Tell me "next time I'm at Missy's, remind me to…" and I'll send it to your phone a couple of minutes after you get there.
-where: ask me in conversation; see or remove them on the Community page → Place reminders
+where: ask me in conversation; see or remove them on the Community page → Reminders
 status: partial
 surfaces: [companion]
 audiences: [adult]
-triggers: [next time i'm at, next time im at, when i get to, when i'm at, whenever i'm at, every time i'm at, remind me when, remind me at, place reminder, place reminders, location reminder, when i arrive]
+triggers: [next time i'm at, next time im at, when i get to, when i'm at, whenever i'm at, every time i'm at, remind me when, remind me at, place reminder, place reminders, location reminder, when i arrive, when i get home, when we get home, from the gym, after the game, after practice]
 ---
 
 ## What I can do
@@ -27,6 +27,17 @@ each time"** on that card and from then on your "yes" in chat is enough.
 "Next time" reminds you once. "Every time" or "whenever" reminds you on every
 visit — once per visit, however long you stay.
 
+**It can wait for something to happen first.** "When I get home *from the
+gym*, remind me to shower" only goes off when you get home after you've been
+at the gym — not when you pop home from the grocery store. "When we get home
+*after the last game*, remind me to…" waits until that game on your calendar
+has ended. "Home" is your home on the Community page.
+
+If the first thing doesn't happen in time — you skipped the gym, say — I
+don't drop it quietly and I don't fire it at the wrong moment. I ask you
+whether you still want it. The card tells you how long I'll wait (12 hours
+unless you say otherwise, at most two days).
+
 Arriving during your quiet hours, or with Initiative switched off, doesn't
 hold it back: you asked for it, so it comes when you get there.
 
@@ -34,8 +45,9 @@ hold it back: you asked for it, so it comes when you get there.
 
 Just ask me in conversation. Everything I'm waiting to remind you of is on
 the **Community** page (on the phone, Dashboard → Community card) under
-**Place reminders**, with a **Remove** button on each and the ones that
-already reached you underneath.
+**Reminders**, with a **Remove** button on each and the ones that already
+reached you underneath. One that's waiting for something first says so
+("after you've been at the gym"), with a ✓ once that's happened.
 
 It needs three things switched on, once:
 
@@ -68,13 +80,28 @@ It needs three things switched on, once:
 - **Up to 50 waiting at once.**
 - **I can't remove or change one for you.** Remove it on the Community page and
   ask me again.
-- **Not time-based reminders.** "Remind me at 5pm" isn't this.
+- **For a time, it's a different reminder.** "Remind me at 5pm" is a time
+  reminder (see time-reminders); this one waits for a place.
 - **Your phone tells me where you are only when you arrive at one of these
-  places** — never a trail of where you've been, and nothing at all while
-  you have no place reminders set.
+  places** — the reminder's place, or the place it's waiting for you to visit
+  first ("the gym"). Never a trail of where you've been, and nothing at all
+  while you have no place reminders set.
+- **It can wait for a place or a time first, not both**, and not a WHOOP
+  workout yet.
+- **A reminder that waits for something first goes off once.**
 - **Children and Guardians don't get this.** It's for the account owner.
 
 ## Under the hood
+
+- Conditions (2026-10-10): `after_place` / `after_address` / `after_time` /
+  `after_label` / `within_hours` on `remind_at_place`, vouched by
+  `afterCondition()` in `src/services/actions/registry.js`. Rows start
+  `waiting`; `arrived()` flips them to `armed` (condition met) and fires;
+  `geofences()` also lists `<uuid>:after` fences; `expireDue()` (run by
+  `src/jobs/reminders.js`) marks `expired` and sends the "still want it?"
+  nudge. "home" resolves to the point of interest of kind `home`. Schema:
+  `db/migrations/0059_reminder_conditions`. Tests:
+  `src/services/reminderConditions.test.js`.
 
 **Model use:** none to detect or send. She proposes the reminder through the
 action layer; the arrival check and the wording are code.
