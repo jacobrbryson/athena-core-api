@@ -25,6 +25,7 @@
  *   normalize(raw, ctx) -> clean params | throws
  *   summarize(params) -> the plain-language sentence the person approves
  *   execute(profileId, params, ctx) -> { ref, detail }
+ *   availableTo(profileId) -> boolean   optional; narrows who is offered it
  */
 
 const googleCalendar = require("../connectors/googleCalendar");
@@ -35,6 +36,7 @@ const lookRequests = require("../lookRequests");
 const unsubscribe = require("../unsubscribe");
 const emailDraft = require("../emailDraft");
 const placeReminders = require("../placeReminders");
+const codeAgents = require("../codeAgents");
 
 /** A rejection that is the model's fault, not the person's or the server's. */
 function invalid(message) {
@@ -330,6 +332,70 @@ const ACTIONS = [
 				visibility: "private",
 			});
 			return { ref: saved?.uuid || null, detail: null };
+		},
+	},
+
+	// Coding agents (services/codeAgents.js), added on the owner's
+	// instruction 2026-10-09 — phase 3 of "Athena: Inner Monologue & Coding
+	// Agents". Investigate only: it opens a GitHub issue, and the repo's own
+	// workflow has Claude Code and Codex read the code with read-only
+	// permissions and comment back. Nothing in this action can change code.
+	// Offered only to the Google ids the owner listed in CODE_AGENT_GOOGLE_IDS.
+	{
+		id: "investigate_code",
+		label: "Have Claude Code and Codex investigate a bug",
+		provider: null,
+		consentType: "action_authority",
+		// It opens an issue the owner can close; no code, data or account changes.
+		reversible: true,
+		// The owner chose "read-only is always approved": a standing approval
+		// is allowed, and only the owner can grant it.
+		standing: true,
+		describe:
+			"Ask coding agents (Claude Code and Codex) to read your own source code and diagnose " +
+			"something that is wrong with you or your apps — bad data on a dashboard card, a " +
+			"feature misbehaving, an error. Read-only: they explain the cause, they change nothing. " +
+			"Pick the repository the problem most likely lives in. Their findings come back in a few " +
+			"minutes; tell the person you'll pass them on.",
+		params: {
+			repo: `Which codebase: ${Object.entries(codeAgents.REPOS)
+				.map(([k, r]) => `"${k}" (${r.about})`)
+				.join("; ")}. Required.`,
+			symptom: "What is wrong, in one or two plain sentences, as the person described it. Required.",
+			details:
+				"Anything you know that would help: what the data should have been, when it started, which card or screen. Optional.",
+		},
+
+		availableTo(profileId) {
+			return codeAgents.mayUse(profileId);
+		},
+
+		async normalize(raw = {}, ctx = {}) {
+			const repo = str(raw.repo, 40);
+			if (!repo || !Object.prototype.hasOwnProperty.call(codeAgents.REPOS, repo)) {
+				throw invalid(`Repo must be one of: ${Object.keys(codeAgents.REPOS).join(", ")}`);
+			}
+			const symptom = str(raw.symptom, 600);
+			if (!symptom || symptom.length < 10) throw invalid("Say what is wrong in a sentence");
+			const details = str(raw.details, 2000);
+			// Checked here too, not only when offering: a proposal must not
+			// outlive the person's place on the owner's list.
+			if (!ctx.profileId || !(await codeAgents.mayUse(ctx.profileId))) {
+				throw invalid("Coding agents are not available to this account");
+			}
+			return details ? { repo, symptom, details } : { repo, symptom };
+		},
+
+		summarize(p) {
+			return `Ask Claude Code and Codex to look into ${p.repo} (read-only): ${p.symptom}`.slice(0, 500);
+		},
+
+		async execute(profileId, params) {
+			if (!(await codeAgents.mayUse(profileId))) {
+				throw new Error("Coding agents are not available to this account");
+			}
+			const { ref } = await codeAgents.openInvestigation(params);
+			return { ref, detail: null };
 		},
 	},
 

@@ -11,6 +11,7 @@ const toolIntent = require("../services/toolIntent");
 const webSearch = require("../services/webSearch");
 const travel = require("../services/travel");
 const monologue = require("../services/monologue");
+const codeAgents = require("../services/codeAgents");
 const missionService = require("../services/mission");
 const selfKnowledge = require("../services/selfKnowledge");
 const actions = require("../services/actions");
@@ -465,6 +466,14 @@ async function processAiResponse(session, message, clients, ctx = {}) {
       } catch (e) {
         console.warn("[gemini] dreams block failed:", e.message);
       }
+      // What the coding agents found in an investigation she started — when
+      // asked about it, or once when a finding first arrives. Owner-listed
+      // accounts only (codeAgents.mayUse); null otherwise; never throws.
+      const codeBlock = await codeAgents.promptBlock(session.profile_id, message);
+      if (codeBlock)
+        initiativeBlock = initiativeBlock
+          ? [initiativeBlock, codeBlock].join("\n\n")
+          : codeBlock;
     }
 
     const guessedBlock = await guessedGrounding;

@@ -6,7 +6,7 @@ where: the ⋯ menu (top right) → Actions
 status: partial
 surfaces: [companion]
 audiences: [adult]
-triggers: [add to my calendar, put it on my calendar, book, schedule it, schedule that, make an event, create an event, can you do it, do it for me, remember that, actions, approve, without asking]
+triggers: [investigate, look into the code, claude code, codex, why is it broken, debug, find the bug, add to my calendar, put it on my calendar, book, schedule it, schedule that, make an event, create an event, can you do it, do it for me, remember that, actions, approve, without asking]
 ---
 
 ## What I can do
@@ -38,6 +38,11 @@ Two things I can propose today:
 - **Set a place reminder** — "next time I'm at Missy's, remind me to…". See
   [place-reminders.md](place-reminders.md); the card shows the address I'll
   watch for, so you can catch the wrong place before it's set.
+- **Have Claude Code and Codex investigate a bug** in my own apps — "your
+  dashboard is pulling bad data for Jira". They read the code and explain the
+  likely cause; they can't change anything. Their findings take a few minutes,
+  and I'll tell you what they found when they're back, or when you ask. Only
+  for the owner's account.
 
 If you get tired of approving the same thing, you can tell me to stop asking:
 tick **"Do this without asking me each time"** and I'll just do that one kind
@@ -90,6 +95,9 @@ Approval cards work on your paired phone or car too, not just in this browser.
 - **I can't schedule more than a year out**, or anything in the past, or a
   single event longer than two weeks.
 - **One proposal per reply.** I won't queue up a batch of changes.
+- **Coding agents only investigate.** They read the code and report; fixing
+  is still up to the owner. Each investigation opens an issue on GitHub, and
+  it only works in my four app repositories.
 - **Children and Guardians can't approve anything**, and I won't offer them
   actions at all. This is the account owner's decision.
 - **A look can't be undone.** Adding an event or saving a fact are things you
@@ -124,6 +132,13 @@ Approval cards work on your paired phone or car too, not just in this browser.
   `../../../companion/src/components/ActionsPanel.tsx` (panel),
   `../../../companion/src/athena/useActions.ts` (socket + poll).
 - Expiry job: `src/jobs/nightly.js` (`actionExpiry` step).
+- Coding agents: `investigate_code` in the registry, `src/services/codeAgents.js`
+  (repo allowlist, GitHub issue, findings read back into chat), workflow
+  `.github/workflows/athena-investigate.yml` in each repo (read-only token,
+  comments marked `<!-- athena-agent:claude|codex -->`). Needs
+  `GITHUB_AGENT_TOKEN` and `CODE_AGENT_GOOGLE_IDS` in Secret Manager; offered
+  only via the registry's `availableTo` hook. Tests:
+  `src/services/codeAgents.test.js`.
 - Tests: `src/services/actions/actions.test.js`.
 - Design notes: `../../../docs/architecture/action-layer.md`.
 - Notes: the chat path uses structured output, not function calling, which is

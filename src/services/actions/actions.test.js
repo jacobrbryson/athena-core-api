@@ -14,6 +14,11 @@ jest.mock("../credentials", () => ({ list: jest.fn() }));
 jest.mock("../family", () => ({ getFamilyForProfile: jest.fn() }));
 jest.mock("../connectors/googleCalendar", () => ({ createEvent: jest.fn(), deleteEvent: jest.fn() }));
 jest.mock("../lookRequests", () => ({ create: jest.fn() }));
+jest.mock("../codeAgents", () => ({
+	REPOS: { core_api: { full: "o/core", about: "backend" }, companion: { full: "o/companion", about: "app" } },
+	mayUse: jest.fn(async () => false),
+	openInvestigation: jest.fn(),
+}));
 jest.mock("../memory", () => ({
 	CATEGORIES: new Set(["interest", "routine", "other"]),
 	upsertMemoryForProfile: jest.fn(),
@@ -27,6 +32,7 @@ const family = require("../family");
 const googleCalendar = require("../connectors/googleCalendar");
 const memory = require("../memory");
 const lookRequests = require("../lookRequests");
+const codeAgents = require("../codeAgents");
 const actions = require("./index");
 const registry = require("./registry");
 
@@ -353,6 +359,59 @@ describe("propose", () => {
 	test("an unreadable consent means no actions", async () => {
 		consent.hasConsentForProfile.mockRejectedValue(new Error("db down"));
 		expect(await actions.availableFor(PROFILE)).toEqual([]);
+	});
+});
+
+describe("investigate_code (coding agents, 2026-10-09)", () => {
+	const action = registry.get("investigate_code");
+	const ctx = { profileId: PROFILE };
+	const ok = { repo: "core_api", symptom: "The Jira card shows last month's tickets" };
+
+	beforeEach(() => codeAgents.mayUse.mockResolvedValue(true));
+
+	test("accepts a listed repo and a real symptom, and keeps nothing else", async () => {
+		const p = await action.normalize({ ...ok, details: "Started Monday", title: "x", labels: ["y"] }, ctx);
+		expect(p).toEqual({ ...ok, details: "Started Monday" });
+		expect(action.standing).toBe(true);
+	});
+
+	test("refuses a repo that isn't on the list", async () => {
+		await expect(action.normalize({ ...ok, repo: "o/core" }, ctx)).rejects.toThrow(/Repo must be one of/);
+		await expect(action.normalize({ ...ok, repo: "../secrets" }, ctx)).rejects.toThrow(/Repo must be one of/);
+		await expect(action.normalize({ ...ok, repo: "toString" }, ctx)).rejects.toThrow(/Repo must be one of/);
+	});
+
+	test("refuses an empty or token symptom", async () => {
+		await expect(action.normalize({ repo: "core_api" }, ctx)).rejects.toThrow(/what is wrong/);
+		await expect(action.normalize({ repo: "core_api", symptom: "bug" }, ctx)).rejects.toThrow(/what is wrong/);
+	});
+
+	test("refuses anyone not on the owner's list, at proposal and again at execution", async () => {
+		codeAgents.mayUse.mockResolvedValue(false);
+		await expect(action.normalize(ok, ctx)).rejects.toThrow(/not available/);
+		await expect(action.normalize(ok, {})).rejects.toThrow(/not available/);
+		await expect(action.execute(PROFILE, ok)).rejects.toThrow(/not available/);
+		expect(codeAgents.openInvestigation).not.toHaveBeenCalled();
+	});
+
+	test("executes by opening the investigation and records its reference", async () => {
+		codeAgents.openInvestigation.mockResolvedValue({ ref: "o/core#12", url: "https://x", number: 12 });
+		expect(await action.execute(PROFILE, ok)).toEqual({ ref: "o/core#12", detail: null });
+		expect(codeAgents.openInvestigation).toHaveBeenCalledWith(ok);
+	});
+
+	test("is only offered to people its own check allows", async () => {
+		credentials.list.mockResolvedValue([]);
+		consent.hasConsentForProfile.mockResolvedValue(true);
+		codeAgents.mayUse.mockResolvedValue(false);
+		expect((await actions.availableFor(PROFILE)).map((a) => a.id)).not.toContain("investigate_code");
+		codeAgents.mayUse.mockResolvedValue(true);
+		expect((await actions.availableFor(PROFILE)).map((a) => a.id)).toContain("investigate_code");
+		codeAgents.mayUse.mockRejectedValue(new Error("secret manager down"));
+		const offered = (await actions.availableFor(PROFILE)).map((a) => a.id);
+		expect(offered).not.toContain("investigate_code");
+		// A failing check removes only that action, never the others.
+		expect(offered).toContain("remember_fact");
 	});
 });
 

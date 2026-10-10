@@ -1,0 +1,178 @@
+# Athena investigate — read-only diagnosis by Claude Code and Codex.
+#
+# Athena opens an issue labeled `athena-investigate` (core_api
+# src/services/codeAgents.js, action `investigate_code`). This workflow has
+# both agents read the code and post their diagnosis as a comment that Athena
+# reads back. They cannot change anything, and that does not rest on the prompt:
+#   - the jobs' token is `contents: read` (plus `issues: write` to comment);
+#   - checkout does not persist credentials, and the token is never passed to
+#     an agent step;
+#   - Claude may only Read/Glob/Grep, and Codex runs in its read-only sandbox.
+# Only issues opened by the repository owner's account (the one Athena's token
+# belongs to) are picked up, so nobody else can spend these runs.
+#
+# The API keys are not GitHub secrets. They live once, in Google Secret Manager
+# (athena-476423), and each run signs in to Google with GitHub's own identity
+# token (Workload Identity Federation) to read them. Google accepts that sign-in
+# only from this workflow file in Athena's four repos, and the service account
+# it gets can read ANTHROPIC_API_KEY and OPENAI_API_KEY and nothing else.
+# Rotating a key in Secret Manager reaches every repo on its next run.
+# No credentials file is written, so nothing the agents can read holds one.
+# The same file lives in each of Athena's repos; keep them identical.
+name: Athena investigate
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+  id-token: write   # GitHub's identity token, exchanged for a Google one below
+
+env:
+  GCP_PROVIDER: projects/12367074465/locations/global/workloadIdentityPools/github/providers/athena-investigate
+  GCP_SERVICE_ACCOUNT: athena-gh-agents@athena-476423.iam.gserviceaccount.com
+
+concurrency:
+  group: athena-investigate-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  claude:
+    if: contains(github.event.issue.labels.*.name, 'athena-investigate') && github.event.issue.user.login == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Sign in to Google
+        id: gcp
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+          token_format: access_token
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Read the API key from Secret Manager
+        env:
+          TOKEN: ${{ steps.gcp.outputs.access_token }}
+        run: |
+          key=$(curl -sf -H "Authorization: Bearer $TOKEN"             "https://secretmanager.googleapis.com/v1/projects/athena-476423/secrets/ANTHROPIC_API_KEY/versions/latest:access"             | jq -r '.payload.data' | base64 -d)
+          [ -n "$key" ] || { echo "Could not read ANTHROPIC_API_KEY"; exit 1; }
+          echo "::add-mask::$key"
+          echo "ANTHROPIC_API_KEY=$key" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Write the task
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          {
+            printf '%s\n\n' "You are investigating this repository for Athena. Read-only: do not modify files."
+            printf '# %s\n\n%s\n' "$ISSUE_TITLE" "$ISSUE_BODY"
+          } > "$RUNNER_TEMP/task.md"
+
+      - name: Claude Code investigates
+        id: agent
+        continue-on-error: true
+        run: |
+          npx -y @anthropic-ai/claude-code -p "$(cat "$RUNNER_TEMP/task.md")" \
+            --allowedTools "Read,Glob,Grep" \
+            --disallowedTools "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch" \
+            --max-turns 40 \
+            --output-format text > "$RUNNER_TEMP/finding.md"
+
+      - name: Post the finding
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ steps.agent.outcome }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          {
+            echo "<!-- athena-agent:claude -->"
+            echo "**Claude Code**"
+            echo
+            if [ "$OUTCOME" = "success" ] && [ -s "$RUNNER_TEMP/finding.md" ]; then
+              cat "$RUNNER_TEMP/finding.md"
+            else
+              echo "Claude Code couldn't finish this investigation (step outcome: $OUTCOME). See the workflow run for details."
+            fi
+          } > "$RUNNER_TEMP/comment.md"
+          gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/comment.md"
+
+  codex:
+    if: contains(github.event.issue.labels.*.name, 'athena-investigate') && github.event.issue.user.login == github.repository_owner
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Write the task
+        env:
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          {
+            printf '%s\n\n' "You are investigating this repository for Athena. Read-only: do not modify files."
+            printf '# %s\n\n%s\n' "$ISSUE_TITLE" "$ISSUE_BODY"
+          } > "$RUNNER_TEMP/task.md"
+
+      - name: Sign in to Google
+        id: gcp
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+          token_format: access_token
+          create_credentials_file: false
+          export_environment_variables: false
+
+      - name: Read the API key from Secret Manager
+        env:
+          TOKEN: ${{ steps.gcp.outputs.access_token }}
+        run: |
+          key=$(curl -sf -H "Authorization: Bearer $TOKEN"             "https://secretmanager.googleapis.com/v1/projects/athena-476423/secrets/OPENAI_API_KEY/versions/latest:access"             | jq -r '.payload.data' | base64 -d)
+          [ -n "$key" ] || { echo "Could not read OPENAI_API_KEY"; exit 1; }
+          echo "::add-mask::$key"
+          echo "OPENAI_API_KEY=$key" >> "$GITHUB_ENV"
+
+      - name: Codex investigates
+        id: agent
+        continue-on-error: true
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ env.OPENAI_API_KEY }}
+          prompt-file: ${{ runner.temp }}/task.md
+          permission-profile: ":read-only"
+
+      - name: Post the finding
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ steps.agent.outcome }}
+          FINDING: ${{ steps.agent.outputs.final-message }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          {
+            echo "<!-- athena-agent:codex -->"
+            echo "**Codex**"
+            echo
+            if [ "$OUTCOME" = "success" ] && [ -n "$FINDING" ]; then
+              printf '%s\n' "$FINDING"
+            else
+              echo "Codex couldn't finish this investigation (step outcome: $OUTCOME). See the workflow run for details."
+            fi
+          } > "$RUNNER_TEMP/comment.md"
+          gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/comment.md"

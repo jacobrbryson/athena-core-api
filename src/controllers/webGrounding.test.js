@@ -18,6 +18,7 @@ jest.mock("../services/integration", () => ({ messageNeedsFamilyChores: () => fa
 jest.mock("../services/mission", () => ({}));
 jest.mock("../services/toolIntent", () => ({ guess: jest.fn().mockResolvedValue(null), extraGrounding: () => null }));
 jest.mock("../services/perception", () => ({ getPromptBlock: () => null }));
+jest.mock("../services/codeAgents", () => ({ REPOS: {}, promptBlock: async () => null }));
 const mockReflect = jest.fn();
 jest.mock("../services/monologue", () => ({ reflect: (...a) => mockReflect(...a) }));
 jest.mock("../services/audience", () => ({ audienceForSession: (...a) => mockAudience(...a) }));

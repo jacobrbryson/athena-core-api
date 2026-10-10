@@ -21,6 +21,7 @@ jest.mock("../services/mission", () => ({}));
 // No guess: keeps the Jev key lookup away from the real Secret Manager.
 jest.mock("../services/toolIntent", () => ({ guess: jest.fn().mockResolvedValue(null), extraGrounding: () => null }));
 jest.mock("../services/perception", () => ({ getPromptBlock: () => null }));
+jest.mock("../services/codeAgents", () => ({ REPOS: {}, promptBlock: async () => null }));
 // The inner monologue has its own suite; here it passes the draft through.
 jest.mock("../services/monologue", () => ({ reflect: async ({ draft }) => ({ reply: draft, web: null }) }));
 jest.mock("../services/memoryStore", () => ({

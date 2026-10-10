@@ -150,11 +150,20 @@ async function availableFor(profileId) {
 	} catch {
 		return [];
 	}
-	return registry.ACTIONS.filter((a) => {
+	const eligible = registry.ACTIONS.filter((a) => {
 		if (a.consentType === "action_authority" && !consented) return false;
 		if (a.provider && !linked.has(a.provider)) return false;
 		return true;
 	});
+	// An action may narrow who it is offered to beyond consent and linking
+	// (availableTo). It can only remove an action, never add one, and a check
+	// that throws removes it — fails closed like everything above.
+	const open = await Promise.all(
+		eligible.map((a) =>
+			a.availableTo ? Promise.resolve(a.availableTo(profileId)).then(Boolean, () => false) : true
+		)
+	);
+	return eligible.filter((_, i) => open[i]);
 }
 
 /**

@@ -1,5 +1,11 @@
 # Capability ledger
 
+- 2026-10-09 — Coding agents, investigate only: tell Athena something in her
+  apps is wrong and she can have Claude Code and Codex read the code (read-only)
+  and report the likely cause, then explains their findings in chat. Owner's
+  account only; needs the GitHub token and repo workflows set up —
+  `actions.md` (status: partial)
+
 - 2026-10-09 — Inner monologue: before sending a reply that states facts,
   Athena has a second model check it, looks up or drops what was a guess,
   and shows those second looks in Brain → What I almost said —
