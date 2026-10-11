@@ -109,6 +109,7 @@ function actionRepairNote(draftResponse, proposed, rejected) {
     "",
     `and proposed \`${String(proposed?.id || "?").slice(0, 60)}\` with ${params}.`,
     `It was turned down before the person saw it: "${rejected.reason}"`,
+    ...(rejected.hint ? [`How to fix it: ${rejected.hint}`] : []),
     "",
     "Write the reply again. Do exactly one of these:",
     "- If what was missing is already above (in the conversation, their points of interest, their calendar), propose it again with that fixed.",

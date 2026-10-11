@@ -558,6 +558,14 @@ describe("fix_code (code fixes, owner-authorized 2026-10-10)", () => {
 		expect(codeAgents.openFix).toHaveBeenCalledWith({ ...ok, agent: "claude" });
 	});
 
+	test("a vague change tells the model which field to fill, and the person something plain", async () => {
+		const err = await action.normalize({ repo: "core_api", symptom: "Reduce the top margin above the greeting" }, ctx).catch((e) => e);
+		expect(err.message).toMatch(/^Say exactly what to change/);
+		expect(err.message).not.toMatch(/params|symptom|investigate_code/);
+		expect(err.hint).toMatch(/params\.change/);
+		expect(err.hint).toMatch(/investigate_code/);
+	});
+
 	test("its card says it merges and deploys by itself", () => {
 		expect(action.summarize({ ...ok, agent: "claude" })).toMatch(/merges and deploys by itself/);
 	});

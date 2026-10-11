@@ -525,7 +525,18 @@ const ACTIONS = [
 				throw invalid(`Repo must be one of: ${Object.keys(codeAgents.REPOS).join(", ")}`);
 			}
 			const change = str(raw.change, 1500);
-			if (!change || change.length < 20) throw invalid("Say exactly what to change");
+			if (!change || change.length < 20) {
+				// Names the field on purpose. The repair pass shows the model this
+				// reason, and in production (2026-10-11) "say exactly what to
+				// change" alone sent it round twice with the same mistake.
+				throw Object.assign(invalid("Say exactly what to change — which screen, and what it should do"), {
+					// For the model only (the repair pass); the message above is what
+					// the person may be shown.
+					hint:
+						'Put it in params.change: e.g. "Reduce the top margin above the Good morning greeting on the ' +
+						'Companion dashboard". symptom and details belong to investigate_code, not fix_code.',
+				});
+			}
 			const agent = raw.agent === undefined || raw.agent === null || raw.agent === "" ? "claude" : raw.agent;
 			if (agent !== "claude" && agent !== "codex") throw invalid('Agent must be "claude" or "codex"');
 			let investigation = null;

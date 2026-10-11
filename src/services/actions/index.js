@@ -315,8 +315,16 @@ async function attempt(profileId, sessionId, raw, ctx = {}) {
 	} catch (err) {
 		// The interesting failure. A model that keeps proposing invalid params
 		// is a prompt bug, and this line is where it shows up.
-		console.warn(`[actions] ${action.id} params rejected: ${err.message}`);
-		return reject("params", err.message, { actionId: action.id });
+		// The param NAMES the model sent, never their values: enough to see a
+		// field filled under the wrong name, without logging what the person said.
+		const sent = Object.keys(raw.params && typeof raw.params === "object" ? raw.params : {}).join(",") || "none";
+		console.warn(`[actions] ${action.id} params rejected (sent: ${sent}): ${err.message}`);
+		return reject("params", err.message, {
+			actionId: action.id,
+			// A descriptor's note to the model on how to fix it, kept apart from
+			// the reason a person may be shown. Display text only, like the reason.
+			...(typeof err.hint === "string" ? { hint: err.hint.slice(0, 300) } : {}),
+		});
 	}
 
 	const summary = action.summarize(params);
