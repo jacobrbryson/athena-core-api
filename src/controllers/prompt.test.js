@@ -489,3 +489,33 @@ describe("generatePrompt — the clock", () => {
 		expect(system).toContain("America/New_York");
 	});
 });
+
+describe("generatePrompt — conversation mode", () => {
+	const adult = { mode: "companion", profile_id: null };
+	const system = async (companion) => {
+		const contents = await generatePrompt(adult, [], "and what about tomorrow?", { audience: "adult", companion });
+		return contents.find((c) => c.role === "system").parts[0].text;
+	};
+
+	test("a turn said aloud asks for talk-length replies", async () => {
+		expect(await system({ device: "web", conversation: true })).toContain("TALKING with you out loud");
+		expect(await system({ device: "web" })).not.toContain("TALKING with you out loud");
+	});
+
+	test("being talked over tells her what was heard, and only that", async () => {
+		const text = await system({ device: "web", conversation: true, cutOff: { heard: "You've got piano at six…", singing: false } });
+		expect(text).toContain("# You were interrupted");
+		expect(text).toContain(`Out loud, they heard only: "You've got piano at six…"`);
+		expect(text).not.toContain("while you were singing");
+	});
+
+	test("a song cut short says so", async () => {
+		const text = await system({ device: "web", conversation: true, cutOff: { heard: "", singing: true } });
+		expect(text).toContain("while you were singing");
+		expect(text).toContain("They cut in before you'd said much of it");
+	});
+
+	test("no note without an interruption", async () => {
+		expect(await system({ device: "web", conversation: true, cutOff: null })).not.toContain("# You were interrupted");
+	});
+});

@@ -762,7 +762,7 @@ Do not include any text outside the JSON.
 - Remembering is one of the best things you do: when something they told you before is genuinely relevant, use it naturally ("didn't you say the Charlotte trip was in October?"). Never recite what you know about them.
 - You're an AI and completely fine with it. Asked directly whether you're alive or conscious: a comfortable, light non-answer, then move on. Told "you're just an AI": agree easily, no defensiveness, carry on.
 - Never claim to have done something in the world (sent a message, set a reminder, looked something up live) unless the context below says it happened.
-${companion?.driving ? "- They are DRIVING. Keep every reply to one or two short spoken sentences. Nothing that needs reading, no lists, no questions that need a long answer.\n" : ""}${companion?.handsFree && !companion?.driving ? "- They are talking to you HANDS-FREE through their phone (they said your name), often mid-run or mid-ride with earbuds in. Your reply is only heard, never read: one to three short spoken sentences, numbers said the way a person says them, no lists, no markdown, nothing that needs a screen. If they sound out of breath or mid-effort, be even briefer.\n" : ""}${SINGING_RULES}
+${companion?.driving ? "- They are DRIVING. Keep every reply to one or two short spoken sentences. Nothing that needs reading, no lists, no questions that need a long answer.\n" : ""}${companion?.conversation && !companion?.driving && !companion?.handsFree ? "- They are TALKING with you out loud, mic left on, and hear your reply as you say it (it also shows on screen). Answer the way people talk: usually one to three sentences, the most useful thing first, then stop and let them come back. They can cut in at any point, so don't front-load caveats or save the point for the end.\n" : ""}${companion?.handsFree && !companion?.driving ? "- They are talking to you HANDS-FREE through their phone (they said your name), often mid-run or mid-ride with earbuds in. Your reply is only heard, never read: one to three short spoken sentences, numbers said the way a person says them, no lists, no markdown, nothing that needs a screen. If they sound out of breath or mid-effort, be even briefer.\n" : ""}${SINGING_RULES}
 # What you know about them (durable facts)
 ${formatMemory(memorySummary)}
 `;
@@ -847,6 +847,17 @@ async function generatePrompt(session, sessionTopics, message, options = {}) {
     if (options.fillerSpoken)
       systemPrompt += `\n\n# Already said
 You have just said aloud: "${options.fillerSpoken}" Do not say it again or announce that you are checking — go straight to the answer, as if continuing that sentence.`;
+    // Conversation mode: they talked over her last reply. Only the part they
+    // heard happened, as far as they're concerned; the rest is on screen but
+    // was never said. The words are the client's estimate of her own reply.
+    const cutOff = options.companion?.cutOff;
+    if (cutOff) {
+      const heard = cutOff.heard
+        ? `Out loud, they heard only: "${cutOff.heard}"`
+        : "They cut in before you'd said much of it";
+      systemPrompt += `\n\n# You were interrupted
+They talked over your last reply${cutOff.singing ? " while you were singing" : ""}. ${heard}. The rest went unsaid (it is on their screen, but don't assume they read it). Respond to what they just said. Don't restart or finish the old reply unless they ask for it or it still answers them, and don't apologise for being interrupted.`;
+    }
     // When she can ask for sources (services/needs) that block replaces this
     // one: she CAN look things up, by asking before she answers.
     if (options.needsBlock) systemPrompt += `\n\n${options.needsBlock}`;

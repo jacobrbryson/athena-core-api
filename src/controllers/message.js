@@ -139,6 +139,19 @@ function parseMessageContext(body = {}) {
       // she works. Only then does /message wait for the fast guess — anyone
       // else gets the reply-less acknowledgement exactly as fast as before.
       filler: body.companion.filler === true,
+      // Conversation mode (companion useConversation): said aloud with the mic
+      // left on, so the reply is heard first and should sound like talk.
+      conversation: body.companion.conversation === true,
+      // They talked over her last reply. `heard` is the client's estimate of
+      // how far she got — their own client's words about her own reply, so it
+      // is quoted to her as that and authorizes nothing.
+      cutOff:
+        body.companion.cutOff && typeof body.companion.cutOff === "object"
+          ? {
+              heard: trimStr(body.companion.cutOff.heard, 600) || "",
+              singing: body.companion.cutOff.singing === true,
+            }
+          : null,
       timezone,
     };
   }
@@ -279,7 +292,8 @@ async function addMessage(req, res, clients) {
     // send it back as the person's next turn — which she answers, and hears
     // again. Refuse anything that is her last reply played back to her. The
     // phone treats the refusal as a failed turn and keeps listening.
-    if (ctx.companion?.handsFree) {
+    // Conversation mode on the web leaves the mic open the same way.
+    if (ctx.companion?.handsFree || ctx.companion?.conversation) {
       const recent = await messageService
         .getMessages(session.id, callerProfileId ?? null)
         .catch(() => []);

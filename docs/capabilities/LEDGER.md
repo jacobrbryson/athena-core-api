@@ -1,5 +1,19 @@
 # Capability ledger
 
+- 2026-10-11 — Conversation mode in the web chat: tap ∞ and the mic stays on, so
+  you just talk and I answer when you've finished (I wait longer if you trail
+  off on "and…" or "um"). Talk over me and I stop; I know how far I'd got, so I
+  don't pretend you heard the rest. Words come from the browser's recognizer,
+  which only gets your voice while it hears you speak. Turns off in another tab or
+  after two quiet minutes. Not in the Android app or Guardians —
+  `conversation-mode.md` (status: partial)
+
+- 2026-10-11 — I start talking sooner: a longer answer is voiced a sentence or so
+  at a time, so I begin once the first sentence is ready instead of waiting for
+  the whole reply, in chat and on hands-free. Answers over 800 characters are now
+  spoken in full instead of cut short or left silent. Same voice; singing
+  unchanged. The phone needs the next APK — `avatar.md`, `hands-free.md`, `singing.md` (status: partial)
+
 - 2026-10-10 — Coding agents can fix, not just investigate: with the owner's
   approval every time, Claude Code (or Codex) writes the fix and opens a pull
   request that merges and deploys only when CI and the protected-path check

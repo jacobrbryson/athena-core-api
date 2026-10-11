@@ -145,3 +145,36 @@ describe("hands-free echo", () => {
 		expect(res.status).not.toHaveBeenCalledWith(409);
 	});
 });
+
+describe("conversation mode (web, mic left on)", () => {
+	const REPLY = "You've got piano lessons at six tonight, and nothing else until tomorrow morning.";
+
+	it("is told to the reply, with what they heard before they cut in", async () => {
+		await send({ device: "web", conversation: true, cutOff: { heard: "You've got piano lessons at six…", singing: false } });
+		const ctx = processAiResponse.mock.calls[0][3];
+		expect(ctx.companion.conversation).toBe(true);
+		expect(ctx.companion.cutOff).toEqual({ heard: "You've got piano lessons at six…", singing: false });
+	});
+
+	it("caps the heard text and ignores a malformed cut-off", async () => {
+		await send({ device: "web", conversation: true, cutOff: { heard: "x".repeat(2000), singing: "yes" } });
+		const { cutOff } = processAiResponse.mock.calls[0][3].companion;
+		expect(cutOff.heard).toHaveLength(600);
+		expect(cutOff.singing).toBe(false);
+		jest.clearAllMocks();
+		await send({ device: "web", conversation: true, cutOff: "everything" });
+		expect(processAiResponse.mock.calls[0][3].companion.cutOff).toBeNull();
+	});
+
+	it("refuses her own reply heard back, like hands-free", async () => {
+		messageService.getMessages.mockResolvedValue([{ is_human: false, text: REPLY, created_at: new Date() }]);
+		const res = { status: jest.fn(() => res), json: jest.fn(), headersSent: false };
+		const req = {
+			body: { sessionId: "sess-uuid", text: "piano lessons at six tonight and nothing else until tomorrow", companion: { device: "web", conversation: true } },
+			headers: {},
+		};
+		await addMessage(req, res, new Map());
+		expect(res.status).toHaveBeenCalledWith(409);
+		expect(processAiResponse).not.toHaveBeenCalled();
+	});
+});
