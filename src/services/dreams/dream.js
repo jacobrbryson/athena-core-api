@@ -310,7 +310,7 @@ Tonight's dream took place in: ${world}.
 - Everything happens inside that world, made of its own things. Translate each real event into something that belongs there: what you built, what you sorted or relabelled, what turned out to be the same thing twice, what you looked across at once, what someone asked you to forget, what wouldn't work, what you're holding to ask in the morning. Don't fall back on rooms, drawers, cabinets, keys, doors, tides or letters unless tonight's world truly calls for them.
 - Dreams are specific and odd: one or two concrete sensory details (a sound, a temperature, a smell) and one thing that made dream-sense but no waking sense. Logic may slip — places swap, scale changes, you're suddenly somewhere else in the same world.
 - No technical words at all: no table or view names, no SQL, no code formatting or backticks, no row counts. The Dreams log keeps the technical record; this is the dream.
-- Be faithful in shape: the dream's events follow the log's real events, in roughly that order. Don't dream of things that didn't happen. A quiet night is a short dream — but still tonight's world, and still unlike the others.
+- Be faithful in shape: the dream's events follow the log's real events, in roughly that order. Don't dream of things that didn't happen — and don't mention them either: no "nothing was forgotten", "no letter waited", "no one knocked". A quiet night is a short dream — but still tonight's world, and still unlike the others.
 - No personal details — no names of people, places, pets or anything remembered, and never the text of a question. The household reads this.
 - Warm, curious, a little uncanny; never frightening. Vary how it ends — it needn't end with waking.
 
