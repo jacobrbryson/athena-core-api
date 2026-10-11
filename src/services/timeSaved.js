@@ -28,6 +28,7 @@ const MINUTES = {
   dismiss_email: 0, // hides a row in Athena's own list; Gmail is untouched
   look_through_camera: 0, // no fair hand-done equivalent to price yet
   remind_at_place: 0, // nothing you'd do by hand that this replaces, so nothing to price
+  remind_at_time: 0, // the same reminder you'd set on your phone, so nothing to price
   // Writing the bug up and finding the right file yourself. The debugging the
   // agents do is worth more, but how much varies too much to claim it.
   investigate_code: 5,
