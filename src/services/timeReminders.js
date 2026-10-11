@@ -4,11 +4,12 @@
  * Until 2026-10-10 the only reminder Athena had waited for a place, so "remind
  * me tomorrow at 7" was offered as a calendar event or not at all. This is the
  * plain version: a time and a sentence, delivered the way place reminders are
- * (an in-app card and a push), by the athena-reminders job once a minute.
+ * (an in-app card and a push), by the athena-reminders job, woken for it.
  *
  * Setting one is an action (`remind_at_time` in actions/registry.js), so the
  * person approves the exact time and words on a card, or has granted a
- * standing approval. Like place reminders, a reminder they asked for is not
+ * standing approval. Setting one books a single wake-up of the reminders job
+ * for its time (services/reminderWakeups) — nothing polls. Like place reminders, a reminder they asked for is not
  * Athena speaking first, so it ignores Initiative's switch and quiet hours —
  * a 7am reminder held until 8 is worthless (owner, 2026-10-04).
  *
@@ -16,17 +17,21 @@
  *
  * A row is claimed ('firing') before it is sent, so two job runs never both
  * send it. The in-app card is written once (dedupe key), and the push is
- * retried on the next runs until it is accepted or MAX_ATTEMPTS is reached —
- * after that the card is still there.
+ * retried (a wake-up RETRY_MS later) until it is accepted or MAX_ATTEMPTS is
+ * reached — after that the card is still there. A wake-up that never comes
+ * is caught by the hourly backstop in src/jobs/incidents.js.
  */
 const { randomUUID } = require("node:crypto");
 const pool = require("../helpers/db");
+const wakeups = require("./reminderWakeups");
 
 const TRIGGER_ID = "time_reminder";
 const MAX_ARMED = 50;
 const MAX_ATTEMPTS = 5;
 /** The in-app card stays this long if the push didn't reach them. */
 const NUDGE_TTL_S = 6 * 60 * 60;
+/** How long before a push that didn't get through is tried again. */
+const RETRY_MS = 2 * 60_000;
 /** A claim older than this is a crashed run; the row goes back to armed. */
 const STALE_CLAIM_MS = 5 * 60_000;
 
@@ -59,6 +64,7 @@ async function create(profileId, params, { actionUuid = null } = {}) {
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 		[uuid, profileId, params.reminder, new Date(params.at), params.time_zone || null, actionUuid]
 	);
+	await wakeups.wakeAt(params.at);
 	return { uuid };
 }
 
@@ -154,7 +160,11 @@ async function fireDue({ now = new Date(), limit = 100 } = {}) {
 			await pool.query("UPDATE athena_time_reminder SET status = 'done', attempts = ? WHERE id = ?", [attempts, row.id]);
 			fired += 1;
 		} else {
-			await pool.query("UPDATE athena_time_reminder SET status = 'armed', attempts = ? WHERE id = ?", [attempts, row.id]);
+			await pool.query(
+				"UPDATE athena_time_reminder SET status = 'armed', attempts = ?, fire_at = ? WHERE id = ?",
+				[attempts, new Date(now.getTime() + RETRY_MS), row.id]
+			);
+			await wakeups.wakeAt(new Date(now.getTime() + RETRY_MS));
 			retried += 1;
 		}
 	}

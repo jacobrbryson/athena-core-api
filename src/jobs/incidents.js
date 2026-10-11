@@ -26,6 +26,8 @@
 require("dotenv").config();
 const pool = require("../helpers/db");
 const watch = require("../services/pulsepoint/watch");
+const timeReminders = require("../services/timeReminders");
+const placeReminders = require("../services/placeReminders");
 
 const args = { dryRun: false, loop: 0, force: false, status: false };
 for (let i = 2; i < process.argv.length; i++) {
@@ -51,8 +53,28 @@ async function status() {
 	);
 }
 
+/**
+ * The reminders backstop. Reminders wake their own job at their own time
+ * (services/reminderWakeups); this hourly run sends anything that wake-up
+ * missed, so a lost task makes a reminder late rather than lost. Never fails
+ * the incidents pass.
+ */
+async function reminderBackstop() {
+	if (args.dryRun || args.status) return;
+	try {
+		const now = new Date();
+		const [times, expired] = await Promise.all([timeReminders.fireDue({ now }), placeReminders.expireDue({ now })]);
+		if (times.fired || times.retried || expired.asked) {
+			log(`reminders backstop: sent ${times.fired}, retrying ${times.retried}, asked about ${expired.asked} expired`);
+		}
+	} catch (error) {
+		log("reminders backstop failed:", error.message);
+	}
+}
+
 async function pass() {
 	if (args.status) return status();
+	await reminderBackstop();
 	const out = await watch.runOnce({ dryRun: args.dryRun, force: args.force });
 	const { results } = out;
 	if (out.skipped) return log(`not due (every ${minutes(out.everyMs)}, ${out.why}); next in ${minutes(out.nextInMs)}`);

@@ -8,6 +8,7 @@ jest.mock("./location", () => ({ getPref: jest.fn(), recordSample: jest.fn() }))
 jest.mock("./pulsepoint/watch", () => ({ listPlaces: jest.fn() }));
 jest.mock("./pulsepoint/geocode", () => ({ lookup: jest.fn() }));
 jest.mock("./push", () => ({ deliverNudge: jest.fn() }));
+jest.mock("./reminderWakeups", () => ({ wakeAt: jest.fn(async () => true) }));
 jest.mock("./connectors/googleCalendar", () => ({}));
 jest.mock("./connectors/gmail", () => ({}));
 jest.mock("./emailTriage", () => ({}));
@@ -20,6 +21,7 @@ const db = require("../helpers/db");
 const location = require("./location");
 const watch = require("./pulsepoint/watch");
 const push = require("./push");
+const wakeups = require("./reminderWakeups");
 const placeReminders = require("./placeReminders");
 const timeReminders = require("./timeReminders");
 const registry = require("./actions/registry");
@@ -34,6 +36,7 @@ beforeEach(() => {
 	location.getPref.mockResolvedValue({ enabled: true });
 	location.recordSample.mockResolvedValue({ accepted: true });
 	push.deliverNudge.mockResolvedValue({ sent: 1 });
+	wakeups.wakeAt.mockResolvedValue(true);
 });
 
 describe("remind_at_place with a condition", () => {
@@ -113,6 +116,8 @@ describe("arrivals with a condition", () => {
 		const [sql, params] = call(/SET status = 'armed', condition_met_at/);
 		expect(sql).toContain("status = 'waiting'");
 		expect(new Date(params[1]).getTime() - Date.now()).toBeGreaterThan(11.9 * HOUR);
+		// The new deadline books its own wake-up for the "still want it?" check.
+		expect(wakeups.wakeAt).toHaveBeenCalledWith(params[1]);
 	});
 
 	it("home after the gym: it fires", async () => {
@@ -216,12 +221,23 @@ describe("fireDue", () => {
 		expect(push.deliverNudge).not.toHaveBeenCalled();
 	});
 
-	it("no push: back to armed for the next run, re-pushing the same card", async () => {
+	it("no push: back to armed two minutes later, with its own wake-up, re-pushing the same card", async () => {
 		mockDb({ inserted: 0 });
 		push.deliverNudge.mockResolvedValue({ sent: 0 });
-		expect(await timeReminders.fireDue()).toEqual({ fired: 0, retried: 1 });
+		const now = new Date();
+		expect(await timeReminders.fireDue({ now })).toEqual({ fired: 0, retried: 1 });
 		expect(push.deliverNudge.mock.calls[0][1].uuid).toBe("n-existing");
-		expect(call(/SET status = 'armed', attempts = \?/)[1][0]).toBe(1);
+		const [, params] = call(/SET status = 'armed', attempts = \?/);
+		expect(params[0]).toBe(1);
+		expect(params[1].getTime() - now.getTime()).toBe(2 * 60_000);
+		expect(wakeups.wakeAt).toHaveBeenCalledWith(params[1]);
+	});
+
+	it("setting one books a wake-up for its time", async () => {
+		db.query.mockImplementation(async (sql) => (/COUNT/.test(sql) ? [[{ n: 0 }]] : [{ affectedRows: 1 }]));
+		const at = new Date(Date.now() + HOUR).toISOString();
+		await timeReminders.create(1, { reminder: "x", at });
+		expect(wakeups.wakeAt).toHaveBeenCalledWith(at);
 	});
 
 	it("after the last attempt it is done; the card stays in the app", async () => {

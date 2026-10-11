@@ -7,10 +7,11 @@
  *   node src/jobs/reminders.js              one tick
  *   node src/jobs/reminders.js --loop 60    a tick every 60s until stopped
  *
- * Scheduled every minute (Cloud Run Job athena-reminders + Cloud Scheduler):
- * the cadence is how late "remind me at 7" can be. A tick with nothing due
- * reads two indexed rows and exits. Safe to overlap with itself — every send
- * is claimed in the database first.
+ * NOT on a schedule (owner, 2026-10-11: no every-minute poller). Each
+ * reminder books one Cloud Task for its own time that runs this Cloud Run Job
+ * (services/reminderWakeups), so it runs only when something is due. The
+ * hourly athena-incidents run does the same pass as a backstop. Safe to
+ * overlap with itself — every send is claimed in the database first.
  *
  * Place reminders that fire on arrival are NOT sent here; the phone reports
  * the arrival (services/placeReminders.arrived).
@@ -18,7 +19,7 @@
  * Exits 0 when there was nothing to do. Only an unexpected failure exits 1.
  *
  * See services/timeReminders.js, services/placeReminders.js and
- * docs/capabilities/reminders.md.
+ * docs/capabilities/time-reminders.md.
  */
 require("dotenv").config();
 const pool = require("../helpers/db");

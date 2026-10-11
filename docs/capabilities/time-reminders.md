@@ -32,10 +32,11 @@ To reach your phone it needs **Reach me outside the app** switched on in the
 
 ## When it doesn't work
 
-- **It came a minute or so late.** I check once a minute, so it can be up to
-  about a minute after the time.
-- **It never reached my phone.** It's still in our conversation. I keep
-  trying the phone for a few minutes before I stop.
+- **It came a little late.** It usually arrives within half a minute of the
+  time. If something went wrong setting its alarm, an hourly check still sends
+  it, so at worst it's up to an hour late — never lost.
+- **It never reached my phone.** It's still in our conversation. I try the
+  phone again every couple of minutes, a few times, before I stop.
 - **I said the time was in the past.** Tell me the day as well as the time.
 
 ## Limits
@@ -55,9 +56,14 @@ To reach your phone it needs **Reach me outside the app** switched on in the
 - Service: `src/services/timeReminders.js` — `create`, `list`, `cancel`,
   `fireDue` (claim → nudge with dedupe key `<uuid>:time` → push; back to
   armed on a failed push, done after `MAX_ATTEMPTS`), `promptBlock`.
-- Job: `src/jobs/reminders.js`, Cloud Run Job `athena-reminders` on a
-  once-a-minute Cloud Scheduler trigger; also runs the place-reminder expiry
-  sweep. Listed in `cloudbuild.yaml` `_JOBS` so each deploy rolls its image.
+- Job: `src/jobs/reminders.js`, Cloud Run Job `athena-reminders`. NOT on a
+  schedule (owner, 2026-10-11: no every-minute poller — cost). Each reminder
+  books one Cloud Task (queue `athena-reminders`, us-central1) for its own
+  time that calls the Run API `jobs/athena-reminders:run`
+  (`src/services/reminderWakeups.js`; tasks named by the minute, so one run
+  per minute however many are due). Backstop: the hourly `athena-incidents`
+  run (`src/jobs/incidents.js` `reminderBackstop`). Also runs the
+  place-reminder expiry sweep. Listed in `cloudbuild.yaml` `_JOBS`.
 - Routes: shares `/api/v1/place-reminders` (list returns `timeReminders`;
   DELETE tries the place reminder, then the time one).
 - Schema: `db/migrations/0059_reminder_conditions.up.sql`

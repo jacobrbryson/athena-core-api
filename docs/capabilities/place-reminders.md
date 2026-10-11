@@ -98,8 +98,9 @@ It needs three things switched on, once:
   `afterCondition()` in `src/services/actions/registry.js`. Rows start
   `waiting`; `arrived()` flips them to `armed` (condition met) and fires;
   `geofences()` also lists `<uuid>:after` fences; `expireDue()` (run by
-  `src/jobs/reminders.js`) marks `expired` and sends the "still want it?"
-  nudge. "home" resolves to the point of interest of kind `home`. Schema:
+  `src/jobs/reminders.js`, woken for each deadline by a Cloud Task, and by
+  the hourly incidents backstop) marks `expired` and sends the "still want
+  it?" nudge. "home" resolves to the point of interest of kind `home`. Schema:
   `db/migrations/0059_reminder_conditions`. Tests:
   `src/services/reminderConditions.test.js`.
 

@@ -40,6 +40,7 @@ const location = require("./location");
 const watch = require("./pulsepoint/watch");
 const geocode = require("./pulsepoint/geocode");
 const geo = require("./pulsepoint/geo");
+const wakeups = require("./reminderWakeups");
 
 const TRIGGER_ID = "place_reminder";
 /**
@@ -197,6 +198,8 @@ async function create(profileId, params, { actionUuid = null } = {}) {
 			after?.expires_at ? new Date(after.expires_at) : null,
 		]
 	);
+	// The "still want it?" check, booked for the moment the window closes.
+	if (after?.expires_at) await wakeups.wakeAt(after.expires_at);
 	const pref = await location.getPref(profileId).catch(() => ({ enabled: false }));
 	return { uuid, locationSharing: !!pref.enabled };
 }
@@ -301,7 +304,10 @@ async function arrived(profileId, deviceId, body = {}, { now = Date.now() } = {}
 					 WHERE id = ? AND status = 'waiting'`,
 					[at, new Date(now + AFTER_MET_HOURS * 3600_000), row.id]
 				);
-				if (claim.affectedRows) met.push({ uuid: row.uuid });
+				if (claim.affectedRows) {
+					met.push({ uuid: row.uuid });
+					await wakeups.wakeAt(new Date(now + AFTER_MET_HOURS * 3600_000));
+				}
 			}
 			continue;
 		}
@@ -364,7 +370,8 @@ async function arrived(profileId, deviceId, body = {}, { now = Date.now() } = {}
  * Conditional reminders whose window closed before they could fire. Never
  * dropped silently (owner's choice, 2026-10-10): each becomes 'expired' and
  * the person is asked once whether they still want it. Run by the
- * athena-reminders job; safe to run concurrently with itself.
+ * athena-reminders job (woken for each deadline) and the hourly backstop;
+ * safe to run concurrently with itself.
  */
 async function expireDue({ now = new Date() } = {}) {
 	const [rows] = await pool.query(
