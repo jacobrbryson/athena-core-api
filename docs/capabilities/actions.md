@@ -6,7 +6,7 @@ where: the ⋯ menu (top right) → Actions
 status: partial
 surfaces: [companion]
 audiences: [adult]
-triggers: [investigate, look into the code, fix it, fix that, fix the bug, pull request, merge, deploy the fix, claude code, codex, why is it broken, debug, find the bug, add to my calendar, put it on my calendar, book, schedule it, schedule that, make an event, create an event, can you do it, do it for me, remember that, actions, approve, without asking]
+triggers: [investigate, look into the code, fix it, fix that, fix the bug, your code, own code, change your, update your, your dashboard, padding, margin, spacing, layout, chatgpt, pull request, merge, deploy the fix, claude code, codex, why is it broken, debug, find the bug, add to my calendar, put it on my calendar, book, schedule it, schedule that, make an event, create an event, can you do it, do it for me, remember that, actions, approve, without asking]
 ---
 
 ## What I can do
@@ -43,9 +43,13 @@ Two things I can propose today:
   likely cause; they can't change anything. Their findings take a few minutes,
   and I'll tell you what they found when they're back, or when you ask. Only
   for the owner's account.
-- **Have a coding agent fix it** — usually right after an investigation.
-  Claude Code writes the fix (or Codex, if you'd rather) and opens a pull
-  request, which merges and deploys by itself only if every check passes. I
+- **Have a coding agent change my code** — fix a bug, usually right after an
+  investigation, or make a small change you ask for, like tightening the
+  spacing on a dashboard card. Yes, this means changing my own code: you
+  authorized it, and anything touching security or sign-in is refused by a
+  check automatically. Claude Code writes it (or Codex — "ChatGPT" — if you'd
+  rather) and opens a pull request, which merges and deploys by itself only if
+  every check passes. I
   always ask first for this one, every time, and I'll tell you when it's
   merged, or if a check stopped it. Only for the owner's account.
 

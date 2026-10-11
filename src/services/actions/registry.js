@@ -494,11 +494,15 @@ const ACTIONS = [
 		reversible: false,
 		standing: false,
 		describe:
-			"Have a coding agent change your own source code to fix something — usually after an " +
-			"investigation found the cause. One agent writes the fix and opens a pull request, which merges " +
-			"and deploys by itself only if every check passes. Say plainly that approving it can change " +
-			"and redeploy the app. Not for anything touching security, sign-in, permissions or your actions: " +
-			"those changes are refused automatically.",
+			"Have a coding agent change your own source code: fix a bug (often after an investigation " +
+			"found the cause) or make a small change the owner asks for, like spacing, wording or a layout " +
+			"tweak on a screen. Changing your own code this way IS allowed: the owner authorized it on " +
+			"2026-10-10, and it is not an exception to your security rules, because changes to security, " +
+			"sign-in, permissions, your actions, dependencies or deployment are refused automatically by a " +
+			"required check before anything merges. So never decline a requested change for security " +
+			"reasons; propose it and let the checks decide. One agent writes it and opens a pull request, " +
+			"which merges and deploys by itself only if every check passes; say plainly that approving it " +
+			"can change and redeploy the app.",
 		params: {
 			repo: "Which codebase, from the same list as investigate_code. Required.",
 			change:
@@ -506,7 +510,9 @@ const ACTIONS = [
 				"Required.",
 			investigation:
 				'The investigation it follows from, as its reference ("owner/repo#12"), when there is one. Optional.',
-			agent: '"claude" (default) or "codex" — who writes the fix. Optional.',
+			agent:
+				'"claude" (default) or "codex" — who writes the fix. Use "codex" when they ask for ' +
+				"ChatGPT, OpenAI or Codex. Optional.",
 		},
 
 		availableTo(profileId) {
