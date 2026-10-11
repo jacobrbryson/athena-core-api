@@ -32,8 +32,8 @@ To reach your phone it needs **Reach me outside the app** switched on in the
 
 ## When it doesn't work
 
-- **It came a little late.** It usually arrives within half a minute of the
-  time. If something went wrong setting its alarm, an hourly check still sends
+- **It came a little late.** It usually arrives within a couple of minutes of
+  the time. If something went wrong setting its alarm, an hourly check still sends
   it, so at worst it's up to an hour late — never lost.
 - **It never reached my phone.** It's still in our conversation. I try the
   phone again every couple of minutes, a few times, before I stop.
