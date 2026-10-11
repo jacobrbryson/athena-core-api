@@ -1238,6 +1238,10 @@ const BY_ID = new Map(ACTIONS.map((a) => [a.id, a]));
  */
 const PARAM_TYPES = {
 	all_day: { type: "boolean" },
+	// Closed sets, so the model picks a real value instead of inventing one
+	// ("companion-dashboard"). normalize() still checks; this only stops waste.
+	repo: { type: "string", enum: Object.keys(codeAgents.REPOS) },
+	agent: { type: "string", enum: ["claude", "codex"] },
 	within_hours: { type: "number" },
 	email_triage_uuids: { type: "array", items: { type: "string" } },
 	items: {
@@ -1263,14 +1267,62 @@ const PARAM_TYPES = {
 		},
 	},
 };
-function paramsSchema() {
-	const properties = {};
+/**
+ * One order for every param name that agrees with every action's OWN order.
+ *
+ * Gemini's structured output writes object fields in a fixed order —
+ * alphabetical unless told otherwise — and once it has written a field it
+ * cannot go back for an earlier one. With every action's params flattened
+ * into one object, that cost real proposals (found in production 2026-10-11):
+ * fix_code started at `repo` and, unable to return to `change`, put the
+ * change in `value`; remind_at_time put its time in `value` for the same
+ * reason. A plain registry order fixed those but broke remind_at_place, whose
+ * `reminder` comes after its place fields. So: a topological order over each
+ * action's declared sequence, ties broken by first appearance. Should two
+ * actions ever declare contradictory orders, the rest fall back to first
+ * appearance rather than failing.
+ */
+function paramOrder() {
+	const first = [];
+	const after = new Map(); // name -> names that must come later
+	const before = new Map(); // name -> count of names that must come earlier
 	for (const action of ACTIONS) {
-		for (const name of Object.keys(action.params || {})) {
-			properties[name] = PARAM_TYPES[name] || { type: "string" };
+		const own = Object.keys(action.params || {});
+		for (const name of own) {
+			if (!after.has(name)) {
+				first.push(name);
+				after.set(name, new Set());
+				before.set(name, 0);
+			}
+		}
+		for (let i = 1; i < own.length; i++) {
+			const edges = after.get(own[i - 1]);
+			if (!edges.has(own[i])) {
+				edges.add(own[i]);
+				before.set(own[i], before.get(own[i]) + 1);
+			}
 		}
 	}
-	return { type: "object", properties };
+	const order = [];
+	const ready = first.filter((n) => before.get(n) === 0);
+	while (ready.length) {
+		ready.sort((a, b) => first.indexOf(a) - first.indexOf(b));
+		const name = ready.shift();
+		order.push(name);
+		for (const next of after.get(name)) {
+			before.set(next, before.get(next) - 1);
+			if (before.get(next) === 0) ready.push(next);
+		}
+	}
+	return [...order, ...first.filter((n) => !order.includes(n))];
+}
+
+function paramsSchema() {
+	const order = paramOrder();
+	const properties = {};
+	for (const name of order) properties[name] = PARAM_TYPES[name] || { type: "string" };
+	// Gemini-only keyword (openaiCompat strips it for strict mode).
+	return { type: "object", properties, propertyOrdering: order };
 }
 
 /** The descriptor, or null. Callers must treat null as "refuse", not "allow". */

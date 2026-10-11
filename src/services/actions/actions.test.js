@@ -906,4 +906,24 @@ describe("the reply schema's params (2026-10-04)", () => {
 		expect(schema.properties.items.type).toBe("array");
 		expect(schema.properties.reminder.type).toBe("string");
 	});
+
+	// Gemini writes fields in a fixed order and can't go back for an earlier one
+	// (2026-10-11): alphabetical order made fix_code put its change in `value`
+	// and remind_at_time put its time there too.
+	test("orders the fields so every action's own params come in its own order", () => {
+		expect(schema.propertyOrdering.sort()).toEqual(Object.keys(schema.properties).sort());
+		const order = registry.paramsSchema().propertyOrdering;
+		for (const action of registry.ACTIONS) {
+			const positions = Object.keys(action.params).map((n) => order.indexOf(n));
+			expect({ id: action.id, inOrder: positions.every((p, i) => i === 0 || p > positions[i - 1]) }).toEqual({
+				id: action.id,
+				inOrder: true,
+			});
+		}
+	});
+
+	test("closes the sets a model would otherwise invent values for", () => {
+		expect(schema.properties.repo.enum).toEqual(Object.keys(codeAgents.REPOS));
+		expect(schema.properties.agent.enum).toEqual(["claude", "codex"]);
+	});
 });

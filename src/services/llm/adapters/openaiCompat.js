@@ -120,7 +120,9 @@ function toStrictSchema(schema) {
 	if (Array.isArray(schema)) return schema.map(toStrictSchema);
 	const out = {};
 	for (const [k, v] of Object.entries(schema)) {
-		if (k === "maxItems" || k === "minItems") continue;
+		// propertyOrdering is Gemini's field order (actions/registry.js
+		// paramsSchema); strict mode would refuse a keyword it doesn't know.
+		if (k === "maxItems" || k === "minItems" || k === "propertyOrdering") continue;
 		out[k] = k === "properties" ? Object.fromEntries(Object.entries(v).map(([name, sub]) => [name, toStrictSchema(sub)])) : toStrictSchema(v);
 	}
 	if (out.type === "object" && out.properties) {

@@ -46,7 +46,13 @@ function chatSchema(base) {
       ...base.properties,
       proposed_action: {
         ...proposed,
-        properties: { ...proposed.properties, params: actionRegistry.paramsSchema() },
+        properties: {
+          ...proposed.properties,
+          // A closed set: left free, Gemini sometimes wrote "fix_code_1"
+          // (2026-10-11), which no registry entry answers to.
+          id: { type: "string", enum: actionRegistry.ACTIONS.map((a) => a.id) },
+          params: actionRegistry.paramsSchema(),
+        },
       },
     },
   };
