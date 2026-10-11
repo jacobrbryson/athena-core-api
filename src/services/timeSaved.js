@@ -25,6 +25,7 @@ const MINUTES = {
   draft_reply: 2, // per draft saved: reading it and writing a first reply
   archive_emails: 0.1, // six seconds each: select and archive in the Gmail app
   remember_fact: 0.5, // writing the note down yourself
+  log_health_update: 0.5, // writing the reading down yourself
   dismiss_email: 0, // hides a row in Athena's own list; Gmail is untouched
   look_through_camera: 0, // no fair hand-done equivalent to price yet
   remind_at_place: 0, // nothing you'd do by hand that this replaces, so nothing to price

@@ -56,6 +56,17 @@ const registry = require("./registry");
  */
 const PROPOSAL_TTL_MS = 15 * 60 * 1000;
 
+/**
+ * How far back an identical request counts as the same one.
+ *
+ * 2026-10-11: with a standing approval, "want me to put Taylor's house on
+ * your calendar?" had already added it, and "yes please" added it again; the
+ * same day an investigation issue was opened twice. Nobody asks for the same
+ * event, reminder or issue twice in a few hours on purpose, so a repeat inside
+ * this window is answered with the one already there instead of a second.
+ */
+const REPEAT_WINDOW_HOURS = 6;
+
 /** Rows a person may still act on, newest first. */
 const PENDING_COLUMNS = `uuid, action_id, params, rationale, summary, status,
 	approval, result_ref, error, created_at, expires_at, decided_at, executed_at`;
@@ -174,8 +185,9 @@ async function availableFor(profileId) {
  * stays silent about actions she cannot take, rather than offering them and
  * failing.
  */
-function promptBlock(actions) {
+function promptBlock(actions, { standing = [] } = {}) {
 	if (!actions || !actions.length) return null;
+	const standingIds = new Set(standing);
 	const lines = [
 		"# Things you can DO (not just say)",
 		"",
@@ -211,6 +223,13 @@ function promptBlock(actions) {
 			lines.push(`- ${name}: ${description}`);
 		}
 		if (action.alternatives) lines.push(`If this doesn't fit: ${action.alternatives}`);
+		if (standingIds.has(action.id)) {
+			lines.push(
+				"They gave you a standing approval for this: proposing it DOES it, the moment you",
+				"reply, with no card to approve. So never ask \"want me to…?\" and propose in the",
+				"same reply — either ask and propose nothing, or propose and say you're doing it."
+			);
+		}
 		lines.push("");
 	}
 	lines.push(
@@ -245,6 +264,26 @@ function pendingBlock(pending) {
 	return lines.join("\n");
 }
 
+/**
+ * What she has already done for this person in the last few hours, so "yes
+ * please" after a standing execution is acknowledged rather than proposed a
+ * second time. Null when there is nothing. Stored summaries only.
+ */
+function recentBlock(recent) {
+	const done = (recent || []).filter(
+		(r) => r.status === "done" && Date.now() - new Date(r.created_at).getTime() < REPEAT_WINDOW_HOURS * 3600000
+	);
+	if (!done.length) return null;
+	const lines = [
+		"# Already done in the last few hours",
+		"These have happened. Never propose one of them again: if the person says yes,",
+		"thanks or asks for it again, tell them it's already done.",
+		"",
+	];
+	for (const r of done.slice(0, 8)) lines.push(`- ${r.summary}`);
+	return lines.join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Propose
 // ---------------------------------------------------------------------------
@@ -262,9 +301,9 @@ function pendingBlock(pending) {
  * standing authority for that exact action.
  */
 async function propose(profileId, sessionId, raw, ctx = {}) {
-	const { proposal, rejected } = await attempt(profileId, sessionId, raw, ctx);
+	const { proposal, rejected, repeat } = await attempt(profileId, sessionId, raw, ctx);
 	if (rejected?.thrown) throw rejected.thrown;
-	return proposal;
+	return proposal || repeat || null;
 }
 
 /**
@@ -284,6 +323,9 @@ async function propose(profileId, sessionId, raw, ctx = {}) {
  * A standing execution that fails at the provider is returned as the failed
  * proposal (status "failed", error set) with `rejected` filled in, and the
  * original error is kept on `rejected.thrown` so propose() still throws.
+ *
+ *   { proposal: null, rejected: null, repeat }  the same thing is already done
+ *                                               or waiting (see earlierCopy)
  */
 async function attempt(profileId, sessionId, raw, ctx = {}) {
 	const reject = (stage, reason, extra = {}) => ({
@@ -327,6 +369,15 @@ async function attempt(profileId, sessionId, raw, ctx = {}) {
 		});
 	}
 
+	// After normalize, so "the same" is judged on what would actually run, not
+	// on how the model happened to word it this time. Only ever prevents a
+	// write; a repeat that is still pending is the card already on screen.
+	const repeat = await earlierCopy(profileId, action, params);
+	if (repeat) {
+		console.info(`[actions] ${action.id} repeats ${repeat.uuid} (${repeat.status}); not doing it twice`);
+		return { proposal: null, rejected: null, repeat };
+	}
+
 	const summary = action.summarize(params);
 	const uuid = randomUUID();
 	const authority = action.standing ? await liveAuthority(profileId, action.id) : null;
@@ -368,6 +419,53 @@ async function attempt(profileId, sessionId, raw, ctx = {}) {
 		}
 	}
 	return { proposal: withSuperseded(await get(profileId, uuid), superseded), rejected: null };
+}
+
+/**
+ * This person's pending, executing or done proposal of the same action from
+ * the last REPEAT_WINDOW_HOURS that is the same request as `params`, or null.
+ *
+ * "The same" is the descriptor's `sameAs(earlier, params)` when it has one
+ * (a reworded event title or issue symptom is still the same request) and
+ * identical params otherwise; `sameAs: false` opts an action out. Failed,
+ * declined and expired rows never count, so trying again after one of those
+ * always works. A lookup that throws counts as no repeat: this check only
+ * exists to stop a second write, never to block the first.
+ */
+async function earlierCopy(profileId, action, params) {
+	if (action.sameAs === false) return null;
+	const same = typeof action.sameAs === "function" ? action.sameAs : sameParams;
+	try {
+		const [rows] = await pool.query(
+			`SELECT ${PENDING_COLUMNS} FROM athena_action
+			 WHERE profile_id = ? AND action_id = ?
+			   AND created_at > DATE_SUB(NOW(), INTERVAL ? HOUR)
+			   AND (status IN ('executing', 'done') OR (status = 'pending' AND expires_at > NOW()))
+			 ORDER BY created_at DESC LIMIT 20`,
+			[profileId, action.id, REPEAT_WINDOW_HOURS]
+		);
+		for (const row of rows || []) {
+			const earlier = typeof row.params === "string" ? safeJson(row.params) : row.params;
+			if (earlier && same(earlier, params)) return publicAction(row);
+		}
+	} catch (err) {
+		console.warn("[actions] repeat check failed:", err.message);
+	}
+	return null;
+}
+
+/** Params equal regardless of key order. */
+function sameParams(a, b) {
+	const canonical = (v) =>
+		v && typeof v === "object" && !Array.isArray(v)
+			? `{${Object.keys(v)
+					.sort()
+					.map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`)
+					.join(",")}}`
+			: Array.isArray(v)
+				? `[${v.map(canonical).join(",")}]`
+				: JSON.stringify(v);
+	return canonical(a) === canonical(b);
 }
 
 function withSuperseded(proposal, superseded) {
@@ -630,9 +728,11 @@ async function revokeAuthority(profileId, actionId) {
 
 module.exports = {
 	PROPOSAL_TTL_MS,
+	REPEAT_WINDOW_HOURS,
 	availableFor,
 	promptBlock,
 	pendingBlock,
+	recentBlock,
 	propose,
 	attempt,
 	get,

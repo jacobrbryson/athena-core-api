@@ -2,7 +2,7 @@
 id: camera
 title: Seeing Through A Camera
 summary: I can look through a camera on your device, take a fresh look each time you message me, and — if you allow it — take a look on my own when it would help.
-where: the camera button by the message box → Let her see
+where: Chat → … input menu (left of the message box) → Let her see
 status: partial
 surfaces: [companion]
 audiences: [adult]
@@ -25,8 +25,10 @@ you can flip between the front and back camera, which is usually what you want:
 the back one for showing me something, the front one for talking.
 
 My sight stays on once you turn it on — closing the panel doesn't stop it.
-While I can see, there's an eye in the top bar. Tap it to see what I'm seeing
-or turn it off.
+While sight is on, **Let her see on** stays below the chat message box,
+and there's an eye in the top bar. Tap either to see what I'm seeing or turn
+it off. These indicators mean camera access is on; I take occasional looks,
+not continuous video.
 
 **If you allow it, I can also take a look on my own** when seeing would answer
 what we're talking about. I always say why, the screen says so while it's
@@ -39,7 +41,7 @@ the picture.
 
 ## Where to find it
 
-The camera button next to the message box → **Let her see**. It's also in the
+In Chat, the **… input menu** to the left of the message box → **Let her see**. It's also in the
 menu under the same name. Your browser asks permission the first time.
 
 **Turn off her sight** in that panel, or tap the eye in the top bar to get back

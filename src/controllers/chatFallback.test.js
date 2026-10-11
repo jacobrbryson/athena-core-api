@@ -64,7 +64,7 @@ test("a malformed first reply is retried and the good one is saved", async () =>
 	mockGenerate.mockImplementation(serving(['{\\"response\\": \\"oops\\"}', valid]));
 	await processAiResponse(session, "hello", new Map(), {});
 	expect(mockGenerate).toHaveBeenCalledTimes(2);
-	expect(mockAddMessage).toHaveBeenCalledWith(1, false, "Hey there.", "companion");
+	expect(mockAddMessage).toHaveBeenCalledWith(1, false, "Hey there.", "companion", null, null);
 	expect(mockAfterTurn).toHaveBeenCalled();
 });
 
@@ -92,5 +92,16 @@ test("the salvage parser recovers the production escaped-quote failure without a
 	mockGenerate.mockImplementation(serving([escaped]));
 	await processAiResponse(session, "hello", new Map(), {});
 	expect(mockGenerate).toHaveBeenCalledTimes(1);
-	expect(mockAddMessage).toHaveBeenCalledWith(1, false, "Recovered.", "companion");
+	expect(mockAddMessage).toHaveBeenCalledWith(1, false, "Recovered.", "companion", null, null);
+});
+
+test('thread replies retain their root and are never broadcast as private text to shared sockets', async () => {
+  mockGenerate.mockImplementation(serving([valid]));
+  const broadcast = [];
+  const clients = new Map([['s1', new Set([{ readyState: 1, OPEN: 1, send: (p) => broadcast.push(JSON.parse(p)) }])]]);
+  await processAiResponse(session, 'hello', clients,
+    { replyTo: 'original', replyPrivateProfileId: 42, speakerProfileId: 42 });
+  expect(mockAddMessage.mock.calls[0][6]).toEqual({ replyTo: 'original', privateProfileId: 42, actionUuid: undefined });
+  expect(broadcast.some((m) => m.rpc === 'addMessage')).toBe(false);
+  expect(broadcast.some((m) => m.rpc === 'sessionStatus' && m.session.is_busy === false)).toBe(true);
 });

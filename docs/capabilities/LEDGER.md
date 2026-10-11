@@ -1,5 +1,57 @@
 # Capability ledger
 
+- 2026-10-11 — Family page replaces Under the weather with Family Health:
+  Good, Watch, Warning or Alert! from the highest active reported severity;
+  unavailable reports show Unknown — `family-health.md`.
+
+- 2026-10-11 — Family Edit opens a dialog for name, relationship, memories,
+  contact controls and health-watch access; the Family page shows resolved
+  names instead of memory keys such as Spouse — `companion-dashboard.md`.
+
+- 2026-10-11 — Dreams no longer all sound alike: each night is set in a
+  different world, the narrator sees her last five dreams and avoids their
+  images, and each picture uses a different medium — `dreaming.md`.
+
+- 2026-10-11 — Family page adds Edit relationship to set the Family card's
+  relationship label while preserving the person's other memories — `companion-dashboard.md`.
+
+- 2026-10-11 — Removed the Talk it through option from calendar rows on the
+  Companion dashboard Family card — `companion-dashboard.md`.
+
+- 2026-10-11 — Each chat input menu option now has a leading icon —
+  `conversation-mode.md`.
+
+- 2026-10-11 — The chat input menu uses a circular button with three vertically
+  and horizontally centered dots — `conversation-mode.md`.
+
+- 2026-10-11 — The chat Input menu button now shows an ellipsis, retaining its
+  tooltip and accessible label — `conversation-mode.md`, `camera.md`, `photos.md`.
+
+- 2026-10-11 — Companion chat combines Conversation mode, Click to talk,
+  Let her see and Show a photo in an Input menu left of the message box, with
+  a tooltip and persistent voice/camera indicators — `conversation-mode.md`,
+  `camera.md`, `photos.md`.
+
+- 2026-10-11 — Athena's profile picture appears on the left of her Companion
+  chat replies, thread replies and proactive messages, with an A fallback if
+  the image cannot load — `chat-threads.md` (status: partial).
+
+- 2026-10-11 — Approval cards persist in Companion chat, messages support reply
+  threads, and reminder occurrences and coding outcomes return to their original
+  thread — `chat-threads.md` (status: partial).
+
+- 2026-10-11 — Desktop Companion conversation mode feeds recognition from the
+  same echo-cancelled microphone used for interruption detection, silences the
+  recognition branch for residual echo, filters interim and final echoes, and
+  retains playback evidence across clip changes and a short acoustic tail.
+  Spoken interruption stays enabled. The ordinary mic button stops playback
+  before listening and closes before her answer. Requires desktop Chrome or Edge 135+;
+  speaker biometrics are not implemented — `conversation-mode.md` (status: partial)
+
+- 2026-10-11 — Web source links are saved with new chat replies and remain
+  visible after refresh, when returning to a conversation, and when replies
+  arrive through polling — `web-search.md` (status: live)
+
 - 2026-10-11 — Conversation mode in the web chat: tap ∞ and the mic stays on, so
   you just talk and I answer when you've finished (I wait longer if you trail
   off on "and…" or "um"). Talk over me and I stop; I know how far I'd got, so I
@@ -412,3 +464,7 @@ See [`README.md`](README.md) for the full contract.
 - 2026-10-10 — When something I propose is turned down before it reaches you, I see why and fix it, offer the nearest thing I can do, or ask the one question I need — no more "scratch that" and silence. When there's more than one way to do something I ask which you want before making a card, and you can change a waiting card ("make it 2:00") and I replace it instead of adding a second — `actions.md` (status: partial)
 - 2026-10-10 — I look things up before I answer instead of guessing: your calendar, the weather at an event's place and time (US National Weather Service, up to a week out), and web searches I write myself once I know what you mean — never with family names, health or email contents in them. Your own calendar comes before the web, so "the games" means your games — `looking-things-up.md` (status: partial)
 - 2026-10-10 — Reminders at a time ("at 7 tomorrow, remind me to…"), and place reminders that wait for something first: "when I get home from the gym" goes off only after you've been at the gym, "when we get home after the last game" only after that game on your calendar ends. If the first thing doesn't happen in time I ask whether you still want it instead of dropping it. Both are on the Community page under Reminders — `time-reminders.md`, `place-reminders.md` (status: partial)
+- 2026-10-11 — I don't do the same thing twice: asking again for an event, reminder or code investigation I already did in the last few hours gets "that's already done" instead of a duplicate, and with a standing approval I no longer ask "want me to?" about something I'm already doing — `actions.md` (status: partial)
+- 2026-10-11 — Health watch moved into each person's ⋯ menu on the Family page (People & pets), with the person already chosen. A watch can ask for updates every 4, 6, 12 or 24 hours or any custom number; I mention it when one is due and, with initiative on, ask for it. Watched people show a red line with the next update time — `family-health.md` (status: partial)
+- 2026-10-11 — On the Family page each person's ⋯ menu can now Edit what I remember about them (your wording replaces mine, and only a clear correction from you in chat changes it again) and Move to Community, which adds them to a neighbor household's notes and takes them off your family list — `companion-dashboard.md` (status: partial)
+- 2026-10-11 — Health updates from chat: tell me someone's sick, give me a reading or a dose, change how often I check in, or say they're feeling better, and I'll put up a card to log it on their health watch (or just log it, with a standing approval) — `family-health.md`, `actions.md` (status: partial)

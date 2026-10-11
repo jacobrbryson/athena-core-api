@@ -25,12 +25,37 @@ function storage() {
 	return storageClient;
 }
 
-function imagePrompt(narrative) {
-	return `A dreamlike painting of this dream, told by an AI who spent the night reorganizing her memories into a library of her own design:
+/**
+ * The medium changes nightly. One fixed style (indigo night, lamplight,
+ * drawers) made every picture the same picture whatever the dream said.
+ */
+const MEDIA = [
+	"loose watercolour with soft bleeding edges",
+	"gouache, like a mid-century storybook illustration",
+	"a two-colour linocut print",
+	"thick impasto oil paint",
+	"cut-paper collage with visible layers and shadows",
+	"Japanese woodblock print",
+	"ink wash with a single accent colour",
+	"stained glass, lit from behind",
+	"soft chalk pastel on toned paper",
+	"a risograph print with slightly misregistered colours",
+	"coloured pencil, delicate and grainy",
+	"a 1970s paperback-cover painting, airbrushed and vivid",
+];
+
+function pickMedium(night) {
+	let h = 7;
+	for (const ch of `${night?.date || ""}:medium`) h = (Math.imul(h, 31) + ch.charCodeAt(0)) >>> 0;
+	return MEDIA[h % MEDIA.length];
+}
+
+function imagePrompt(narrative, { world = null, medium = MEDIA[0] } = {}) {
+	return `A dreamlike picture of this dream, told by an AI about her night${world ? ` (it took place in ${world})` : ""}:
 
 "${String(narrative).slice(0, 2500)}"
 
-Style: soft, luminous, slightly surreal; deep indigo and violet night palette with warm lamplight; rooms of drawers, glowing threads, doors, tides and letters where the dream mentions them. Painterly, calm, a little uncanny, never frightening.
+Medium: ${medium}. Take the palette, light and setting from the dream itself, not from any house style; show its single strangest moment rather than a general scene. Slightly surreal, a little uncanny, never frightening.
 Strictly: no text, letters, numbers or code anywhere in the image; no recognisable people or faces — at most a small, distant silhouette.`;
 }
 
@@ -43,9 +68,10 @@ function objectName(night, ext) {
  * Paint and store. Returns `gs://bucket/path` or throws; the caller records
  * the failure and the dream stands without a picture.
  */
-async function paint(night, narrative) {
+async function paint(night, narrative, { world = null } = {}) {
 	if (!narrative) throw new Error("no narrative to paint");
-	const out = await llm.image(imagePrompt(narrative), { size: "1536x1024", quality: "medium" });
+	const medium = pickMedium(night);
+	const out = await llm.image(imagePrompt(narrative, { world, medium }), { size: "1536x1024", quality: "medium" });
 	const img = out.images?.[0];
 	if (!img?.b64) throw new Error(`${out.endpointId} returned no image bytes`);
 	const mime = img.mimeType || img.mime || "image/png";
@@ -59,7 +85,7 @@ async function paint(night, narrative) {
 			contentType: mime,
 			metadata: { cacheControl: "private, max-age=86400", metadata: { dream: night.uuid, model: String(out.model || "") } },
 		});
-	return { path: `gs://${BUCKET()}/${name}`, model: out.model };
+	return { path: `gs://${BUCKET()}/${name}`, model: out.model, medium };
 }
 
 /** Stream a stored image. `path` is the gs:// URL recorded on the dream. */
@@ -70,4 +96,4 @@ function open(path) {
 	return { file, contentType: m[2].endsWith(".jpg") ? "image/jpeg" : m[2].endsWith(".webp") ? "image/webp" : "image/png" };
 }
 
-module.exports = { paint, open, imagePrompt, objectName, _setStorage: (s) => (storageClient = s) };
+module.exports = { paint, open, imagePrompt, pickMedium, MEDIA, objectName, _setStorage: (s) => (storageClient = s) };

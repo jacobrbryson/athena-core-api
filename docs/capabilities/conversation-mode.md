@@ -2,7 +2,7 @@
 id: conversation-mode
 title: Conversation mode
 summary: In the chat on a computer you can leave the mic on and just talk with me, and cut in while I'm talking.
-where: Chat → the ∞ button left of the mic (web browser, not the Android app)
+where: Chat → … input menu → Conversation mode (web browser, not the Android app)
 status: partial
 surfaces: [companion]
 audiences: [adult]
@@ -21,16 +21,25 @@ can say "wait" or ask something else. A quick "mm-hm" doesn't stop me; it takes
 a moment of real speech, and a little longer while I'm singing. When you cut me
 off I know how far I'd got, so I won't pretend you heard the rest.
 
-While it's on, the button glows and lights up brighter whenever it hears you,
-and what you're saying shows in the chat as you say it. It turns itself off
+While it's on, a small **Conversation on** indicator stays below the message
+box, with a dot that lights up brighter whenever it hears you. Tap the indicator
+to stop. What you're saying shows in the chat as you say it. It turns itself off
 when you switch to another tab or after two quiet minutes.
 
 ## Where to find it
 
-Open Chat in a web browser (Chrome works best). The ∞ button is to the left of
-the mic, at the start of the message box. Tap it once to turn conversation
-mode on, and again to turn it off. The first time, the browser asks to use
-your microphone.
+Open Chat in desktop Chrome or Edge 135 or newer. Open **Input**, to the left
+of **Tell Athena…** (the **…** button), then choose **Conversation mode** to turn it on or off.
+The input menu button is circular, with three centered dots.
+Each option has an icon: infinity for Conversation mode, a microphone for
+Click to talk, an eye for Let her see, and a picture for Show a photo.
+The first time, the browser asks to use your microphone. Hover over Input
+for a tooltip describing the voice, camera and photo options.
+
+For a single turn, choose **Input → Click to talk**. It turns conversation
+mode off, stops my current spoken reply as it starts listening, and closes
+after your utterance before I answer. A small **Listening** indicator lets
+you stop it early.
 
 ## When it doesn't work
 
@@ -38,19 +47,27 @@ your microphone.
   turn it on, so turn it on while things are quiet. A noisy room or music can
   hide your voice.
 - **I stop talking when you didn't say anything.** On a laptop's speakers my
-  own voice can reach the microphone. Headphones fix that.
+  own voice can reach the microphone. I use the browser's echo cancellation
+  and keep listening for your interruptions, but loud speakers or a reflective
+  room can still cause mistakes. Lower the speaker volume or try headphones.
+- **It asks for desktop Chrome or Edge.** Conversation mode needs a browser
+  that can send the same echo-controlled audio to speech recognition. Update
+  Chrome or Edge; you can still type or use **Input → Click to talk** elsewhere.
 - **"Couldn't reach speech recognition."** The browser's speech recognizer
   needs an internet connection. Typing still works.
 
 ## Limits
 
-- Web browsers only. Not the Android app; on the phone, hands-free is the way
+- Desktop Chrome or Edge 135 or newer. Not the Android app; on the phone, hands-free is the way
   to talk to me without touching anything. Firefox has no speech recognizer,
-  so the button doesn't appear there.
+  so the voice options are disabled there. Other browsers with speech recognition
+  may show the option but cannot start this mode with echo control.
 - Turning your voice into words is done by the browser. In Chrome that means
-  Google's servers. Your voice is only sent while it hears someone speaking,
-  plus a few seconds after; silence and room noise stay on your computer. The
-  sound itself never comes to me, only the words.
+  Google's servers. Recognition starts when it detects a voice and can stay
+  open for a few seconds afterward. It receives the echo-cancelled microphone
+  stream; while I'm speaking, sound judged to be only my echo is silenced on
+  that stream. This detector can make mistakes, so background sound can still
+  reach recognition. The sound itself never comes to me, only the words.
 - If you start talking again while I'm still working out an answer, both of
   your messages go through, and you may hear my answer to the first after
   you've moved on.
@@ -68,6 +85,15 @@ your microphone.
   voice opens the browser's `SpeechRecognition` (continuous, interim results),
   which closes 2.5 s after the voice stops. Auto-off after 120 s of quiet, and
   on `visibilitychange` to hidden.
+- Audio graph: `../../../companion/src/athena/conversationAudio.ts` splits the
+  same microphone source into an analyser and a gain → MediaStreamDestination
+  branch. `SpeechRecognition.start(track)` consumes the generated track rather
+  than opening a second microphone. Echo cancellation is requested as an exact
+  constraint, noise suppression is requested, and automatic gain control is
+  disabled to keep the level comparison stable. The gain silences only the
+  recognizer branch when the detector judges the signal to be echo; the analyser
+  remains live for barge-in. All input and generated tracks are stopped on exit.
+  Desktop Chromium 135+ is required; older engines can ignore the track argument.
 - Her echo: `useSpeech.now().loudness(250)` is her playback level from the
   clip's own PCM (`../../../companion/src/athena/voiceLevel.ts`, 20 ms frames).
   `../../../companion/src/athena/echoGate.ts` learns the mic-minus-playback loss
@@ -94,10 +120,23 @@ your microphone.
   hands-free echo refusal (409) to conversation turns too.
   `src/controllers/prompt.js` adds the "TALKING with you out loud" rule (adult
   prompt) and the `# You were interrupted` block.
-- Echo: final transcripts are dropped while she speaks and for 2 s after if
-  `mightBeHer`. A finished turn is dropped if `isEcho` matches her reply from the
-  last 15 s. The server refuses the same (`src/services/echo.js`).
-- Tests: `../../../companion/scripts/conversation.test.mjs` and `echoGate.test.mjs` (`npm run test:speech`),
+- Echo: `../../../companion/src/athena/conversationEcho.ts` retains up to 16
+  recent playback texts for 15 s, including fillers, and holds the last sound
+  level for a 600 ms acoustic tail after end or interruption. Interim results,
+  finals and commits use the same rejection check. A short matching fragment
+  captured during playback is rejected even when delivered after playback ends;
+  a new short follow-up after playback is allowed. Long matches use `isEcho`.
+  A submitted turn aborts its recognizer, so late results cannot borrow the next
+  turn's voice evidence. Voice evidence requires three consecutive frames,
+  rather than accumulating isolated loud frames. The server's existing
+  `src/services/echo.js` refusal remains an additional guard.
+- One-shot input: `../../../companion/src/athena/useVoiceInput.ts` aborts before
+  dispatching a final transcript and ignores callbacks from finished/stopped
+  recognizers. `CompanionConsole.tsx` interrupts current TTS when the mic is
+  deliberately opened. Android's existing native one-shot recognition remains
+  separate from conversation mode.
+- Tests: `../../../companion/scripts/conversation.test.mjs`,
+  `../../../companion/scripts/conversationRuntime.test.mjs` and `echoGate.test.mjs` (`npm run test:speech`),
   `src/controllers/messageFiller.test.js`, `src/controllers/prompt.test.js`.
 - Not yet: Guardians, the Android WebView (no `SpeechRecognition`), knowing
   whether headphones are in, or superseding a reply still being written when

@@ -2,7 +2,7 @@
 id: photos
 title: Showing me a photo
 summary: You can show me a photo and I'll actually look at it, talk about it, and keep it as a moment if you want.
-where: the ⋯ menu (top right) → Show a photo
+where: Chat → … input menu (left of the message box) → Show a photo
 status: live
 surfaces: [companion]
 audiences: [adult]
@@ -20,7 +20,7 @@ told me about it.
 
 ## Where to find it
 
-The **⋯ menu in the top right corner** → **Show a photo**. Choose or take one,
+In Chat, the **… input menu** to the left of the message box → **Show a photo**. Choose or take one,
 optionally give it a caption, and I'll look. Kept photos show up under
 **Memories** → **Moments**, and can be deleted from there.
 

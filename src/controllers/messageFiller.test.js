@@ -6,6 +6,7 @@
 jest.mock("../services/message", () => ({
 	addMessage: jest.fn().mockResolvedValue("human-uuid"),
 	getMessages: jest.fn().mockResolvedValue([]),
+	getReplyTarget: jest.fn(),
 }));
 jest.mock("../services/session", () => ({
 	getAuthorizedSession: jest.fn(),
@@ -28,6 +29,17 @@ const { audienceForProfile } = require("../services/audience");
 const { processAiResponse } = require("./gemini");
 const toolIntent = require("../services/toolIntent");
 const { addMessage } = require("./message");
+
+test('an inaccessible reply target is refused before saving or invoking Athena', async () => {
+  sessionService.getAuthorizedSession.mockResolvedValue({ id: 1, uuid: 'sess-uuid', mode: 'companion', profile_id: 7 });
+  messageService.getReplyTarget.mockResolvedValue(null);
+  const res = { status: jest.fn(() => res), json: jest.fn(), headersSent: false };
+  await addMessage({ headers: {}, body: { sessionId: 'sess-uuid', text: 'Change it please', replyTo: 'another-person-message' } }, res, new Map());
+  expect(res.status).toHaveBeenCalledWith(404);
+  expect(messageService.getReplyTarget).toHaveBeenCalledWith(1, 'another-person-message', 7);
+  expect(messageService.addMessage).not.toHaveBeenCalled();
+  expect(processAiResponse).not.toHaveBeenCalled();
+});
 
 const FILLER = { key: "calendar", text: "Let me check your calendar, hmm…" };
 

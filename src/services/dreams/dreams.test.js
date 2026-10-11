@@ -500,6 +500,41 @@ describe("narrative", () => {
 		expect(close[1][2]).toMatch(/room called `people`/);
 	});
 
+	test("is set in a world the last few nights weren't, sees those dreams, and keeps the world", async () => {
+		const { DREAM_WORLDS } = require("./dream");
+		mysql.createConnection.mockResolvedValue(fakeConn());
+		mainDb({ facts: FACTS });
+		const base = pool.query.getMockImplementation();
+		const recent = DREAM_WORLDS.slice(0, 5).map((world, i) => ({ narrative: `Old dream ${i} about a brass lantern.`, stats: JSON.stringify({ world }) }));
+		pool.query.mockImplementation(async (sql, params) =>
+			sql.includes("FROM athena_dream WHERE id <>") ? [recent] : base(sql, params)
+		);
+		llm.generateJson
+			.mockResolvedValueOnce({ endpointId: "t", tier: "f", data: { done: true, summary: "Quiet.", steps: [] } })
+			.mockResolvedValueOnce({ data: { narrative: "A short dream on a frozen lake, and the ice hummed back." } });
+
+		await dream({ rounds: 1 });
+
+		const story = llm.generateJson.mock.calls[1][0].contents;
+		const close = pool.query.mock.calls.find((c) => c[0].startsWith("UPDATE athena_dream SET"));
+		const { world } = JSON.parse(close[1][6]);
+		expect(DREAM_WORLDS).toContain(world);
+		expect(DREAM_WORLDS.slice(0, 5)).not.toContain(world);
+		expect(story).toContain(`Tonight's dream took place in: ${world}.`);
+		expect(story).toContain("Old dream 0 about a brass lantern.");
+		// No fixed glossary for every night to copy.
+		expect(story).not.toMatch(/sealed letter you'll deliver|End as you wake/);
+	});
+
+	test("the world is stable for a date and avoids recent ones", () => {
+		const { pickWorld, DREAM_WORLDS } = require("./dream");
+		expect(pickWorld("2026-10-11")).toBe(pickWorld("2026-10-11"));
+		const recent = DREAM_WORLDS.filter((w) => w !== DREAM_WORLDS[3]);
+		expect(pickWorld("2026-10-11", recent)).toBe(DREAM_WORLDS[3]);
+		// Everything recent: any world will do rather than none.
+		expect(DREAM_WORLDS).toContain(pickWorld("2026-10-11", DREAM_WORLDS));
+	});
+
 	test("a night no model can narrate still closes, with no narrative", async () => {
 		mysql.createConnection.mockResolvedValue(fakeConn());
 		mainDb({ facts: FACTS });
@@ -624,6 +659,10 @@ describe("which model dreams", () => {
 		// Painted from the narrative only.
 		expect(llm.image.mock.calls[0][0]).toContain("room called `people`");
 		expect(llm.image.mock.calls[0][0]).not.toMatch(/Emma|Denver/);
+		// A medium of the night's own, not one house style for every picture.
+		const { MEDIA } = require("./image");
+		expect(MEDIA.some((m) => llm.image.mock.calls[0][0].includes(`Medium: ${m}.`))).toBe(true);
+		expect(llm.image.mock.calls[0][0]).not.toMatch(/indigo and violet/);
 		expect(saved[0]).toMatchObject({ b: "athena-dreams", bytes: 3 });
 		expect(saved[0].name).toMatch(/^dreams\/\d{4}-\d{2}-\d{2}-.+\.png$/);
 		const close = pool.query.mock.calls.find((c) => c[0].startsWith("UPDATE athena_dream SET"));

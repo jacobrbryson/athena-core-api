@@ -46,6 +46,7 @@ function firstName(value) {
 }
 
 function shape(row) {
+  const sources = typeof row.sources === "string" ? JSON.parse(row.sources) : row.sources;
   return {
     uuid: row.uuid,
     text: row.text,
@@ -56,6 +57,9 @@ function shape(row) {
     // before sessions could hold more than one person.
     profile_id: row.profile_id ?? null,
     speaker: firstName(row.speaker_name),
+    ...(row.reply_to_uuid ? { reply_to_uuid: row.reply_to_uuid } : {}),
+    ...(row.action_uuid ? { action_uuid: row.action_uuid } : {}),
+    ...(Array.isArray(sources) && sources.length ? { sources } : {}),
   };
 }
 
@@ -66,6 +70,8 @@ function shape(row) {
  * @param {string|null} mode
  * @param {number|null} profileId who spoke. Null for Athena, and for an
  *   anonymous session where there is no profile to name.
+ * @param {Array<{title: string, url: string}>|null} sources web grounding
+ *   links for Athena's reply, retained with the transcript.
  */
 async function addMessage(
   sessionId,
@@ -73,14 +79,18 @@ async function addMessage(
   message,
   mode = null,
   profileId = null,
+  sources = null,
+  context = {},
 ) {
   const uuid = uuidv4();
   const speaker =
     isHuman && Number.isFinite(Number(profileId)) ? Number(profileId) : null;
 
   await pool.query(
-    "INSERT INTO message (session_id, uuid, is_human, profile_id, text, mode) VALUES (?, ?, ?, ?, ?, ?)",
-    [sessionId, uuid, isHuman, speaker, message, mode],
+    "INSERT INTO message (session_id, uuid, is_human, profile_id, text, mode, sources, reply_to_uuid, action_uuid, private_profile_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    [sessionId, uuid, isHuman, speaker, message, mode,
+      !isHuman && Array.isArray(sources) && sources.length ? JSON.stringify(sources) : null,
+      context.replyTo || null, context.actionUuid || null, context.privateProfileId || null],
   );
 
   return uuid;
@@ -95,23 +105,38 @@ async function addMessage(
  * Null means no restriction, which is correct only for an anonymous session —
  * there is no identity to filter on and the caller was authorized by IP.
  */
-async function getMessages(sessionId, viewerProfileId = null) {
-  const viewer = Number.isFinite(Number(viewerProfileId))
+async function getMessages(sessionId, viewerProfileId = null, { before = null, thread = null } = {}) {
+  const viewer = viewerProfileId != null && Number.isFinite(Number(viewerProfileId))
     ? Number(viewerProfileId)
     : null;
   const [messages] = await pool.query(
-    `SELECT r.uuid, r.text, r.created_at, r.is_human, r.mode, r.profile_id,
+    `SELECT r.uuid, r.text, r.created_at, r.is_human, r.mode, r.profile_id, r.sources, r.reply_to_uuid, r.action_uuid,
 		        ${SPEAKER_NAME_SQL} AS speaker_name
 		 FROM (
-       SELECT m.uuid, m.text, m.created_at, m.is_human, m.mode, m.profile_id
+       SELECT m.uuid, m.text, m.created_at, m.is_human, m.mode, m.profile_id, m.sources, m.reply_to_uuid, m.action_uuid
        FROM message m
        WHERE m.session_id = ?${viewer !== null ? ` AND ${VISIBLE_TO_VIEWER_SQL}` : ""}
-       ORDER BY m.created_at DESC LIMIT 100
-     ) r ORDER BY r.created_at ASC;`,
-    viewer !== null ? [sessionId, viewer] : [sessionId],
+         AND (m.private_profile_id IS NULL OR m.private_profile_id = ${viewer !== null ? "?" : "NULL"})
+         ${before ? "AND (m.created_at, m.uuid) < (SELECT cursor.created_at, cursor.uuid FROM message cursor WHERE cursor.session_id = ? AND cursor.uuid = ? LIMIT 1)" : ""}
+         ${thread ? "AND (m.uuid = ? OR m.reply_to_uuid = ?)" : ""}
+       ORDER BY m.created_at DESC, m.uuid DESC LIMIT 100
+     ) r ORDER BY r.created_at ASC, r.uuid ASC;`,
+    [...(viewer !== null ? [sessionId, viewer, viewer] : [sessionId]),
+      ...(before ? [sessionId, before] : []), ...(thread ? [thread, thread] : [])],
   );
 
   return messages.map(shape);
+}
+
+/** Resolve a reply target through the same presence and privacy boundary as history. */
+async function getReplyTarget(sessionId, uuid, viewerProfileId) {
+  const [rows] = await pool.query(
+    `SELECT m.* FROM message m WHERE m.session_id = ? AND m.uuid = ?
+     AND ${VISIBLE_TO_VIEWER_SQL}
+     AND (m.private_profile_id IS NULL OR m.private_profile_id = ?) LIMIT 1`,
+    [sessionId, uuid, viewerProfileId, viewerProfileId],
+  );
+  return rows[0] ? { ...shape(rows[0]), private_profile_id: rows[0].private_profile_id ?? null } : null;
 }
 
 /** Messages strictly newer than `since` (a DATETIME), oldest -> newest. */
@@ -129,4 +154,5 @@ module.exports = {
   addMessage,
   getMessages,
   getMessagesSince,
+  getReplyTarget,
 };

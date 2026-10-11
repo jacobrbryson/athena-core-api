@@ -35,6 +35,9 @@ Two things I can propose today:
   on your device.
 - **Save a fact** to my long-term memory, when you ask me to remember
   something specific.
+- **Log a family health update** — start a health watch ("Thomas has a
+  fever"), log a reading or a dose on one, change how often I ask, or end it
+  when they're better. See [family-health.md](family-health.md).
 - **Set a place reminder** — "next time I'm at Missy's, remind me to…". See
   [place-reminders.md](place-reminders.md); the card shows the address I'll
   watch for, so you can catch the wrong place before it's set.
@@ -58,14 +61,25 @@ alert on your calendar for 7, or remind you when you pull into the driveway —
 which?" You pick, and change anything you like ("the calendar, but make it
 2:00"), and only then does a card appear.
 
+Completed, declined and expired cards stay in chat when you return. Tap
+**Reply in thread** beneath my message to discuss that request; reminder and
+coding updates return to the same thread. See [chat-threads.md](chat-threads.md).
+
 **You can change a card that's still waiting.** Tell me what's wrong with it
-and I'll replace it with a corrected one; the old card disappears so you're
-never left with two.
+and I'll propose a corrected one. The old card stays in history as declined
+and no longer has an approval button.
 
 **If what I tried doesn't work, I don't just stop.** When something I propose
 is turned down before it reaches you — I'm missing an address, say, or the
 time didn't make sense — I see why, and either fix it, offer the nearest
 thing I can do, or ask you the one question I need answered.
+
+**I don't do the same thing twice.** If you ask again for something I've
+already done in the last few hours — the same event at the same time, the
+same investigation, the same reminder — I tell you it's already done instead
+of doing it again. With a standing "yes", saying "yes please" after I've
+already added it won't add a second one. A card that failed, expired or that
+you said no to doesn't count, so asking again after one of those always works.
 
 If you get tired of approving the same thing, you can tell me to stop asking:
 tick **"Do this without asking me each time"** and I'll just do that one kind
@@ -105,6 +119,9 @@ Approval cards work on your paired phone or car too, not just in this browser.
   address or an exact time) and I'll try again.
 - **There are two cards for the same thing.** I should have replaced the
   first one. Tap **No** on the one you don't want; it changes nothing.
+- **I said I'd already done it, but you really do want a second one.** I
+  treat the same request within a few hours as a repeat. Change something
+  about it (the time, or what it's called) and I'll do it.
 
 ## Limits
 
@@ -193,6 +210,15 @@ Approval cards work on your paired phone or car too, not just in this browser.
   0058) and summarized for the nightly review (`src/services/selfReview/metrics.js`
   `gaps`). The inner monologue now reads action drafts but can only turn them
   into a question. Tests: `src/controllers/actionRepair.test.js`.
+- Repeats (2026-10-11, after a calendar event and a GitHub issue were each
+  created twice): `earlierCopy()` in `index.js` runs after `normalize()` and
+  before the insert; a pending/executing/done row of the same action within
+  `REPEAT_WINDOW_HOURS` that the descriptor's `sameAs(earlier, params)` (or
+  identical params) matches returns `{ repeat }` and writes nothing. Calendar
+  matches on times + loose title (location ignored); investigate/fix on repo
+  + loose text; `look_through_camera` opts out. The prompt also gets
+  `recentBlock()` (done in the window) and a standing-approval note per action
+  so she stops asking "want me to?" for things that run on proposal.
 - Tests: `src/services/actions/actions.test.js`.
 - Design notes: `../../../docs/architecture/action-layer.md`.
 - Notes: the chat path uses structured output, not function calling, which is

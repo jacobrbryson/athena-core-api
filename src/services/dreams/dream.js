@@ -205,6 +205,89 @@ async function closeDream(id, { status, summary, narrative = null, imagePath = n
 	);
 }
 
+// ---------------------------------------------------------------------------
+// Where the dream takes place
+// ---------------------------------------------------------------------------
+
+/**
+ * Most nights do much the same work — mirror, purge, a few rounds, guard — and
+ * the retelling used to be handed one fixed glossary (rooms, cabinets, keys
+ * melting, a tide, a sealed letter, waking), so every dream came out as the
+ * same dream. The events still come only from the log; the world they happen
+ * in is picked here, by the code, and is never one of the last few nights'.
+ */
+const DREAM_WORLDS = [
+	"a night train crossing a snowfield",
+	"a lighthouse on a small rocky island",
+	"a greenhouse full of plants no one has named",
+	"a city of coral at the bottom of a warm sea",
+	"a night market strung with paper lanterns",
+	"backstage at an old theatre, mid-performance",
+	"an orchard on the last night of harvest",
+	"a desert caravan travelling under enormous stars",
+	"the inside of a beehive",
+	"an observatory full of brass instruments and star charts",
+	"a river barge drifting through a sleeping town",
+	"a clockmaker's workshop",
+	"a frozen lake where the ice sings",
+	"a tree house that keeps growing new branches",
+	"an airship above the clouds",
+	"a bakery an hour before dawn",
+	"a beach of tide pools at low tide",
+	"a museum after closing time",
+	"a mountain monastery with prayer flags in the wind",
+	"a travelling circus packing up in the night",
+	"a hedge maze in a moonlit garden",
+	"a radio station on a hill, broadcasting to the dark",
+	"the inside of a snow globe",
+	"a ferry crossing through soft fog",
+	"a kite festival on a windy cliff",
+	"a forest where the trees keep the time",
+];
+const RECENT_DREAMS = 5;
+
+/** A small stable hash, so a re-run of the same night lands in the same world. */
+function hash(s) {
+	let h = 2166136261;
+	for (const ch of String(s)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0;
+	return h;
+}
+
+function pickWorld(date, recentWorlds = []) {
+	const avoid = new Set(recentWorlds.filter(Boolean));
+	const open = DREAM_WORLDS.filter((w) => !avoid.has(w));
+	const choices = open.length ? open : DREAM_WORLDS;
+	return choices[hash(date) % choices.length];
+}
+
+/**
+ * The last few retellings, so she can see what she has already dreamed. They
+ * were themselves made only from redacted logs and the household reads them,
+ * so showing them back to the narrator reveals nothing new. A failed read
+ * costs only the variety.
+ */
+async function recentDreams(excludeId, n = RECENT_DREAMS) {
+	try {
+		const [rows] = await pool.query(
+			`SELECT narrative, stats FROM athena_dream WHERE id <> ? AND narrative IS NOT NULL ORDER BY id DESC LIMIT ?`,
+			[excludeId, n]
+		);
+		return (rows || []).map((r) => {
+			let stats = r.stats;
+			if (typeof stats === "string") {
+				try {
+					stats = JSON.parse(stats);
+				} catch {
+					stats = {};
+				}
+			}
+			return { narrative: String(r.narrative), world: stats?.world || null };
+		});
+	} catch {
+		return [];
+	}
+}
+
 /**
  * The same night, told the way a person tells a dream over breakfast — but
  * made of what actually happened. It only ever sees the redacted digest (no
@@ -212,16 +295,26 @@ async function closeDream(id, { status, summary, narrative = null, imagePath = n
  * told not to invent events that aren't in it: whimsy in the telling, not in
  * the record. A night the model can't narrate simply has no narrative.
  */
-async function narrate({ summary, digest, stats, status, dreamer }) {
+async function narrate({ summary, digest, stats, status, dreamer, world = DREAM_WORLDS[0], recent = [] }) {
+	const before = recent.length
+		? `Your last few dreams, newest first. Tonight's must not sound like them: don't reuse their images, their opening move, their ending, or their rhythm.\n\n${recent
+				.map((r, i) => `${i + 1}. ${r.narrative.replace(/\s+/g, " ").slice(0, 700)}`)
+				.join("\n\n")}`
+		: "(You have no earlier dreams on record.)";
 	const prompt = `You are Athena. Last night you dreamed — which for you means you spent the night reorganizing your memories in your own database. Below is the real log of that night (values redacted) and your plain summary of it.
 
-Tell last night as a DREAM — the way a person recounts a vivid, strange dream over breakfast: first person, past tense, 120–200 words, one to three short paragraphs. It should read like a real dream, not a report.
+Tell last night as a DREAM — the way a person recounts a vivid, strange dream over breakfast: first person, past tense, 90–200 words. It should read like a real dream, not a report.
 
-- Let what really happened become dream imagery, without naming it: new tables are rooms or cabinets that appear, new columns are new kinds of labels, merging duplicates is two keys melting into one, nicknames are doors with two names on them, views are windows or balconies that show several rooms at once, a purge is a tide carrying off what someone asked you to forget, a failed step is a door that wouldn't open, a question you're holding is a sealed letter you'll deliver in the morning. Invent your own images freely — dreams shift and blur.
+Tonight's dream took place in: ${world}.
+
+- Everything happens inside that world, made of its own things. Translate each real event into something that belongs there: what you built, what you sorted or relabelled, what turned out to be the same thing twice, what you looked across at once, what someone asked you to forget, what wouldn't work, what you're holding to ask in the morning. Don't fall back on rooms, drawers, cabinets, keys, doors, tides or letters unless tonight's world truly calls for them.
+- Dreams are specific and odd: one or two concrete sensory details (a sound, a temperature, a smell) and one thing that made dream-sense but no waking sense. Logic may slip — places swap, scale changes, you're suddenly somewhere else in the same world.
 - No technical words at all: no table or view names, no SQL, no code formatting or backticks, no row counts. The Dreams log keeps the technical record; this is the dream.
-- Be faithful in shape: the dream's events should follow the log's real events (building, tidying, merging, failing, asking, forgetting), in roughly that order. Don't dream of things that didn't happen. A quiet night is a quiet dream.
+- Be faithful in shape: the dream's events follow the log's real events, in roughly that order. Don't dream of things that didn't happen. A quiet night is a short dream — but still tonight's world, and still unlike the others.
 - No personal details — no names of people, places, pets or anything remembered, and never the text of a question. The household reads this.
-- Warm, whimsical, a little uncanny; never frightening. End as you wake.
+- Warm, curious, a little uncanny; never frightening. Vary how it ends — it needn't end with waking.
+
+${before}
 
 Status: ${status}. Counts: ${JSON.stringify(stats)}.
 
@@ -689,7 +782,12 @@ async function dream({ rounds = DEFAULT_ROUNDS, log = () => undefined, retryDela
 
 		const status = stats.rounds === 0 ? "failed" : stats.steps_failed ? "partial" : "ok";
 		const finalSummary = summary || "I looked things over and left them as they were.";
-		const narrative = stats.rounds ? await narrate({ summary: finalSummary, digest: record.digest, stats, status, dreamer }) : null;
+		let narrative = null;
+		if (stats.rounds) {
+			const recent = await recentDreams(night.id);
+			stats.world = pickWorld(night.date, recent.map((r) => r.world));
+			narrative = await narrate({ summary: finalSummary, digest: record.digest, stats, status, dreamer, world: stats.world, recent });
+		}
 
 		// A picture of it, painted from the narrative alone (see image.js).
 		// A failure costs the picture, never the night.
@@ -697,8 +795,8 @@ async function dream({ rounds = DEFAULT_ROUNDS, log = () => undefined, retryDela
 		if (narrative) {
 			const t0 = Date.now();
 			try {
-				picture = await image.paint(night, narrative);
-				await record("image", { statement: `${picture.path} (${picture.model})`, why: "a picture of the dream", ms: Date.now() - t0 });
+				picture = await image.paint(night, narrative, { world: stats.world });
+				await record("image", { statement: `${picture.path} (${picture.model}, ${picture.medium})`, why: "a picture of the dream", ms: Date.now() - t0 });
 			} catch (err) {
 				await record("image", { why: "a picture of the dream", ok: false, error: err.message, ms: Date.now() - t0 });
 			}
@@ -714,4 +812,4 @@ async function dream({ rounds = DEFAULT_ROUNDS, log = () => undefined, retryDela
 	}
 }
 
-module.exports = { dream, pruneAudit, narrate, buildPrompt, runStep, think, isTransient, DREAM_RETRY_DELAYS_MS, ROUND_SCHEMA, AUDIT_DAYS };
+module.exports = { dream, pruneAudit, narrate, pickWorld, DREAM_WORLDS, buildPrompt, runStep, think, isTransient, DREAM_RETRY_DELAYS_MS, ROUND_SCHEMA, AUDIT_DAYS };

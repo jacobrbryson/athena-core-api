@@ -29,9 +29,12 @@ turned on initiative, as a notification too. Your answer goes back into what I
 build the next night.
 
 Every morning I tell you last night as a dream — the way you'd tell a dream
-over breakfast, a little strange — but everything in it really happened: the
-room of drawers is a table I built, the door that wouldn't open is a statement
-that failed. I paint a picture of each dream, too. The plain version is
+over breakfast, a little strange — but everything in it really happened: an
+orchard row I planted might be a table I built, a lantern that wouldn't light a
+statement that failed. Each night's dream takes place somewhere different — a
+night train, a lighthouse, the inside of a beehive — and I try not to dream the
+same dream twice. I paint a picture of each dream, too, in a different style
+each night. The plain version is
 always one click away, and the Dreams page keeps thirty nights of all of it,
 down to every step I ran.
 
@@ -99,13 +102,16 @@ down to every step I ran.
 - Log: `athena_dream` (incl. `narrative`), `athena_dream_step`,
   `athena_dream_question` (migration `db/migrations/0046_athena_dreams.up.sql`);
   `npm run dreams`. Narrative: `narrate()` in `dream.js`, fed only the
-  redacted digest (`src/services/dreams/redact.js`).
+  redacted digest (`src/services/dreams/redact.js`), a setting from
+  `DREAM_WORLDS` chosen by `pickWorld()` (stable per date, never one of the
+  last five nights', stored as `stats.world`), and the last five narratives so
+  it doesn't repeat them.
 - Models: task `dream` → ChatGPT (`OPENAI_DREAM_MODEL`, gpt-5.6-luna), falling
   back to the `review` chain (Gemini) per night, noted in the log; `think()`
   in `dream.js`. Strict schemas: `toStrictSchema()` in
   `src/services/llm/adapters/openaiCompat.js`.
 - Picture: `src/services/dreams/image.js` — `OPENAI_IMAGE_MODEL` (gpt-image-2)
-  from the narrative only, saved to the private `athena-dreams` bucket
+  from the narrative only, in a per-night medium (`MEDIA`), saved to the private `athena-dreams` bucket
   (`ATHENA_DREAM_BUCKET`, 30-day lifecycle), `athena_dream.image_path`
   (migration `0047_dream_image`), streamed by `GET /api/v1/dreams/:uuid/image`.
 - API: `src/controllers/dreams.js`, `src/services/dreams/log.js` —

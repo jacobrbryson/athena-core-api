@@ -28,6 +28,9 @@ tell me about your family, and Add someone is always there. I can't see texts or
 calls yet, so "staying in touch" means how long since you last told me about
 someone, not when you last spoke.
 
+Calendar items on the Family card show the event details without a Talk it
+through button.
+
 Each person on the card carries a small tag for how they're related to you:
 Spouse, Son, Daughter, Cousin, Pet, Child. I take it from how the memory is
 filed ("spouse"), from a pet, or from what you told me ("Wynter is my
@@ -41,9 +44,16 @@ the next time we talk. A relation word that opens their name ("Aunt Missy") says
 how they're related. Household facts filed with the family ("children home
 time", "family dinner") aren't people and don't appear on the card.
 
+You can set that tag yourself: open the Family page, open the person's ⋯ menu,
+choose Edit, change Relationship to you (up to 40 characters), and Save.
+I remember your label and use it ahead of the relationship in their older
+memory, keeping everything else I know about them. This control is available
+for remembered people and pets; children listed only from profiles keep Child.
+
 Children on your family profiles appear on the card on their own, with their
 birthday, and a child you have also told me about is one row, not two. On the
-Family page, each person I remember has a Link contact button: search your
+Family page, each person I remember has a ⋯ menu (Health watch, Link contact,
+Edit, Move to Community, Merge, Delete). Link contact lets you search your
 Google Contacts and pick the one that is them, and I read their birthday, photo
 and phone number from there. Only the contact's ID and name are kept, so a
 change in Google shows up on its own, and Unlink removes it. If Google Contacts
@@ -57,6 +67,23 @@ that person (nothing repeated, nothing lost), their Google Contact link moves
 across if the target has none, and the duplicate is forgotten. Delete forgets an
 entry after you confirm. Children from your family profiles can't be merged or
 deleted here.
+
+When I've got something wrong — "dad's sister" when she's only your mom's
+sister — Edit lets you rewrite what I remember about that person in your own
+words; your wording replaces mine, and I only change it again if you clearly
+tell me something different in conversation.
+Edit opens one dialog with their name, relationship, remembered notes and any
+separately saved details, such as their birthday. Name changes appear on both
+the Family page and card; I show a person's name rather than the memory key
+("Spouse"). The dialog also lets you link, change or unlink their Google
+Contact, and open their health watch. Contact changes save immediately; Save
+saves the memory fields. Contact photos, phone numbers and contact birthdays
+are edited in Google Contacts. Children listed only from profiles are not
+editable in this dialog.
+Someone who isn't family at all — the neighbor's dog — can go to the
+Community page with Move to Community: pick their household (or give an
+address for a new one), what I knew is added to that household's notes, and
+they leave your family list.
 
 The News card and page show headlines I have already read for you in the
 background, from pages you paste in News → Manage pages — no feed URL needed,
@@ -215,6 +242,8 @@ in memory and are cleared on sign-in, sign-out, access errors, and updates.
 - Shell and preserved chat: `../../../companion/src/pages/CompanionConsole.tsx`
 - Styling: `../../../companion/src/dashboard.css`
 - Sidebar profile avatar: `../../../companion/src/components/ProfileAvatar.tsx`.
+- Family editor: `../../../companion/src/components/FamilyPersonEditor.tsx`;
+  remembered names and relationships: `../../../companion/src/components/familyRoster.ts`.
 - Work banner: `../../../companion/src/components/WorkBanner.tsx`, logic and its
   tests in `workStatus.ts` / `companion/scripts/workStatus.test.mjs`
   (`npm run test:work`). Data: `workingLocations` on `GET /api/v1/dashboard`'s

@@ -71,6 +71,9 @@ test("an explicit ask searches, grounds the prompt, prefers the frontier and sen
 	expect(mockGenerate.mock.calls[0][0].prefer).toBe("frontier");
 	const added = sent.find((m) => m.rpc === "addMessage");
 	expect(added.message.sources).toEqual(SOURCES);
+  expect(require("../services/message").addMessage).toHaveBeenCalledWith(
+    session.id, false, "The Braves won 5-3.", session.mode, null, SOURCES,
+  );
 });
 
 test("an ordinary message neither searches nor changes the routing", async () => {

@@ -37,6 +37,7 @@
  *   brief(facts) -> the sentence fragment the model is asked to word
  */
 
+const { createHash } = require("crypto");
 const googleCalendar = require("../connectors/googleCalendar");
 const whoop = require("../connectors/whoop");
 const familyHealth = require("../familyHealth");
@@ -241,6 +242,43 @@ const TRIGGERS = [
 				`${f.personName} has had ${f.symptom} for ${f.daysActive} day${f.daysActive === 1 ? "" : "s"} — ` +
 				`worth reminding the household about handwashing, not sharing cups or towels, and wiping down shared surfaces to keep it from spreading.`
 			);
+		},
+	},
+
+	{
+		id: "family_health_check_in",
+		label: "An update is due on someone who's unwell",
+		// Added on the owner's instruction (2026-10-11): a health watch can ask
+		// for updates every few hours — a fever logged hourly, pain medicine
+		// every 8 hours. Athena's own family data; opt-in, mutes and quiet hours
+		// apply exactly as for every trigger.
+		sources: [],
+		urgency: "normal",
+		ttlMs: 60 * MINUTE,
+		describe: "Ask for an update on someone who's unwell when one is due.",
+
+		async evaluate(profileId) {
+			const active = await familyHealth.activeFor(profileId).catch(() => []);
+			const due = active.filter((a) => a.updateDue).sort((a, b) => Date.parse(a.nextUpdateAt) - Date.parse(b.nextUpdateAt));
+			if (!due.length) return null;
+			return {
+				// Every due case and the update it is waiting after. One nudge names
+				// all of them; a case falling due later changes the key, so nobody is
+				// left out behind whoever fell due first, and logging an update moves
+				// that case on to its next check-in.
+				dedupeKey: `checkin:${createHash("sha1").update(due.map((a) => `${a.uuid}@${a.lastUpdateAt}`).sort().join("|")).digest("hex")}`,
+				// Worth saying until the next check-in would come round anyway, so a
+				// nudge held overnight by quiet hours still reaches them in the morning.
+				ttlMs: Math.min(...due.map((a) => a.checkInHours)) * 60 * MINUTE,
+				facts: {
+					people: due.map((a) => ({ personName: a.personName, symptom: a.symptom, everyHours: a.checkInHours })),
+				},
+			};
+		},
+
+		brief(f) {
+			const who = f.people.map((p) => `${p.personName} (${p.symptom}, every ${p.everyHours}h)`).join(" and ");
+			return `It's time for the update they asked to log on ${who}. Ask how it's going — you can log what they tell you.`;
 		},
 	},
 

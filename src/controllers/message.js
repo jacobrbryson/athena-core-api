@@ -10,6 +10,7 @@ const toolIntent = require("../services/toolIntent");
 const { isEcho } = require("../services/echo");
 const missionService = require("../services/mission");
 const gameService = require("../services/game");
+const chatThreads = require("../services/chatThreads");
 const {
   broadcastToGuardian,
   broadcastToAdventure,
@@ -202,12 +203,29 @@ async function getMessage(req, res) {
     // profile-bound session, which is the only kind that has participants.
     // An anonymous or Guardians session carries no spans, and filtering by
     // spans that do not exist would hand back an empty transcript.
+    await chatThreads.syncReminderUpdates(session.id, callerProfileId);
+    await chatThreads.syncCodeUpdates(session.id, callerProfileId);
+    const before = typeof req.query.before === 'string' ? req.query.before : null;
+    const thread = typeof req.query.thread === 'string' ? req.query.thread : null;
+    if (thread && (!callerProfileId || !await messageService.getReplyTarget(session.id, thread, callerProfileId))) {
+      return res.status(404).json({ message: 'Thread not found' });
+    }
     const chats = await messageService.getMessages(
       session.id,
       session.profile_id != null ? callerProfileId : null,
+      { before, thread },
     );
 
-    res.json(chats);
+    // Resolve old thread roots outside the most recent page, but only through
+    // the same disclosure checks as a direct reply.
+    const seen = new Set(chats.map((m) => m.uuid));
+    for (const m of [...chats]) {
+      if (m.reply_to_uuid && !seen.has(m.reply_to_uuid) && callerProfileId) {
+        const root = await messageService.getReplyTarget(session.id, m.reply_to_uuid, callerProfileId);
+        if (root) { chats.unshift({ ...root, thread_root_only: true }); seen.add(root.uuid); }
+      }
+    }
+    res.json(await chatThreads.hydrate(chats, callerProfileId));
   } catch (err) {
     console.error("Error fetching chat:", err);
     res.status(500).json({ success: false, message: "DB error" });
@@ -251,6 +269,23 @@ async function addMessage(req, res, clients) {
     // session.profile_id, and Athena's history has to be built for the person
     // in front of her.
     ctx.speakerProfileId = callerProfileId ?? null;
+    if (req.body.replyTo != null) {
+      if (!callerProfileId || typeof req.body.replyTo !== "string") {
+        return res.status(400).json({ message: "Invalid reply target" });
+      }
+      const target = await messageService.getReplyTarget(session.id, req.body.replyTo, callerProfileId);
+      if (!target) return res.status(404).json({ message: "Reply target not found" });
+      ctx.replyTo = target.reply_to_uuid || target.uuid;
+      const root = target.reply_to_uuid
+        ? await messageService.getReplyTarget(session.id, ctx.replyTo, callerProfileId) : target;
+      if (!root) return res.status(404).json({ message: "Reply target not found" });
+      const [hydrated] = await chatThreads.hydrate([root], callerProfileId);
+      ctx.replyPrivateProfileId = target.private_profile_id || root.private_profile_id
+        || (hydrated.action ? callerProfileId : null);
+      ctx.replyContext = JSON.stringify({ text: hydrated.text, action: hydrated.action || null });
+      const threadHistory = await messageService.getMessages(session.id, callerProfileId, { thread: ctx.replyTo });
+      ctx.replyContext += '\nRecent replies in this thread:\n' + JSON.stringify(threadHistory.slice(-20).map((m) => ({ is_human: m.is_human, text: m.text })));
+    }
     // Verified guardian identity (from the forwarded session token) — used to
     // attribute in-chat mission reporting to the right family. Never trusted
     // from the body.
@@ -445,6 +480,7 @@ async function addMessage(req, res, clients) {
       text,
       session.mode,
       callerProfileId ?? session.profile_id ?? null,
+      ...(ctx.replyTo ? [null, { replyTo: ctx.replyTo, privateProfileId: ctx.replyPrivateProfileId }] : []),
     );
 
     await sessionService.updateSession(session.id, { is_busy: true });
@@ -471,6 +507,7 @@ async function addMessage(req, res, clients) {
         text,
         is_human: true,
         created_at: Date.now(),
+        ...(ctx.replyTo ? { reply_to_uuid: ctx.replyTo } : {}),
       },
       session: {
         sessionId: session.uuid,

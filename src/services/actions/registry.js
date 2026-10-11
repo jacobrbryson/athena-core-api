@@ -29,6 +29,10 @@
  *   summarize(params) -> the plain-language sentence the person approves
  *   execute(profileId, params, ctx) -> { ref, detail }
  *   availableTo(profileId) -> boolean   optional; narrows who is offered it
+ *   sameAs(earlier, params) -> boolean  optional; is this a repeat of an
+ *                  earlier proposal's params (index.js earlierCopy)? Defaults
+ *                  to identical params; false opts out of the repeat check.
+ *                  It can only stop a second write, never allow anything.
  */
 
 const googleCalendar = require("../connectors/googleCalendar");
@@ -41,6 +45,7 @@ const emailDraft = require("../emailDraft");
 const placeReminders = require("../placeReminders");
 const timeReminders = require("../timeReminders");
 const codeAgents = require("../codeAgents");
+const familyHealth = require("../familyHealth");
 
 /** A rejection that is the model's fault, not the person's or the server's. */
 function invalid(message) {
@@ -56,6 +61,43 @@ function str(value, max) {
 }
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+const FILLER = new Set(
+	"the and for with again that this its are was were from into when what still not but you your has have been just also".split(" ")
+);
+
+/** Lowercase words that carry meaning, punctuation dropped ("Taylor's" -> "taylors"). */
+function words(text) {
+	return new Set(
+		String(text || "")
+			.toLowerCase()
+			.replace(/['’]/g, "")
+			.split(/[^a-z0-9]+/)
+			.filter((w) => w.length >= 3 && !FILLER.has(w))
+	);
+}
+
+/**
+ * Two model-written phrasings of the same request: one's words all inside the
+ * other's ("Taylor's house" / "Going to Taylor's house"), or mostly shared.
+ * Used only to recognise a repeat, so a miss costs a duplicate and a false
+ * match costs a second "it's already done" — never a write.
+ */
+function sameText(a, b) {
+	const x = words(a);
+	const y = words(b);
+	if (!x.size || !y.size) return String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+	let shared = 0;
+	for (const w of x) if (y.has(w)) shared += 1;
+	return shared === Math.min(x.size, y.size) || shared / (x.size + y.size - shared) >= 0.6;
+}
+
+/** The same moment, whether written with an offset or as local time in a zone. */
+function sameInstant(a, aZone, b, bZone) {
+	if (!a || !b) return a === b;
+	const ms = (raw, tz) => (tz || /(?:Z|[+-]\d{2}:?\d{2})$/.test(raw) ? whenOf(raw, tz) : new Date(`${raw}Z`)).getTime();
+	return ms(a, aZone) === ms(b, bZone);
+}
 
 /**
  * An instant Athena proposed, as an ISO string we are willing to send on.
@@ -292,6 +334,14 @@ const ACTIONS = [
 			return `Add "${p.title}" to your calendar: ${when}${where}`;
 		},
 
+		// Same times and a matching title. Location and description are left
+		// out on purpose: the 2026-10-11 duplicate differed only by a location.
+		sameAs(a, b) {
+			if (!!a.all_day !== !!b.all_day || !sameText(a.title, b.title)) return false;
+			if (a.all_day) return a.start === b.start && a.end === b.end;
+			return sameInstant(a.start, a.time_zone, b.start, b.time_zone) && sameInstant(a.end, a.time_zone, b.end, b.time_zone);
+		},
+
 		async execute(profileId, params) {
 			const { ref, html_link } = await googleCalendar.createEvent(profileId, params);
 			return { ref, detail: { html_link } };
@@ -342,6 +392,10 @@ const ACTIONS = [
 		summarize(p) {
 			return `Take a look through your camera: ${p.reason}`;
 		},
+
+		// Another look is a new look, whatever the reason says; lookRequests
+		// caps how many can be outstanding.
+		sameAs: false,
 
 		async execute(profileId, params, ctx = {}) {
 			const request = await lookRequests.create(profileId, {
@@ -470,6 +524,11 @@ const ACTIONS = [
 			return `Ask Claude Code and Codex to look into ${p.repo} (read-only): ${p.symptom}`.slice(0, 500);
 		},
 
+		// The symptom is reworded every time she proposes it again.
+		sameAs(a, b) {
+			return a.repo === b.repo && sameText(a.symptom, b.symptom);
+		},
+
 		async execute(profileId, params) {
 			if (!(await codeAgents.mayUse(profileId))) {
 				throw new Error("Coding agents are not available to this account");
@@ -560,6 +619,11 @@ const ACTIONS = [
 			return `Have ${who} fix ${p.repo}: ${p.change} — merges and deploys by itself if every check passes`.slice(0, 500);
 		},
 
+		// A different agent is a deliberate second attempt, not a repeat.
+		sameAs(a, b) {
+			return a.repo === b.repo && a.agent === b.agent && sameText(a.change, b.change);
+		},
+
 		async execute(profileId, params) {
 			if (!(await codeAgents.mayUse(profileId))) {
 				throw new Error("Coding agents are not available to this account");
@@ -608,6 +672,10 @@ const ACTIONS = [
 
 		summarize(p) {
 			return `At ${humanTime(p.at, p.time_zone)}, remind you: "${p.reminder}"`.slice(0, 500);
+		},
+
+		sameAs(a, b) {
+			return a.at === b.at && sameText(a.reminder, b.reminder);
 		},
 
 		async execute(profileId, params, ctx = {}) {
@@ -694,6 +762,106 @@ const ACTIONS = [
 				ref: uuid,
 				detail: locationSharing ? null : "Set, but location sharing is off, so it can't fire yet",
 			};
+		},
+	},
+
+	// Family health watch (services/familyHealth.js), added on the owner's
+	// instruction 2026-10-11: "make sure Athena can make health updates from
+	// chat". The same write the Family page's Health watch form makes — start
+	// a watch, log an update (a reading, a dose), or end it — so a fever
+	// logged hourly doesn't need the dashboard open. Who it is about is
+	// resolved here against the family's active watches, never taken on trust.
+	{
+		id: "log_health_update",
+		label: "Log a family health update",
+		provider: null,
+		consentType: "action_authority",
+		// Editable and endable from the Family page; it only writes Athena's
+		// own note about who is unwell.
+		reversible: true,
+		// Hourly fever readings are exactly what a standing approval is for;
+		// the person still has to grant it themselves.
+		standing: true,
+		describe:
+			"Log a health update on someone in the family: start a health watch when they tell you " +
+			'someone is unwell ("Thomas has a fever"), record an update on an active watch ("101.2 at ' +
+			'3pm, gave him Tylenol"), change how often to ask for updates, or end the watch when ' +
+			"they're feeling better. Use their exact words for the reading; never diagnose or add advice to it.",
+		alternatives:
+			"To remember a lasting fact about the person (an allergy, a medication they always take) use remember_fact. " +
+			"To be reminded to give a dose at a time, use remind_at_time.",
+		params: {
+			health_person: "Who it's about, by name — for an update, the name on their active health watch. Required.",
+			health_symptom: "What's wrong, short (\"a fever\", \"sore throat\"). Required to start a watch; omit on an update to keep it.",
+			health_severity: '"mild", "moderate" or "severe". Optional; omit on an update to keep it.',
+			health_reading: "This update in their words: a reading, a dose, how they seem. Optional.",
+			check_in_hours: "Optional. Ask for an update every N hours (1-168); 0 turns check-ins off; omit to keep the current cadence.",
+			feeling_better: "true only to END the watch because they're better. Omit otherwise.",
+		},
+
+		async normalize(raw = {}, ctx = {}) {
+			if (!ctx.profileId) throw invalid("A health update needs a person");
+			const person = str(raw.health_person, 120);
+			if (!person) throw invalid("Say who the health update is about");
+			const watch = await familyHealth.findActive(ctx.profileId, person);
+			if (raw.feeling_better === true || raw.feeling_better === "true") {
+				if (!watch) throw invalid(`There's no active health watch on ${person} to end`);
+				return { watch_uuid: watch.uuid, person_name: watch.personName, feeling_better: true };
+			}
+			const symptom = str(raw.health_symptom, 200) || watch?.symptom || null;
+			if (!symptom) throw invalid(`Say what's wrong with ${person} to start a health watch`);
+			const severityRaw = str(raw.health_severity, 20)?.toLowerCase();
+			if (severityRaw && !familyHealth.SEVERITIES.has(severityRaw)) {
+				throw invalid('Severity must be "mild", "moderate" or "severe"');
+			}
+			const out = {
+				person_name: watch?.personName || person,
+				symptom,
+				severity: severityRaw || watch?.severity || "mild",
+				...(watch ? { watch_uuid: watch.uuid } : {}),
+			};
+			const reading = str(raw.health_reading, 500);
+			if (reading) out.reading = reading;
+			if (raw.check_in_hours !== undefined && raw.check_in_hours !== null && raw.check_in_hours !== "") {
+				const hours = Number(raw.check_in_hours);
+				if (hours === 0) out.check_in_hours = null;
+				else if (Number.isInteger(hours) && hours >= 1 && hours <= familyHealth.MAX_CHECK_IN_HOURS) out.check_in_hours = hours;
+				else throw invalid(`check_in_hours must be a whole number from 1 to ${familyHealth.MAX_CHECK_IN_HOURS}, or 0 for none`);
+			}
+			return out;
+		},
+
+		summarize(p) {
+			if (p.feeling_better) return `End the health watch on ${p.person_name} — feeling better`;
+			const every =
+				p.check_in_hours === undefined ? "" : p.check_in_hours === null ? " Stop asking for updates." : ` Ask for an update every ${p.check_in_hours} hour${p.check_in_hours === 1 ? "" : "s"}.`;
+			const what = p.watch_uuid
+				? `Log an update on ${p.person_name} (${p.symptom}, ${p.severity})${p.reading ? `: "${p.reading}"` : ""}.`
+				: `Start a health watch on ${p.person_name}: ${p.symptom}, ${p.severity}${p.reading ? ` — "${p.reading}"` : ""}.`;
+			return `${what}${every}`.slice(0, 500);
+		},
+
+		// Two readings an hour apart can say the same thing ("still 101"); each
+		// is a real update, so a repeat is never refused as already done.
+		sameAs() {
+			return false;
+		},
+
+		async execute(profileId, params) {
+			if (params.feeling_better) {
+				const ended = await familyHealth.resolve(profileId, params.watch_uuid);
+				if (!ended) throw Object.assign(new Error("That health watch is no longer there"), { status: 404 });
+				return { ref: ended.uuid, detail: null };
+			}
+			const saved = await familyHealth.report(profileId, {
+				personName: params.person_name,
+				symptom: params.symptom,
+				severity: params.severity,
+				...(params.reading ? { notes: params.reading } : {}),
+				// Absent keeps the watch's cadence; null turns it off.
+				...(params.check_in_hours !== undefined ? { checkInHours: params.check_in_hours } : {}),
+			});
+			return { ref: saved.uuid, detail: null };
 		},
 	},
 
@@ -1243,6 +1411,8 @@ const PARAM_TYPES = {
 	repo: { type: "string", enum: Object.keys(codeAgents.REPOS) },
 	agent: { type: "string", enum: ["claude", "codex"] },
 	within_hours: { type: "number" },
+	check_in_hours: { type: "number" },
+	feeling_better: { type: "boolean" },
 	email_triage_uuids: { type: "array", items: { type: "string" } },
 	items: {
 		type: "array",

@@ -16,7 +16,8 @@ hours, release dates, whether something is true. I do it on my own when your
 question sounds like it needs it, and always when you ask me to look
 something up.
 
-The pages I used show as links under my reply, so you can check me. In voice
+The pages I used show as links under my reply, so you can check me. Those
+links stay with the conversation when you refresh or return later. In voice
 I'll say "let me look that up" while I search, and I'll mention where
 something came from when it matters, but I won't read out web addresses.
 
@@ -31,9 +32,8 @@ last night?". The links appear under my reply in the chat.
   wrong, say "look it up" and I will.
 - **The search failed or came back empty.** I'll answer from what I know and
   should tell you I couldn't check. Ask again in a moment.
-- **No links under my reply.** Links only arrive with a live reply. If the
-  chat fell back to refreshing (a weak connection), the answer still came from
-  the search, but the links don't show.
+- **No links under my reply.** Replies saved before source links were kept
+  won't have them. A search that returned no sources won't show links either.
 
 ## Limits
 
@@ -41,8 +41,8 @@ last night?". The links appear under my reply in the chat.
   fill in forms or read paywalled articles.
 - I see a summary of the results, not whole pages, so a detail buried deep in
   an article can be missed.
-- Links aren't saved with the conversation; scrolling back later shows the
-  answer without them.
+- Source links are saved for new replies; I can't recover links that weren't
+  saved with older replies. A linked page can change or become unavailable.
 - Only for adults. In a child's conversation I don't search the web.
 
 ## Under the hood
@@ -51,7 +51,8 @@ last night?". The links appear under my reply in the chat.
   cache), `src/services/toolIntent.js` (Jev's `web` source, fetched at 0.6
   rather than 0.35), `src/controllers/gemini.js` (`webGroundingFor`; a turn
   with web results calls `llm.generate` with `prefer: "frontier"`; sources
-  ride `addMessage` as `message.sources`, live socket only).
+  ride `addMessage` as `message.sources` and are saved by `src/services/message.js`
+  in `message.sources` for history and polling).
 - Model: `search()` in `src/services/llm/adapters/gemini.js` (Gemini with the
   `googleSearch` tool, behind `assertModelAccess`) and `src/services/llm/router.js`
   (task `search`, frontier-pinned, logged to `llm_call_log`). Model is
@@ -59,6 +60,7 @@ last night?". The links appear under my reply in the chat.
 - Frontend: `../../../companion/src/pages/CompanionConsole.tsx` renders the links;
   `../../../companion/src/athena/useChat.ts` carries `Message.sources`.
 - Tests: `src/services/webSearch.test.js`, `src/controllers/webGrounding.test.js`,
+  `src/services/message.test.js`,
   `src/services/toolIntent.test.js`, `src/services/llm/geminiRequest.test.js`.
 - Notes: grounding and a strict response schema don't mix in one Gemini call,
   which is why the search is a separate call whose result enters the prompt

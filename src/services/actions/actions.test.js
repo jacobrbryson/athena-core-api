@@ -789,6 +789,134 @@ describe("standing approvals", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Repeats — the same request twice is done once (2026-10-11)
+// ---------------------------------------------------------------------------
+
+describe("repeats", () => {
+	const REPEAT_SQL = "AND created_at > DATE_SUB(NOW(), INTERVAL ? HOUR)";
+	const when = soon(3, 2.5);
+
+	/** Earlier rows the repeat check finds, plus a live standing authority. */
+	function withEarlier(rows) {
+		pool.query.mockImplementation(async (sql) => {
+			if (sql.includes(REPEAT_SQL)) return [rows];
+			if (sql.includes("FROM athena_action_authority")) return [[{ id: 3, expires_at: null }]];
+			return [[], {}];
+		});
+	}
+	const inserted = () => pool.query.mock.calls.some((c) => c[0].includes("INSERT INTO athena_action\n"));
+
+	test("'yes please' after a standing execution does not add the event again", async () => {
+		// The conversation that prompted this: the first reply had already added
+		// it with a location; the second proposal left the location out.
+		withEarlier([
+			actionRow({
+				status: "done",
+				approval: "standing",
+				params: JSON.stringify({ title: "Taylor's house", ...when, location: "Taylor's house" }),
+			}),
+		]);
+		const outcome = await actions.attempt(PROFILE, 1, {
+			id: "create_calendar_event",
+			params: { title: "Going to Taylor's house", ...when },
+		});
+		expect(outcome).toMatchObject({ proposal: null, rejected: null, repeat: { uuid: UUID, status: "done" } });
+		expect(inserted()).toBe(false);
+		expect(googleCalendar.createEvent).not.toHaveBeenCalled();
+	});
+
+	test("the same title at another time is a new event", async () => {
+		withEarlier([actionRow({ status: "done", params: JSON.stringify({ title: "Taylor's house", ...when }) })]);
+		pool.query.mockImplementation(async (sql) => {
+			if (sql.includes(REPEAT_SQL)) return [[actionRow({ status: "done", params: JSON.stringify({ title: "Taylor's house", ...when }) })]];
+			if (sql.includes("FROM athena_action WHERE uuid")) return [[actionRow()]];
+			return [[], {}];
+		});
+		const outcome = await actions.attempt(PROFILE, 1, {
+			id: "create_calendar_event",
+			params: { title: "Taylor's house", ...soon(27, 2.5) },
+		});
+		expect(outcome.repeat).toBeUndefined();
+		expect(inserted()).toBe(true);
+	});
+
+	test("the same time written in a zone instead of an offset is still a repeat", async () => {
+		const at = { start: "2026-12-01T13:30:00-05:00", end: "2026-12-01T16:00:00-05:00" };
+		withEarlier([actionRow({ status: "done", params: JSON.stringify({ title: "Dentist", ...at }) })]);
+		jest.useFakeTimers({ now: new Date("2026-11-30T12:00:00Z"), doNotFake: ["nextTick", "setImmediate"] });
+		try {
+			const outcome = await actions.attempt(PROFILE, 1, {
+				id: "create_calendar_event",
+				params: { title: "dentist", start: "2026-12-01T13:30:00", end: "2026-12-01T16:00:00", time_zone: "America/New_York" },
+			});
+			expect(outcome.repeat).toMatchObject({ status: "done" });
+		} finally {
+			jest.useRealTimers();
+		}
+	});
+
+	test("a reworded investigation into the same repo is not a second issue", async () => {
+		codeAgents.mayUse.mockResolvedValue(true);
+		withEarlier([
+			actionRow({
+				action_id: "investigate_code",
+				status: "done",
+				params: JSON.stringify({ repo: "core_api", symptom: "The weather card shows yesterday's forecast" }),
+			}),
+		]);
+		const outcome = await actions.attempt(PROFILE, 1, {
+			id: "investigate_code",
+			params: { repo: "core_api", symptom: "Weather card is showing yesterday's forecast again" },
+		});
+		expect(outcome.repeat).toMatchObject({ status: "done" });
+		expect(codeAgents.openInvestigation).not.toHaveBeenCalled();
+	});
+
+	test("a different problem in the same repo is a new investigation", async () => {
+		codeAgents.mayUse.mockResolvedValue(true);
+		pool.query.mockImplementation(async (sql) => {
+			if (sql.includes(REPEAT_SQL))
+				return [[actionRow({ action_id: "investigate_code", status: "done", params: JSON.stringify({ repo: "core_api", symptom: "The weather card shows yesterday's forecast" }) })]];
+			if (sql.includes("FROM athena_action WHERE uuid")) return [[actionRow({ action_id: "investigate_code" })]];
+			return [[], {}];
+		});
+		const outcome = await actions.attempt(PROFILE, 1, {
+			id: "investigate_code",
+			params: { repo: "core_api", symptom: "Place reminders never fire when I get home" },
+		});
+		expect(outcome.repeat).toBeUndefined();
+		expect(inserted()).toBe(true);
+	});
+
+	test("the repeat check only counts live, pending or done rows", async () => {
+		await actions.attempt(PROFILE, 1, { id: "create_calendar_event", params: { title: "Dentist", ...when } });
+		const check = pool.query.mock.calls.find((c) => c[0].includes(REPEAT_SQL));
+		expect(check[0]).toMatch(/status IN \('executing', 'done'\) OR \(status = 'pending' AND expires_at > NOW\(\)\)/);
+		expect(check[1]).toEqual([PROFILE, "create_calendar_event", actions.REPEAT_WINDOW_HOURS]);
+	});
+
+	test("propose() hands back the earlier one, so the email panel isn't told it failed", async () => {
+		withEarlier([actionRow({ status: "done" })]);
+		const result = await actions.propose(PROFILE, null, { id: "create_calendar_event", params: JSON.parse(actionRow().params) });
+		expect(result).toMatchObject({ uuid: UUID, status: "done" });
+	});
+
+	test("the prompt says what is already done and which actions run without asking", () => {
+		const block = actions.promptBlock([registry.get("create_calendar_event")], { standing: ["create_calendar_event"] });
+		expect(block).toMatch(/standing approval.*DOES it/s);
+		expect(actions.promptBlock([registry.get("create_calendar_event")])).not.toMatch(/standing approval for this/);
+		const recent = actions.recentBlock([
+			{ status: "done", summary: 'Add "Taylor\'s house" to your calendar', created_at: new Date() },
+			{ status: "declined", summary: "Not this one", created_at: new Date() },
+			{ status: "done", summary: "Too old", created_at: new Date(Date.now() - 7 * 3600000) },
+		]);
+		expect(recent).toMatch(/Taylor's house/);
+		expect(recent).not.toMatch(/Not this one|Too old/);
+		expect(actions.recentBlock([])).toBeNull();
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Decline, expiry, prompt block
 // ---------------------------------------------------------------------------
 
