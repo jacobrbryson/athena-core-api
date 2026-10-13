@@ -8,8 +8,15 @@
  * connector read: the reply itself stays one schema-constrained call.
  *
  * Two ways in, mirroring the connectors:
- *   matches(message)  — a keyword gate for explicit asks ("look up", "latest").
+ *   matches(message)  — a keyword gate for explicit asks ("look up", "latest")
+ *                       and for any message that names a site or link.
  *   toolIntent        — Jev's guess catches the plain ones ("who won last night?").
+ *
+ * A named site or link ("today's prompt from orcwood.com") is opened, not just
+ * searched for: the pages go to llm.search as `urls` and Gemini reads them
+ * itself (URL context), so this server never fetches an address a message
+ * supplied. Search alone answered from Google's index, which holds nothing a
+ * page builds in the browser — and filled the silence with a guess.
  *
  * Adults only. A child's words do not go out to a search engine.
  *
@@ -20,9 +27,12 @@
 const llm = require("./llm");
 
 // A search plus its summary takes a few seconds. Past this the reply goes
-// ahead without it rather than leaving the person waiting.
+// ahead without it rather than leaving the person waiting. Opening a named
+// page on top of the search takes longer, and was asked for by name.
 const TIMEOUT_MS = 8000;
+const PAGE_TIMEOUT_MS = 15000;
 const MAX_SOURCES = 5;
+const MAX_PAGES = 3;
 // The same question asked twice in a few minutes (a retry, a repeat in voice)
 // should not pay for two searches.
 const CACHE_MS = 10 * 60 * 1000;
@@ -43,10 +53,40 @@ const EXPLICIT = [
 	/\bis it true that\b/i,
 ];
 
+// A pasted link, or a bare domain on a common TLD ("orcwood.com/orctober").
+// Not after "@" or a dot, so an email address or "node.js" never reads as a
+// site; a TLD list rather than any letters, so "e.g." and "3.5" don't either.
+const LINK = /\bhttps?:\/\/[^\s<>"'`]+/gi;
+const DOMAIN =
+	/(?<![@\w.-])((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|org|net|edu|gov|io|app|dev|ai|co|us|uk|ca|info|me|tv|gg|xyz|games|tech|site|blog|news|shop|store))(\/[^\s<>"'`]*)?(?![\w-])/gi;
+
+/** The pages a message names outright, as https URLs (at most a few). */
+function pagesIn(message) {
+	if (typeof message !== "string") return [];
+	const found = [];
+	const add = (raw) => {
+		const trimmed = raw.replace(/[.,!?;:)\]}]+$/, "");
+		let url;
+		try {
+			url = new URL(/^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`);
+		} catch {
+			return;
+		}
+		if (url.username || url.password) return;
+		if (!found.includes(url.href)) found.push(url.href);
+	};
+	const rest = message.replace(LINK, (link) => {
+		add(link);
+		return " ";
+	});
+	for (const m of rest.matchAll(DOMAIN)) add(m[0]);
+	return found.slice(0, MAX_PAGES);
+}
+
 /** True when the person explicitly asked for something only a search can answer. */
 function matches(message) {
 	if (typeof message !== "string" || !message.trim()) return false;
-	return EXPLICIT.some((pattern) => pattern.test(message));
+	return EXPLICIT.some((pattern) => pattern.test(message)) || pagesIn(message).length > 0;
 }
 
 function remember(key, value) {
@@ -103,10 +143,13 @@ async function buildContext(message, { audience } = {}) {
 	if (!query) return null;
 
 	const key = query.toLowerCase();
+	const urls = pagesIn(query);
 	let result = recalled(key);
 	if (!result) {
 		try {
-			const out = await withTimeout(llm.search(query, { audience }), TIMEOUT_MS);
+			const out = urls.length
+				? await withTimeout(llm.search(query, { audience, urls }), PAGE_TIMEOUT_MS)
+				: await withTimeout(llm.search(query, { audience }), TIMEOUT_MS);
 			if (!out?.text) return null;
 			result = { text: out.text, sources: (out.sources || []).slice(0, MAX_SOURCES) };
 			remember(key, result);
@@ -120,6 +163,7 @@ async function buildContext(message, { audience } = {}) {
 
 module.exports = {
 	matches,
+	pagesIn,
 	buildContext,
 	formatBlock,
 	TIMEOUT_MS,

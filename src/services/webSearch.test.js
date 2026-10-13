@@ -29,6 +29,8 @@ describe("matches", () => {
 		"what's the latest news on the hurricane?",
 		"what's the current price of bitcoin?",
 		"is it true that octopuses have three hearts?",
+		"get today's Orctober prompt from orcwood.com",
+		"what does https://example.org/page say?",
 	])("hears an explicit ask: %s", (message) => {
 		expect(webSearch.matches(message)).toBe(true);
 	});
@@ -38,9 +40,33 @@ describe("matches", () => {
 		"are you online?",
 		"how did I sleep?",
 		"tell me a story",
+		"email jacob@example.com about it",
+		"is node.js faster, e.g. for scripts?",
 		"",
 	])("leaves ordinary messages alone: %s", (message) => {
 		expect(webSearch.matches(message)).toBe(false);
+	});
+});
+
+describe("pagesIn", () => {
+	it.each([
+		["get today's Orctober prompt from orcwood.com", ["https://orcwood.com/"]],
+		["what's on orcwood.com/orctober?", ["https://orcwood.com/orctober"]],
+		["read https://example.org/a?b=1, then www.Example.co.uk.", ["https://example.org/a?b=1", "https://www.example.co.uk/"]],
+		["Orcwood.com's news page", ["https://orcwood.com/"]],
+	])("finds the pages in %s", (message, urls) => {
+		expect(webSearch.pagesIn(message)).toEqual(urls);
+	});
+
+	it.each(["email jacob@example.com", "node.js and e.g. 3.5", "https://user:pw@example.com/x", ""])(
+		"finds none in %s",
+		(message) => {
+			expect(webSearch.pagesIn(message)).toEqual([]);
+		},
+	);
+
+	it("opens at most three", () => {
+		expect(webSearch.pagesIn("a.com b.com c.com d.com")).toHaveLength(3);
 	});
 });
 
@@ -54,6 +80,14 @@ describe("buildContext", () => {
 		expect(out.block).toContain("1. mlb.com");
 		// URLs are for the screen, never her voice.
 		expect(out.block).not.toContain("https://");
+	});
+
+	it("hands named pages to the search so it opens them", async () => {
+		await webSearch.buildContext("today's Orctober prompt from orcwood.com", { audience: "adult" });
+		expect(llm.search).toHaveBeenCalledWith("today's Orctober prompt from orcwood.com", {
+			audience: "adult",
+			urls: ["https://orcwood.com/"],
+		});
 	});
 
 	it("never searches for a child", async () => {

@@ -104,38 +104,63 @@ async function raw(endpoint, contents, config = {}) {
  * chat reply stays one schema-constrained call, and this result reaches it as
  * prompt context like any connector read.
  *
+ * `urls` are pages the person named. Gemini opens them itself (URL context),
+ * so this server never fetches an address someone typed; a bare domain in the
+ * question alone doesn't trigger that, hence the explicit list.
+ *
  *   { text, sources: [{ title, url }], queries: [...], model }
  */
-async function search(endpoint, query) {
+async function search(endpoint, query, { urls = [] } = {}) {
 	await assertModelAccess();
 	const model = endpoint.models.search;
+	const pages = Array.isArray(urls) ? urls.filter((u) => typeof u === "string" && /^https?:\/\//i.test(u)) : [];
+	const text = pages.length ? `${query}\n\nPages named in the request:\n${pages.join("\n")}` : query;
 	const response = await ai().models.generateContent({
 		model,
-		contents: [{ role: "user", parts: [{ text: query }] }],
+		contents: [{ role: "user", parts: [{ text }] }],
 		config: {
-			tools: [{ googleSearch: {} }],
+			tools: pages.length ? [{ urlContext: {} }, { googleSearch: {} }] : [{ googleSearch: {} }],
 			systemInstruction: [
 				CORE_MISSION,
 				"Search the web and report what you find about the request below: the facts, figures, dates and names that answer it, most recent first.",
+				...(pages.length
+					? ["Open the pages it names and report what they actually say first; search only to fill in what they don't."]
+					: []),
 				"Plain prose, under 200 words. Say plainly when sources disagree or when nothing current turns up. Do not answer from memory alone.",
+				"When a page can't be read or doesn't contain the answer, say exactly that. Never guess why: don't claim it needs a login, a subscription or an account unless the page itself says so.",
 			].join("\n\n"),
 		},
 	});
-	const metadata = response?.candidates?.[0]?.groundingMetadata || {};
+	const candidate = response?.candidates?.[0] || {};
+	const metadata = candidate.groundingMetadata || {};
 	// One source per site. Every chunk carries its own Google redirect URL,
 	// even two pages of the same site (or the same page cited twice), and the
 	// title is only the domain — so deduplicating by URL showed "costco.com"
-	// two or three times under one reply.
+	// two or three times under one reply. Pages it opened come first: they are
+	// what the person pointed at.
 	const seen = new Set();
 	const sources = [];
+	const add = (title, url) => {
+		const site = title.trim().toLowerCase();
+		if (seen.has(site) || seen.has(url)) return;
+		seen.add(site);
+		seen.add(url);
+		sources.push({ title, url });
+	};
+	for (const entry of candidate.urlContextMetadata?.urlMetadata || []) {
+		if (entry?.urlRetrievalStatus !== "URL_RETRIEVAL_STATUS_SUCCESS" || !entry.retrievedUrl) continue;
+		let host;
+		try {
+			host = new URL(entry.retrievedUrl).hostname.replace(/^www\./, "");
+		} catch {
+			continue;
+		}
+		add(host, entry.retrievedUrl);
+	}
 	for (const chunk of metadata.groundingChunks || []) {
 		const url = chunk?.web?.uri;
 		if (!url) continue;
-		const title = chunk.web.title || url;
-		const site = title.trim().toLowerCase();
-		if (seen.has(site)) continue;
-		seen.add(site);
-		sources.push({ title, url });
+		add(chunk.web.title || url, url);
 	}
 	return {
 		text: (answerText(response) || "").trim(),

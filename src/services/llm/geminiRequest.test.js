@@ -89,6 +89,31 @@ test("search grounds on Google Search, checks access, and returns deduplicated s
 	});
 });
 
+test("search opens named pages with URL context and lists them first", async () => {
+	mockGenerateContent.mockResolvedValue({
+		candidates: [
+			{
+				content: { parts: [{ text: "Today's prompt is Thirteen teeth." }] },
+				urlContextMetadata: {
+					urlMetadata: [
+						{ retrievedUrl: "https://www.orcwood.com/orctober", urlRetrievalStatus: "URL_RETRIEVAL_STATUS_SUCCESS" },
+						{ retrievedUrl: "https://orcwood.com/broken", urlRetrievalStatus: "URL_RETRIEVAL_STATUS_ERROR" },
+					],
+				},
+				groundingMetadata: { groundingChunks: [{ web: { uri: "https://g.example", title: "orcwood.com" } }] },
+			},
+		],
+	});
+	const out = await gemini.search({ ...endpoint, models: { search: "search-model" } }, "today's prompt", {
+		urls: ["https://www.orcwood.com/orctober", "javascript:alert(1)"],
+	});
+	const call = mockGenerateContent.mock.calls[0][0];
+	expect(call.config.tools).toEqual([{ urlContext: {} }, { googleSearch: {} }]);
+	expect(call.contents[0].parts[0].text).toBe("today's prompt\n\nPages named in the request:\nhttps://www.orcwood.com/orctober");
+	expect(call.config.systemInstruction).toContain("Never guess why");
+	expect(out.sources).toEqual([{ title: "orcwood.com", url: "https://www.orcwood.com/orctober" }]);
+});
+
 test("thought parts are excluded and finishReason is reported", async () => {
 	mockGenerateContent.mockResolvedValue({
 		candidates: [{ content: { parts: [{ text: "thinking...", thought: true }, { text: '{"a":1}' }] }, finishReason: "MAX_TOKENS" }],

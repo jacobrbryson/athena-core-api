@@ -182,14 +182,15 @@ async function raw(contents, cfg = {}) {
 /**
  * Search the web (Gemini + Google Search grounding). Frontier-only, first
  * endpoint that declares a search model, no fallback: a failed search means
- * no web context, never a guess. Returns { text, sources, queries, model }.
+ * no web context, never a guess. `urls` are pages the person named, which the
+ * model opens itself. Returns { text, sources, queries, model }.
  */
-async function search(query, { audience } = {}) {
+async function search(query, { audience, urls } = {}) {
 	const endpoint = config.frontier.find((e) => e.models?.search && adapterFor(e).search);
 	if (!endpoint) throw new NoModelAvailableError("search", []);
 	const started = Date.now();
 	try {
-		const out = await adapterFor(endpoint).search(endpoint, query);
+		const out = await adapterFor(endpoint).search(endpoint, query, { urls });
 		health.reportSuccess(endpoint.id, Date.now() - started);
 		telemetry.recordCall({ task: "search", endpointId: endpoint.id, tier: endpoint.tier, model: out.model, outcome: "ok", latencyMs: Date.now() - started, audience, inputChars: query.length, outputChars: out.text.length });
 		return out;
