@@ -131,6 +131,11 @@ router.post('/dashboard/email/:uuid/dismiss', requireAuth, express.json({ limit:
 router.post('/dashboard/health/family', requireAuth, express.json({ limit: '4kb' }), require('../controllers/familyHealth').report);
 router.patch('/dashboard/health/family/:uuid/resolve', requireAuth, express.json({ limit: '1kb' }), require('../controllers/familyHealth').resolve);
 
+// Body calibration: lab references (DEXA, InBody, a measured height) that
+// correct the scale. Read on the dashboard summary's `body` source.
+router.post('/dashboard/health/body/calibration', requireAuth, express.json({ limit: '2kb' }), require('../controllers/bodyCalibration').add);
+router.delete('/dashboard/health/body/calibration/:uuid', requireAuth, require('../controllers/bodyCalibration').remove);
+
 // Family card: children's birthdays from the family profiles, and the Google
 // Contact (if any) linked to each remembered family member. Contact search is
 // the community one — same address book, same endpoint.

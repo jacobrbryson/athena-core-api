@@ -1,5 +1,14 @@
 # Capability ledger
 
+- 2026-10-13 — Smart scale: Athena estimates skeletal muscle, lean mass, body
+  water and BMR from the scale's impedance (published equations, marked est.),
+  and corrects readings to lab references entered under Body composition →
+  Calibrate (marked cal.) — `smart-scale.md`.
+
+- 2026-10-13 — VeSync smart scale: weight and body composition on the Health
+  card and page (Body composition, Weight and Body fat panels), and weigh-ins
+  in chat. Linked by the owner's script; no Connect button — `smart-scale.md`.
+
 - 2026-10-11 — Family page replaces Under the weather with Family Health:
   Good, Watch, Warning or Alert! from the highest active reported severity;
   unavailable reports show Unknown — `family-health.md`.

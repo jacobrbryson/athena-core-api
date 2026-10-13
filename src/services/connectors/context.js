@@ -26,7 +26,7 @@ const credentials = require("../credentials");
  * contents and a reason for not having them.
  */
 
-const CONNECTORS = [googleCalendar, gmail, whoop, ...require('./work').connectors];
+const CONNECTORS = [googleCalendar, gmail, whoop, require("./vesync"), ...require('./work').connectors];
 
 /** Connectors whose keyword gate the message trips. */
 function relevantConnectors(message) {
@@ -68,6 +68,8 @@ async function linkedProviders(profileId) {
 
 /** This provider's display name, for a line the model will read aloud. */
 function labelFor(connector) {
+	// A connector with no OAuth descriptor (VeSync) names itself.
+	if (connector.LABEL) return connector.LABEL;
 	try {
 		return getProvider(connector.PROVIDER).label;
 	} catch {
@@ -210,7 +212,7 @@ function notLinkedBlock(connector) {
 		`pending, broken, or awaiting setup on Athena's side, and this is not ` +
 		`an unbuilt feature — the user simply has not linked the account yet. ` +
 		`If they asked for this data, say plainly that it is not connected and ` +
-		`that they can link it any time from Athena's connected-apps settings. ` +
+		`${connector.HOW_TO_LINK || "that they can link it any time from Athena's connected-apps settings"}. ` +
 		`If they did not ask for it, do not bring it up at all.`
 	);
 }
@@ -230,8 +232,8 @@ function needsReconnectBlock(connector) {
 		`${label}: linked, but the connection is no longer authorized and has ` +
 		`to be reconnected before Athena can read it. Athena cannot see any of ` +
 		`its data right now. Do NOT guess, estimate or describe its contents, ` +
-		`and do NOT invent a reason for the outage — reconnecting from Athena's ` +
-		`connected-apps settings is the fix. If the user did not ask for this ` +
+		`and do NOT invent a reason for the outage — ` +
+		`${connector.HOW_TO_RELINK || "reconnecting from Athena's connected-apps settings is the fix"}. If the user did not ask for this ` +
 		`data, do not bring it up at all.`
 	);
 }

@@ -4,6 +4,7 @@ const credentials = require('./credentials');
 const consent = require('./consent');
 const calendar = require('./connectors/googleCalendar');
 const whoop = require('./connectors/whoop');
+const vesync = require('./connectors/vesync');
 const integration = require('./integration');
 const chores = require('./familyChores');
 const work = require('./connectors/work');
@@ -67,7 +68,7 @@ async function getDashboard(profileId, user) {
     if (health && !healthConsent) return section('consent_required');
     return read(fn);
   }
-  const [calendarData, recovery, sleep, strain, familyChores, jira, slack, emailTriageData, familyHealthData] = await Promise.all([
+  const [calendarData, recovery, sleep, strain, body, familyChores, jira, slack, emailTriageData, familyHealthData] = await Promise.all([
     provider('google_calendar', async () => {
       const result = await calendar.collectEvents(profileId, { days: 7, maxResults: 25 });
       const timeZone = calendar.displayTimeZone(result.calendars);
@@ -93,6 +94,9 @@ async function getDashboard(profileId, user) {
     provider('whoop', () => whoop.listRecovery(profileId, { days: 14, limit: 14 }), true),
     provider('whoop', () => whoop.listSleep(profileId, { days: 7, limit: 7 }), true),
     provider('whoop', () => whoop.listCycles(profileId, { days: 14, limit: 14 }), true),
+    // Ninety days of weigh-ins: a week of weight is mostly water, and the
+    // trend the Health page draws needs a month or more to mean anything.
+    provider('vesync', () => vesync.bodySummary(profileId), true),
     (async () => {
       try {
         const status = await integration.getStatus(user, integration.PROVIDER_FAMILY_CHORES);
@@ -123,7 +127,7 @@ async function getDashboard(profileId, user) {
     // read itself fails.
     read(async () => ({ active: await familyHealth.activeFor(profileId) })),
   ]);
-  const result = { calendar: calendarData, recovery, sleep, strain, familyChores, jira, slack, emailTriage: emailTriageData, familyHealth: familyHealthData };
+  const result = { calendar: calendarData, recovery, sleep, strain, body, familyChores, jira, slack, emailTriage: emailTriageData, familyHealth: familyHealthData };
   for (const [id, entry] of snapshots) if (Date.now() - entry.at >= CACHE_TTL_MS) snapshots.delete(id);
   if (snapshots.size >= 128) snapshots.delete(snapshots.keys().next().value);
   snapshots.set(profileId, { at: Date.now(), data: result });
