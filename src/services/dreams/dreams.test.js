@@ -428,12 +428,38 @@ describe("recall.promptBlock", () => {
 		const block = await recall.promptBlock(ADULT, "hi", { sessionId: 3 });
 		expect(block).toContain("Is the Emma in Denver your sister?");
 		expect(block).toContain("Can I ask you something?");
+		expect(block).toContain("[q:11]");
+		expect(block).toContain("answered_question");
 		const mark = pool.query.mock.calls.find((c) => c[0].includes("SET offered_at"));
 		expect(mark[1]).toEqual([3, 3, [11]]);
 	});
 });
 
 describe("questions", () => {
+	test("an answer heard in chat closes only that person's pending question", async () => {
+		pool.query.mockResolvedValue([{ affectedRows: 1 }]);
+		const ok = await questions.answerFromChat(ADULT, "q:11", { answer: "Missy is their mom's sister.", said: "my mom's sister" });
+		expect(ok).toBe(true);
+		const [sql, params] = pool.query.mock.calls.at(-1);
+		expect(sql).toContain("SET status = 'answered'");
+		expect(sql).toContain("profile_id = ?");
+		expect(sql).toContain("status = 'pending'");
+		expect(params).toEqual([`Missy is their mom's sister. (they said: "my mom's sister")`, 11, ADULT]);
+	});
+
+	test("ignores a ref or answer it can't use", async () => {
+		pool.query.mockClear();
+		expect(await questions.answerFromChat(ADULT, "nonsense", { answer: "x" })).toBe(false);
+		expect(await questions.answerFromChat(ADULT, "q:11", { answer: "  " })).toBe(false);
+		expect(await questions.answerFromChat(null, "q:11", { answer: "x" })).toBe(false);
+		expect(pool.query).not.toHaveBeenCalled();
+	});
+
+	test("someone else's or an already-closed question changes nothing", async () => {
+		pool.query.mockResolvedValue([{ affectedRows: 0 }]);
+		expect(await questions.answerFromChat(ADULT, "q:99", { answer: "yes" })).toBe(false);
+	});
+
 	test("won't pile up past the per-person cap", async () => {
 		mainDb({ pendingQuestions: 10 });
 		await expect(questions.create({ profileId: ADULT, question: "One more?" })).rejects.toThrow(/already 10/);

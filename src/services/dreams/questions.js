@@ -126,6 +126,28 @@ async function dismissForProfile(profileId, uuid) {
 	return res.affectedRows > 0;
 }
 
+/**
+ * The person answered in chat: she said so in `answered_question` on the turn
+ * that heard it, so the bell clears now instead of after tonight's dream.
+ *
+ * `ref` is untrusted model output ("q:12"); the update is scoped to this
+ * person's own pending rows, so a wrong or foreign id changes nothing. The
+ * answer kept is her one-line reading plus their own words, so the dream's
+ * `_clarification` mirror still has what they actually said.
+ */
+async function answerFromChat(profileId, ref, { answer, said } = {}) {
+	const id = Number(String(ref || "").replace(/^q:/i, ""));
+	const reading = String(answer || "").replace(/\s+/g, " ").trim();
+	if (!profileId || !Number.isInteger(id) || id <= 0 || !reading) return false;
+	const words = String(said || "").replace(/\s+/g, " ").trim().slice(0, 600);
+	const [res] = await pool.query(
+		`UPDATE athena_dream_question SET status = 'answered', answer = ?, answered_at = NOW()
+     WHERE id = ? AND profile_id = ? AND status = 'pending'`,
+		[`${reading.slice(0, 1200)}${words ? ` (they said: "${words}")` : ""}`.slice(0, 2000), id, profileId]
+	);
+	return res.affectedRows > 0;
+}
+
 async function answeredFor(profileIds) {
 	if (!profileIds.length) return [];
 	const [rows] = await pool.query(
@@ -160,6 +182,7 @@ module.exports = {
 	offeredWithTranscripts,
 	resolve,
 	dismissForProfile,
+	answerFromChat,
 	answeredFor,
 	expireStale,
 	prune,

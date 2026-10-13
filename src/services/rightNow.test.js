@@ -298,14 +298,29 @@ describe('workCandidates', () => {
     const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
     const jira = [
       { key: 'B-1', title: 'Overdue, not started', status: 'To Do', statusCategory: 'new', due: yesterday },
-      // Most recently touched in-progress: the banner's pick. Its status name
-      // says nothing about progress; Jira's grouping does.
-      { key: 'B-2', title: 'What I am on', status: 'Testing', statusCategory: 'indeterminate' },
+      // Jira groups Review with In Progress, but it has left their hands.
+      { key: 'B-0', title: 'Waiting on review', status: 'Review', statusCategory: 'indeterminate' },
+      { key: 'B-9', title: 'With QA', status: 'QA In Progress', statusCategory: 'indeterminate' },
+      // Most recently touched started-and-mine, under its workflow's own name: the banner's pick.
+      { key: 'B-2', title: 'What I am on', status: 'Operational process', statusCategory: 'indeterminate' },
       { key: 'B-3', title: 'Also started, due soon', status: 'In Progress', statusCategory: 'indeterminate', due: tomorrow },
     ];
     const out = rightNow.workCandidates(jira, window, { workHours: true });
     expect(out.map((c) => c.id)).toEqual(['work:B-2', 'work:B-3']);
-    expect(out[0].inProgress).toBe(true);
+    expect(out[0]).toMatchObject({ inProgress: true, onBanner: true });
+    expect(out[1].onBanner).toBe(false);
+  });
+
+  it('with nothing in progress, leads with Ready to Start — never Review', () => {
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const jira = [
+      { key: 'C-1', title: 'In review', status: 'Review', statusCategory: 'indeterminate' },
+      { key: 'C-2', title: 'Overdue, not started', status: 'To Do', statusCategory: 'new', due: yesterday },
+      { key: 'C-3', title: 'Next up', status: 'Ready to Start', statusCategory: 'new' },
+    ];
+    const out = rightNow.workCandidates(jira, window, { workHours: true });
+    expect(out[0]).toMatchObject({ id: 'work:C-3', inProgress: false, onBanner: true });
+    expect(out.map((c) => c.id)).not.toContain('work:C-1');
   });
 });
 

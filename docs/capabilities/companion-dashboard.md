@@ -108,9 +108,10 @@ is one tap further, under Actions & permissions.
 While your calendar says you're working, a banner sits across the top of the
 Dashboard: where you're working ("Home"), until when, and the one thing the day
 wants next — in the order a day goes: where you're working, the Jira ticket you
-have in progress (if any; tap it to open it in Jira), then the next meeting and
+have In Progress — or, with none, the one Ready to Start (tap it to open it in
+Jira), then the next meeting and
 how long you have before it. While you're in a meeting, that meeting comes
-second and the ticket follows it. If nothing is in progress there is no ticket
+second and the ticket follows it. If nothing is In Progress or Ready to Start there is no ticket
 block, and if nothing else is left before you finish it says so. It is
 driven by the Working location you set in Google Calendar, not by the clock: no
 location covering the moment, or an Out of office event over it, and there is no
@@ -120,8 +121,10 @@ count as "next meeting"; focus time and all-day markers don't. And only meetings
 on the same calendar as that Working location — your work calendar — count: a
 family or shared calendar's events stay on the Calendar card, not in the banner.
 
-"In progress" is Jira's own grouping, so it holds whatever your workflow calls
-its statuses ("Code Review" counts); if several are in progress I show the one
+"In progress" is Jira's own started grouping, whatever your workflow calls it
+("Operational process" counts), minus the hand-offs: a ticket in Code Review,
+QA, Pending Prod Testing or the like is waiting on someone else, so it never
+takes that spot. If several are in progress I show the one
 you touched last and say how many more. Beside the banner, when Jira is
 connected, a small chip says how many open issues are assigned to you and how
 many are in progress — or, if any have a due date, how many are overdue or due

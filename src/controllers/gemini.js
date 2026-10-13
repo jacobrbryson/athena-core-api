@@ -22,6 +22,7 @@ const nearbyIncidents = require("../services/pulsepoint/watch");
 const familyHealth = require("../services/familyHealth");
 const community = require("../services/community");
 const websites = require("../services/websites");
+const workplaces = require("../services/workplaces");
 const placeReminders = require("../services/placeReminders");
 const timeReminders = require("../services/timeReminders");
 const dreams = require("../services/dreams");
@@ -32,6 +33,7 @@ const activity = require("../services/activity");
 const { generatePrompt, RESPONSE_SCHEMA } = require("./prompt");
 const { parseModelJson } = require("../services/llm/parse");
 const actionRegistry = require("../services/actions/registry");
+const dreamQuestions = require("../services/dreams/questions");
 
 // The reply schema with `proposed_action.params` spelled out. Left as a bare
 // object, Gemini's structured output always fills it as `{}` and every
@@ -505,6 +507,20 @@ async function processAiResponse(session, message, clients, ctx = {}) {
       }
     }
 
+    // Where they work: the workplaces listed on the Work page, so "my work"
+    // means the right company. A few lines; never fatal.
+    if (mayPropose) {
+      try {
+        const workBlock = await workplaces.promptBlock(session.profile_id);
+        if (workBlock)
+          initiativeBlock = initiativeBlock
+            ? [initiativeBlock, workBlock].join("\n\n")
+            : workBlock;
+      } catch (e) {
+        console.warn("[gemini] workplaces block failed:", e.message);
+      }
+    }
+
     // Their websites: the stored Search Console / Analytics numbers, only on
     // a turn that is about their sites (or names one). Reads the database,
     // never Google, and never fatal.
@@ -898,6 +914,25 @@ async function processAiResponse(session, message, clients, ctx = {}) {
         );
     }
 
+    // Did that message answer one of her dream questions? Close it now so the
+    // Notifications bell doesn't keep asking what was just answered. The
+    // monologue's rewrite can drop the field, so the first draft counts too.
+    let questionAnswered = false;
+    const answered = !fellBack
+      ? parsedResponse.answered_question || drafted?.reply?.answered_question
+      : null;
+    if (mayPropose && answered?.ref) {
+      try {
+        questionAnswered = await dreamQuestions.answerFromChat(
+          session.profile_id,
+          answered.ref,
+          { answer: answered.answer, said: message },
+        );
+      } catch (e) {
+        console.warn("[gemini] closing answered dream question failed:", e.message);
+      }
+    }
+
     // In-chat mission reporting: when Athena flags that the Guardian reported
     // their cooperative-mission piece, record it for their family (idempotent;
     // the stored fragment is backend-authored, so it can't be spoofed). The
@@ -1003,6 +1038,8 @@ async function processAiResponse(session, message, clients, ctx = {}) {
       }
       broadcast({ rpc: "dashboardUpdated", reason: "action_proposed" });
     }
+    if (questionAnswered)
+      broadcast({ rpc: "dashboardUpdated", reason: "question_answered" });
     if (ctx.replyPrivateProfileId) broadcast({ rpc: 'sessionStatus', session: { is_busy: false } });
   } catch (err) {
     console.error("Error during AI response processing:", err);

@@ -22,7 +22,7 @@ event doesn't end your workday window. Outside work, only your own calendar
 counts — a calendar someone shared with you shows what they're doing, so it
 never tells you you're in something. An Out of office block never counts as
 an appointment. During work hours the ticket I suggest is the same one the Work
-banner shows you have in progress, when there is one.
+banner shows — the one you've started and still hold, else the one Ready to Start — when there is one.
 
 For a place, I read its own web page on a rhythm and keep what it says: open or
 closed, today's hours, and whether those hours depend on the weather. Where a place has weather-dependent

@@ -144,8 +144,9 @@ async function questionsSection(profileId, sessionId) {
 		sessionId
 	).catch(() => undefined);
 	return `**Questions from your dreaming.** While organizing your memories last night you couldn't settle these on your own:
-${waiting.map((w) => `- "${w.question}"`).join("\n")}
-At a natural pause — not in the middle of something urgent or emotional, and not if the person is busy — ask ONE of them, opening softly, e.g. "Can I ask you something?" or "Could you clarify something for me?". If the conversation history shows you already asked it, don't ask again; take their reply as the answer. If they'd rather not, drop it gracefully.`;
+${waiting.map((w) => `- [q:${w.id}] "${w.question}"`).join("\n")}
+At a natural pause — not in the middle of something urgent or emotional, and not if the person is busy — ask ONE of them, opening softly, e.g. "Can I ask you something?" or "Could you clarify something for me?". If the conversation history shows you already asked it, don't ask again; take their reply as the answer. If they'd rather not, drop it gracefully.
+When their latest message answers one of these, set \`answered_question\` to {"ref": "q:<id>", "answer": "<one plain sentence of what they told you>"} — only their answer, nothing you're guessing. That takes it off their list of waiting questions. Leave it out otherwise.`;
 }
 
 async function dreamSection(message) {

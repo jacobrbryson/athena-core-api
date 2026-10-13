@@ -64,6 +64,15 @@ router.patch('/dashboard/websites/:uuid', requireAuth, express.json({ limit: '2k
 router.post('/dashboard/websites/:uuid/refresh', requireAuth, require('../controllers/websites').refresh);
 router.delete('/dashboard/websites/:uuid', requireAuth, require('../controllers/websites').remove);
 
+// Workplaces: where the person works, their role there, and the connections
+// and email addresses that belong to each. Shown on Work.
+router.get('/dashboard/workplaces', requireAuth, require('../controllers/workplaces').list);
+router.post('/dashboard/workplaces', requireAuth, express.json({ limit: '2kb' }), require('../controllers/workplaces').save);
+router.patch('/dashboard/workplaces/:uuid', requireAuth, express.json({ limit: '2kb' }), require('../controllers/workplaces').update);
+router.delete('/dashboard/workplaces/:uuid', requireAuth, require('../controllers/workplaces').remove);
+router.post('/dashboard/workplaces/:uuid/links', requireAuth, express.json({ limit: '1kb' }), require('../controllers/workplaces').link);
+router.delete('/dashboard/workplaces/:uuid/links/:linkUuid', requireAuth, require('../controllers/workplaces').unlink);
+
 // Community: points of interest (the places above, with what they are),
 // neighbours and local events — typed by the person, read into chat.
 router.get('/dashboard/community', requireAuth, require('../controllers/community').overview);

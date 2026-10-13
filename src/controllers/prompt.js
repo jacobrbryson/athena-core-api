@@ -36,6 +36,19 @@ const RESPONSE_SCHEMA = {
     // for and the reply is written again. Read-only, adults only, and each
     // source is offered only when the person has connected it.
     needs: NEEDS_SCHEMA,
+    // Optional. The person's message answered one of the questions her
+    // dreaming left her holding (services/dreams/recall.js lists them as
+    // "q:<id>"). gemini.js closes it for this person only, so the bell
+    // clears now rather than after the next dream. Records an answer; does
+    // nothing else.
+    answered_question: {
+      type: "object",
+      properties: {
+        ref: { type: "string" },
+        answer: { type: "string" },
+      },
+      required: ["ref", "answer"],
+    },
     // Optional. One thing Athena wants to DO rather than say — see
     // services/actions. Filling this in does NOT perform anything: the
     // backend validates it against the action registry, creates a pending

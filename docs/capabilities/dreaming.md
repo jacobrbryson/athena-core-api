@@ -50,6 +50,9 @@ down to every step I ran.
   the exact log, and the questions I'm holding for you.
 - Or just ask me: "What did you dream about?", "List the people you know about
   me", "Who do I know in Denver?"
+- My questions also wait in the Notifications bell. When you answer one in
+  chat it leaves the bell as soon as I've heard the answer; "Already answered"
+  closes one yourself if I missed it.
 - The notification version of my questions follows your initiative settings:
   the ⋯ menu (top right) → Initiative, where "A question after dreaming" can be
   muted like any other.
@@ -97,7 +100,9 @@ down to every step I ran.
   whose sources were forgotten.
 - Chat: `src/services/dreams/recall.js` (catalog-driven, code-built,
   `_profile_id`-filtered reads), wired in `src/controllers/gemini.js`.
-- Questions: `src/services/dreams/questions.js`; initiative trigger
+- Questions: `src/services/dreams/questions.js`; answered in chat via the
+  optional `answered_question` reply field (`answerFromChat`, scoped to the
+  person's own pending rows, then a `dashboardUpdated` push); initiative trigger
   `dream_question` in `src/services/initiative/triggers.js`.
 - Log: `athena_dream` (incl. `narrative`), `athena_dream_step`,
   `athena_dream_question` (migration `db/migrations/0046_athena_dreams.up.sql`);

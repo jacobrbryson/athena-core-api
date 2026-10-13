@@ -269,16 +269,26 @@ function goalCandidates(rows, projectTitles) {
  * opened the dashboard on a Saturday evening to be told about a ticket.
  *
  * What they already have in progress comes first, picked the way the Work
- * banner picks it — Jira's own status grouping, most recently touched first
- * (the read is newest-first) — so the two never name different tickets. Due
+ * banner picks it — started and still in their hands, else Ready to Start,
+ * most recently touched first (the read is newest-first) — so the two never
+ * name different tickets. Jira's "indeterminate" grouping says started under
+ * any workflow's name ("Operational process"), but it also holds hand-offs —
+ * Code Review, QA, Pending Prod Testing — which wait on someone else. Due
  * dates only order the tickets nobody has started.
  */
-const isInProgress = (issue) =>
-	issue.statusCategory ? issue.statusCategory === "indeterminate" : /progress/i.test(issue.status || "");
+const HANDED_OFF = /review|\bqa\b|test|approv|pending|waiting|blocked|deploy|\bstg\b|staging|\buat\b|verif|release/i;
+const isInProgress = (issue) => {
+	const name = issue.status || "";
+	const started = issue.statusCategory ? issue.statusCategory === "indeterminate" : /progress/i.test(name);
+	return started && !HANDED_OFF.test(name);
+};
+const isReadyToStart = (issue) => /^\s*ready\s+to\s+start\s*$/i.test(issue.status || "");
 
 function workCandidates(issues, window, { workHours }) {
 	if (!workHours) return [];
-	return (issues || [])
+	const list = issues || [];
+	const active = list.find(isInProgress) || list.find(isReadyToStart) || null;
+	return list
 		.map((issue, order) => {
 			const started = isInProgress(issue);
 			const days = issue.due ? Math.round((Date.parse(issue.due) - Date.now()) / 86_400_000) : null;
@@ -286,6 +296,7 @@ function workCandidates(issues, window, { workHours }) {
 			// Above any not-started ticket, overdue included; a step down per
 			// place in Jira's order keeps the banner's ticket on top.
 			if (started) score += 25 - Math.min(order, 4);
+			else if (issue === active) score += 25;
 			else if (days !== null && Number.isFinite(days)) score += days < 0 ? 20 : days <= 2 ? 12 : days <= 7 ? 4 : 0;
 			if (window.freeMinutes !== null && window.freeMinutes < 30) score -= 20;
 			return {
@@ -296,6 +307,7 @@ function workCandidates(issues, window, { workHours }) {
 				project: issue.project || null,
 				status: issue.status || null,
 				inProgress: started,
+				onBanner: issue === active,
 				dueDate: issue.due || null,
 				url: issue.url,
 				score,
@@ -337,7 +349,7 @@ const PROMPT = (sheet) =>
 	`- Only ever choose from the candidate ids given. Never invent an option, ` +
 	`a time, a distance, an opening hour or a weather claim.\n` +
 	`- The window has to actually hold it, drive included.\n` +
-	`- Among work tickets, the first with "inProgress": true is the one they're ` +
+	`- Among work tickets, the one with "onBanner": true is the one they're ` +
 	`on, and the one the rest of the screen shows; pick another ticket only for a ` +
 	`clear reason, and say it.\n` +
 	`- If nothing outdoors is open or the weather has ruled it out, the lead is ` +
