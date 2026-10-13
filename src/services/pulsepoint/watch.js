@@ -887,21 +887,168 @@ async function checkProfile(
 }
 
 /**
- * A call PulsePoint reported that cannot be put on a map: no address in the
- * text, or one the geocoder could not find (or did not answer for). It is
- * still told — in words, with no distance and no pin — because the phone has
- * already cleared PulsePoint's own notification and the owner would rather
- * hear too much than miss something (2026-10-04). Not added to the situation:
- * the board and map only hold calls with a real position.
+ * Unplaced calls that, on their own, only matter to the people in them: a
+ * wreck or a medical call somewhere in the county (owner, 2026-10-12, "I don't
+ * want these if they're for a traffic collision or medical emergency"). One is
+ * still told when it may sit on the road to somewhere they are about to go.
+ * This is only for calls that cannot be placed — a placed one inside a ring is
+ * told whatever it is (2026-10-04).
  */
-async function tellUnplaced(profileId, parsed, { places, postedAt, why }) {
+const PERSONAL_CATEGORIES = new Set(["Vehicle", "Medical"]);
+/** How far ahead "somewhere they are about to go" looks on the calendar. */
+const TRIP_AHEAD_MS = 6 * 60 * 60 * 1000;
+const JUDGE_TIMEOUT_MS = 15_000;
+/** How long a quietly kept call stays in Athena's chat prompt. */
+const ELSEWHERE_PROMPT_HOURS = 3;
+
+/**
+ * Where their calendar says they are going soon: timed events with a location
+ * that are under way or start within TRIP_AHEAD_MS, as prompt lines. No
+ * calendar connected is not a failure — there is just nothing to compare.
+ */
+async function upcomingTrips(profileId, now = Date.now()) {
+	const googleCalendar = require("../connectors/googleCalendar");
+	const { isNotConnected } = require("../connectors/http");
+	try {
+		const { events, calendars } = await googleCalendar.collectEvents(profileId, { days: 1 });
+		const zone = googleCalendar.displayTimeZone(calendars);
+		const trips = events
+			.filter((e) => !e.allDay && e.location && e.start)
+			.filter((e) => {
+				const start = new Date(e.start).getTime();
+				const finish = e.end ? new Date(e.end).getTime() : start;
+				return start <= now + TRIP_AHEAD_MS && finish >= now;
+			})
+			.slice(0, 5)
+			.map((e) => googleCalendar.formatEvent(e, zone));
+		return { trips, failed: null };
+	} catch (error) {
+		if (isNotConnected(error)) return { trips: [], failed: null };
+		return { trips: [], failed: `I couldn't read your calendar to check for trips (${error.message})` };
+	}
+}
+
+/** Should an unplaced call interrupt them? Same gate, same router as the rescue. */
+async function judgeWithModel(prompt) {
+	await require("../../security/access").assertModelAccess();
+	const llm = require("../llm");
+	return llm.generateJson({
+		task: "json",
+		contents: [{ role: "user", parts: [{ text: prompt }] }],
+		check: phoneAlerts.checkJudge,
+	});
+}
+
+/**
+ * Tell or keep quietly, and who decided: `rules` (a wreck or medical call with
+ * no trip coming up), `model`, or `failed`. Any lookup that could have changed
+ * the answer and did not come back means TELL, and the wording says the check
+ * failed (owner, 2026-10-12: "fail over to telling me … so I can investigate").
+ */
+async function judgeUnplaced(profileId, parsed, { towns = [], trips: tripsFor = upcomingTrips, judge = judgeWithModel } = {}) {
+	const personal = PERSONAL_CATEGORIES.has(parsed.category);
+	const { trips, failed: tripFailure } = await (tripsFor || upcomingTrips)(profileId);
+	if (personal && !trips.length) {
+		if (tripFailure) return { tell: true, by: "failed", reason: tripFailure };
+		return { tell: false, by: "rules", reason: `a ${parsed.what.toLowerCase()} elsewhere, with no trip coming up` };
+	}
+	let timer;
+	try {
+		const result = await Promise.race([
+			(judge || judgeWithModel)(phoneAlerts.JUDGE_PROMPT({ parsed, towns, trips })),
+			new Promise((_, reject) => {
+				timer = setTimeout(() => reject(new Error("timed out")), JUDGE_TIMEOUT_MS);
+			}),
+		]);
+		const answer = result?.data;
+		if (phoneAlerts.checkJudge(answer) !== true) throw new Error("no usable answer");
+		const reason = answer.reason.trim();
+		if (answer.tell) return { tell: true, by: "model", reason };
+		// A "no" made without the calendar might have been a yes with it.
+		if (tripFailure) return { tell: true, by: "failed", reason: tripFailure };
+		return { tell: false, by: "model", reason };
+	} catch (error) {
+		console.warn("[phone-alert] could not judge an unplaced call:", error.message);
+		return { tell: true, by: "failed", reason: `my check of whether it affects you failed (${error.message})` };
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+/** Keep the decision, told or not. INSERT IGNORE: a repost of the same call is one row. */
+async function recordElsewhere(profileId, id, parsed, decision) {
+	const [result] = await pool.query(
+		`INSERT IGNORE INTO athena_incident_elsewhere
+			(profile_id, incident_id, what, category, address, text, told, decided_by, reason)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		[
+			profileId,
+			id,
+			String(parsed.what).slice(0, 100),
+			parsed.category || null,
+			parsed.address ? parsed.address.slice(0, 200) : null,
+			parsed.text.slice(0, 300),
+			decision.tell ? 1 : 0,
+			decision.by,
+			decision.reason ? decision.reason.slice(0, 300) : null,
+		]
+	);
+	return result.affectedRows > 0;
+}
+
+/** Unplaced calls kept quietly in the last few hours, newest first. Never throws. */
+async function recentElsewhere(profileId, hours = ELSEWHERE_PROMPT_HOURS) {
+	try {
+		const [rows] = await pool.query(
+			`SELECT what, address, reason, TIMESTAMPDIFF(MINUTE, created_at, NOW()) AS minutes
+			 FROM athena_incident_elsewhere
+			 WHERE profile_id = ? AND told = 0 AND created_at > NOW() - INTERVAL ? HOUR
+			 ORDER BY created_at DESC LIMIT 8`,
+			[profileId, hours]
+		);
+		return rows || [];
+	} catch {
+		return [];
+	}
+}
+
+/**
+ * A call PulsePoint reported that cannot be put on a map: no address in the
+ * text, or one the geocoder could not find (or did not answer for). Nobody can
+ * say how close it is, and nearly all of them are elsewhere in the county, so
+ * it is judged (judgeUnplaced) rather than told by reflex: told in words, with
+ * no distance and no pin, when it could reach them; otherwise kept quietly in
+ * athena_incident_elsewhere, where chat can still mention it. Not added to the
+ * situation: the board and map only hold calls with a real position.
+ */
+async function tellUnplaced(profileId, parsed, { places, postedAt, why, towns = [], trips, judge }) {
 	const at = postedAt ? new Date(postedAt) : new Date();
 	const hour = Number.isNaN(at.getTime()) ? new Date().toISOString().slice(0, 13) : at.toISOString().slice(0, 13);
 	const id = `pu:${createHash("sha1").update(`${parsed.text}|${hour}`).digest("hex").slice(0, 16)}`;
+	const decision = await judgeUnplaced(profileId, parsed, { towns, trips, judge });
+	let kept = false;
+	try {
+		kept = await recordElsewhere(profileId, id, parsed, decision);
+	} catch (error) {
+		console.warn("[phone-alert] could not record an unplaced call:", error.message);
+		// Nowhere to keep it quietly means it would simply be lost: tell instead.
+		if (!decision.tell) {
+			Object.assign(decision, { tell: true, by: "failed", reason: `I couldn't save it quietly (${error.message})` });
+		}
+	}
+	const base = { unplaced: why, what: parsed.what, address: parsed.address || null, decidedBy: decision.by, reason: decision.reason };
+	if (!decision.tell) return { ...base, told: false, kept, pushed: { sent: 0, skipped: "kept quietly" } };
+
 	const where = parsed.address ? ` at ${parsed.address}` : "";
+	const said = parsed.text.slice(0, 200);
+	const reason = decision.reason.replace(/[.\s]+$/, "");
+	const text =
+		decision.by === "failed"
+			? `PulsePoint: ${parsed.what}${where}. I couldn't place it on a map, and ${reason} — so I'm telling you in case it matters. "${said}"`
+			: `PulsePoint: ${parsed.what}${where}. I couldn't place it on a map, but it may affect you: ${reason}. "${said}"`;
 	const told = await tell(profileId, {
 		dedupeKey: `ph:${id}`,
-		text: `PulsePoint: ${parsed.what}${where}. I couldn't place it on a map, so I can't tell how close it is — "${parsed.text.slice(0, 200)}"`,
+		text,
 		urgent: !!parsed.serious,
 		facts: {
 			source: "pulsepoint-app",
@@ -910,9 +1057,11 @@ async function tellUnplaced(profileId, parsed, { places, postedAt, why }) {
 			what: parsed.what,
 			address: parsed.address || null,
 			places: publicPlaces(places),
+			decidedBy: decision.by,
+			reason: decision.reason,
 		},
 	});
-	return { told: told.written, unplaced: why, what: parsed.what, address: parsed.address || null, pushed: told.pushed };
+	return { ...base, told: told.written, pushed: told.pushed };
 }
 
 /**
@@ -924,7 +1073,7 @@ async function tellUnplaced(profileId, parsed, { places, postedAt, why }) {
  * Returns why it was ignored rather than throwing: the phone forwards whatever
  * it sees, and most of it will not be for us.
  */
-async function recordPhoneAlert(profileId, { title, text, postedAt, generate, suggest } = {}) {
+async function recordPhoneAlert(profileId, { title, text, postedAt, generate, suggest, judge, trips } = {}) {
 	const places = await placesFor(profileId);
 	if (!places.length) return { ignored: "no watched places" };
 	// Towns for the geocoder, since dispatch text rarely names one: where the
@@ -936,9 +1085,10 @@ async function recordPhoneAlert(profileId, { title, text, postedAt, generate, su
 	];
 
 	const parsed = phoneAlerts.parse({ title, text, regions });
-	if (!parsed.ok && parsed.why === "no address") {
-		return tellUnplaced(profileId, parsed, { places, postedAt, why: "no address" });
-	}
+	// What the judge of an unplaced call is told about where they are.
+	const towns = [...new Set(regions.filter((r) => typeof r === "string" && /[A-Za-z]/.test(r)))];
+	const unplaced = (why) => tellUnplaced(profileId, parsed, { places, postedAt, why, towns, trips, judge });
+	if (!parsed.ok && parsed.why === "no address") return unplaced("no address");
 	if (!parsed.ok) return { ignored: parsed.why, text: parsed.text };
 
 	// The first guess that lands inside a ring wins. A street that exists in
@@ -974,7 +1124,7 @@ async function recordPhoneAlert(profileId, { title, text, postedAt, generate, su
 			matches = geo.placesNear(rescued, places, DEFAULT_RADIUS_MILES);
 		}
 	}
-	if (!point) return tellUnplaced(profileId, parsed, { places, postedAt, why: "could not place the address" });
+	if (!point) return unplaced("could not place the address");
 	if (!matches.length) return { ignored: "not near a watched place", what: parsed.what, address: parsed.address };
 
 	const incident = phoneAlerts.incidentFrom(parsed, point, matches[0], postedAt);
@@ -1337,6 +1487,19 @@ async function promptBlock(profileId) {
 			""
 		);
 	}
+	const elsewhere = await recentElsewhere(profileId);
+	if (elsewhere.length) {
+		lines.push(
+			"# Calls elsewhere in the county, not raised with them",
+			"",
+			"PulsePoint calls that could not be placed on a map and did not look like they affect them,",
+			"so they were not interrupted. Mention these only if they ask what is going on, about sirens",
+			"or traffic; say you could not tell exactly where each one is.",
+			"",
+			...elsewhere.map((e) => `- ${e.what}${e.address ? ` — ${e.address}` : ""}, ${e.minutes} min ago${e.reason ? ` (${e.reason})` : ""}`),
+			""
+		);
+	}
 	const alerts = situation.weather || [];
 	if (situation.level === "none" || (!situation.incidents.length && !alerts.length)) {
 		return lines.length ? lines.join("\n") : null;
@@ -1406,6 +1569,7 @@ module.exports = {
 	isDue,
 	rhythmFor,
 	promptBlock,
+	judgeUnplaced,
 	placesFor,
 	listPlaces,
 	savePlace,

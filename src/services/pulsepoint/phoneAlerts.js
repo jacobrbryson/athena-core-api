@@ -139,6 +139,7 @@ function parse({ title, text, region, regions }) {
 			why: "no address",
 			code: callType.id,
 			what: callType.description,
+			category: callType.category,
 			serious: isAlertable(callType.id),
 			text: whole,
 		};
@@ -243,6 +244,45 @@ function checkRescue(answer) {
 }
 
 /**
+ * A call that could not be placed: should it interrupt them? Almost every one
+ * is somewhere else in the county (owner, 2026-10-12: "99.99% of these will be
+ * elsewhere"), so the question is narrow — could it reach the community they
+ * live in, or the road to somewhere they are about to go. The model only
+ * answers yes or no with a reason; what happens on no answer is decided in
+ * code (watch.judgeUnplaced), and it is "tell them".
+ */
+const JUDGE_PROMPT = ({ parsed, towns, trips }) =>
+	"A PulsePoint 911 notification in Iredell County, North Carolina could not be placed on a map, " +
+	"so nobody knows exactly how far it is from this person. Decide whether to interrupt them with it.\n\n" +
+	`Notification: ${JSON.stringify(parsed.text.slice(0, 300))}\n` +
+	`Call type: ${parsed.what}${parsed.category ? ` (${parsed.category})` : ""}\n` +
+	`Address as read: ${parsed.address ? JSON.stringify(parsed.address) : "none given"}\n` +
+	`Where they live and are: ${towns.length ? towns.join("; ") : "unknown"}\n` +
+	(trips.length
+		? `Where they are going in the next few hours (from their calendar):\n${trips.join("\n")}\n`
+		: "Nothing with a location on their calendar in the next few hours.\n") +
+	"\nInterrupt them (tell: true) only when the call could plausibly affect them:\n" +
+	"- it could affect the wider community around their towns: a gas leak, hazardous materials, an " +
+	"explosion, a large or working fire, wires down or a power emergency, a major road closure, or " +
+	"anything at a school, hospital, church or other public building near them; or\n" +
+	"- it is plausibly on or near the route to one of the trips above (a wreck on the interstate " +
+	"they would take counts here).\n" +
+	"A routine traffic collision or medical emergency elsewhere in the county, with no trip that " +
+	"passes it, is NOT a reason. Most calls are not; tell: false is the usual answer. Do not invent " +
+	"details the notification does not give.\n\n" +
+	'Reply as JSON: {"tell": true or false, "reason": "one short sentence they would read, saying why"}';
+
+/** Is a model's judgement the right shape? A string rejects it (the router tries the next tier). */
+function checkJudge(answer) {
+	if (typeof answer?.tell !== "boolean") return "need tell: true or false";
+	const reason = answer.reason;
+	if (typeof reason !== "string" || reason.trim().length < 5 || reason.length > 300) {
+		return "need reason: one sentence of 5-300 characters";
+	}
+	return true;
+}
+
+/**
  * Does a geocoded match belong to this call? It must be in the town the
  * notification names, or — when it names none — in one of the towns or ZIPs
  * we were already guessing. A model cannot move a call across the county.
@@ -316,6 +356,8 @@ module.exports = {
 	RESCUE_PROMPT,
 	checkRescue,
 	acceptRescue,
+	JUDGE_PROMPT,
+	checkJudge,
 	regionsNear,
 	incidentFrom,
 	expired,

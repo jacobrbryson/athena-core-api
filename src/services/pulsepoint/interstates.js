@@ -12,7 +12,8 @@
  * for "how close is this to home", never meant for navigation.
  *
  * Positions are the midpoints of each exit's motorway_junction nodes in
- * OpenStreetMap (© OpenStreetMap contributors, ODbL), fetched 2026-10-09.
+ * OpenStreetMap (© OpenStreetMap contributors, ODbL), fetched 2026-10-09
+ * (I-77 north of mile 65 on 2026-10-12; exit 73 is 73A).
  * Only the stretch through and just around Iredell County is covered; a mile
  * outside it is not placed rather than extrapolated.
  */
@@ -35,6 +36,11 @@ const ROUTES = {
 		[54, 35.84923, -80.85978],
 		[59, 35.91725, -80.8549],
 		[65, 36.00726, -80.83378],
+		// North of Harmony, to Jonesville: Iredell 911 gives miles 65-67 for
+		// Harmony and Union Grove, and those were still "couldn't place it".
+		[73, 36.11903, -80.81416],
+		[79, 36.19538, -80.81155],
+		[82, 36.23876, -80.8176],
 	],
 	40: [
 		[132, 35.72254, -81.20528],

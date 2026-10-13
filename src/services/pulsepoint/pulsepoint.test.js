@@ -408,10 +408,21 @@ describe("recordPhoneAlert (where the phone is, and calls that cannot be placed)
 	// Downtown Statesville, ~8 miles north of home: only "you" covers it.
 	const dinner = { latitude: 35.7826, longitude: -80.8873 };
 
-	function fakeDb({ live = true } = {}) {
+	// Unplaced calls kept or told, as athena_incident_elsewhere rows.
+	let elsewhere = [];
+	const noTrips = async () => ({ trips: [], failed: null });
+	const says = (tell, reason = "it is near their town") => jest.fn().mockResolvedValue({ data: { tell, reason } });
+
+	function fakeDb({ live = true, elsewhereFails = false } = {}) {
 		const nudges = [];
+		elsewhere = [];
 		db.query.mockImplementation(async (sql, params) => {
 			if (/FROM athena_watch_place/.test(sql)) return [[home]];
+			if (/INSERT IGNORE INTO athena_incident_elsewhere/.test(sql)) {
+				if (elsewhereFails) throw new Error("Table 'athena_incident_elsewhere' doesn't exist");
+				elsewhere.push(params);
+				return [{ affectedRows: 1 }];
+			}
 			if (/FROM athena_location_sample/.test(sql)) return [live ? [{ ...dinner, observed_at: new Date() }] : []];
 			if (/INSERT IGNORE INTO athena_nudge/.test(sql)) {
 				nudges.push(params);
@@ -479,6 +490,8 @@ describe("recordPhoneAlert (where the phone is, and calls that cannot be placed)
 			title: "Structure Fire",
 			text: "12 Oak Dr, ALEXANDER",
 			suggest: async () => ({ data: { candidates: [] } }),
+			trips: noTrips,
+			judge: says(true),
 		});
 		expect(out.unplaced).toBe("could not place the address");
 		expect(nudges).toHaveLength(1);
@@ -511,6 +524,8 @@ describe("recordPhoneAlert (where the phone is, and calls that cannot be placed)
 			title: "",
 			text: "Structure Fire • Iredell 911 WAGNER ST & RAMP, TROUTMAN",
 			suggest: async () => ({ data: { candidates: ["100 Wagner St, Mooresville, NC"] } }),
+			trips: noTrips,
+			judge: says(true),
 		});
 		expect(out.unplaced).toBe("could not place the address");
 		expect(nudges).toHaveLength(1);
@@ -522,17 +537,134 @@ describe("recordPhoneAlert (where the phone is, and calls that cannot be placed)
 		expect(phone.checkRescue({ candidates: ["a", "b", "c", "d"] })).not.toBe(true);
 	});
 
-	test("an address nobody can find is still told, without a distance", async () => {
-		const nudges = fakeDb();
-		jest.spyOn(geocode, "regionsAt").mockResolvedValue(["28677"]);
+	// Owner, 2026-10-12: no pushes for unplaced wrecks and medical calls, but
+	// keep a record; tell anything that might reach the community or a trip;
+	// and any failed check means tell, saying it failed.
+	const unplaceable = () => {
+		jest.spyOn(geocode, "regionsAt").mockResolvedValue(["28677", "Statesville, NC"]);
 		jest.spyOn(geocode, "lookup").mockResolvedValue([]);
+	};
+	const noRescue = async () => ({ data: { candidates: [] } });
+
+	test("an unplaced medical call with no trip coming up is kept quietly, without asking a model", async () => {
+		const nudges = fakeDb();
+		unplaceable();
+		const judge = says(true);
 		const out = await watch.recordPhoneAlert(1, {
 			title: "Medical Emergency",
 			text: "9 Nowhere Ln",
-			suggest: async () => { throw new Error("no model"); },
+			suggest: noRescue,
+			trips: noTrips,
+			judge,
 		});
-		expect(out).toMatchObject({ told: true, unplaced: "could not place the address", what: "Medical Emergency" });
-		expect(nudges[0][5]).toMatch(/couldn't place it on a map/);
+		expect(out).toMatchObject({ told: false, kept: true, decidedBy: "rules", unplaced: "could not place the address" });
+		expect(judge).not.toHaveBeenCalled();
+		expect(nudges).toHaveLength(0);
+		// told = 0, decided by the rules.
+		expect(elsewhere).toHaveLength(1);
+		expect(elsewhere[0][2]).toBe("Medical Emergency");
+		expect(elsewhere[0][6]).toBe(0);
+		expect(elsewhere[0][7]).toBe("rules");
+	});
+
+	test("an unplaced wreck is judged against an upcoming trip, and told when it is on the way", async () => {
+		const nudges = fakeDb({ live: false });
+		unplaceable();
+		const judge = says(true, "It is on I-77 north, the way to your 3pm in Elkin.");
+		const trips = async () => ({ trips: ["- Mon 2026-10-12 15:00 — Meeting @ 100 Main St, Elkin, NC"], failed: null });
+		const out = await watch.recordPhoneAlert(1, {
+			title: "",
+			text: "Traffic Collision • Iredell 911 WESTMINSTER DR & HICKORY HWY, STATESVILLE",
+			suggest: noRescue,
+			trips,
+			judge,
+		});
+		expect(judge.mock.calls[0][0]).toMatch(/Elkin/);
+		expect(out).toMatchObject({ told: true, decidedBy: "model" });
+		expect(nudges[0][5]).toMatch(/may affect you: It is on I-77 north, the way to your 3pm in Elkin\. "/);
+	});
+
+	test("a call the model says stays elsewhere is kept quietly", async () => {
+		const nudges = fakeDb({ live: false });
+		unplaceable();
+		const out = await watch.recordPhoneAlert(1, {
+			title: "",
+			text: "Gas Leak • Iredell 911 637 WILLIAMSON RD, MOORESVILLE",
+			suggest: noRescue,
+			trips: noTrips,
+			judge: says(false, "A small leak in Mooresville, far from Troutman."),
+		});
+		expect(out).toMatchObject({ told: false, decidedBy: "model", reason: "A small leak in Mooresville, far from Troutman." });
+		expect(nudges).toHaveLength(0);
+		expect(elsewhere[0][6]).toBe(0);
+	});
+
+	test("when the model check fails it tells them, and says the check failed", async () => {
+		const nudges = fakeDb({ live: false });
+		unplaceable();
+		const out = await watch.recordPhoneAlert(1, {
+			title: "Structure Fire",
+			text: "9 Nowhere Ln",
+			suggest: noRescue,
+			trips: noTrips,
+			judge: async () => { throw new Error("no model"); },
+		});
+		expect(out).toMatchObject({ told: true, decidedBy: "failed" });
+		expect(nudges[0][5]).toMatch(/couldn't place it on a map, and my check of whether it affects you failed \(no model\)/);
+		expect(elsewhere[0][7]).toBe("failed");
+	});
+
+	test("an unreadable calendar means a wreck is told, saying why", async () => {
+		const nudges = fakeDb({ live: false });
+		unplaceable();
+		const out = await watch.recordPhoneAlert(1, {
+			title: "Traffic Collision",
+			text: "9 Nowhere Ln",
+			suggest: noRescue,
+			trips: async () => ({ trips: [], failed: "I couldn't read your calendar to check for trips (500)" }),
+			judge: says(false),
+		});
+		expect(out).toMatchObject({ told: true, decidedBy: "failed" });
+		expect(nudges[0][5]).toMatch(/couldn't read your calendar/);
+	});
+
+	test("a call that cannot be kept quietly is told rather than lost", async () => {
+		const nudges = fakeDb({ live: false, elsewhereFails: true });
+		unplaceable();
+		const out = await watch.recordPhoneAlert(1, {
+			title: "Medical Emergency",
+			text: "9 Nowhere Ln",
+			suggest: noRescue,
+			trips: noTrips,
+		});
+		expect(out).toMatchObject({ told: true, decidedBy: "failed" });
+		expect(nudges[0][5]).toMatch(/couldn't save it quietly/);
+	});
+
+	test("Harmony's stretch of I-77 is placed now, not 'couldn't place it'", async () => {
+		const nudges = fakeDb({ live: false });
+		jest.spyOn(geocode, "regionsAt").mockResolvedValue([]);
+		const out = await watch.recordPhoneAlert(1, { title: "", text: "Traffic Collision • 6600 S I77, HARMONY" });
+		expect(out.ignored).toBe("not near a watched place");
+		expect(nudges).toHaveLength(0);
+	});
+
+	test("the judge's answer shape is checked", () => {
+		expect(phone.checkJudge({ tell: false, reason: "Far away in Harmony." })).toBe(true);
+		expect(phone.checkJudge({ tell: "no", reason: "Far away." })).not.toBe(true);
+		expect(phone.checkJudge({ tell: true })).not.toBe(true);
+	});
+
+	test("chat can still mention a call kept quietly", async () => {
+		db.query.mockImplementation(async (sql) => {
+			if (/FROM athena_incident_elsewhere/.test(sql)) {
+				return [[{ what: "Traffic Collision", address: "6600 S I77, HARMONY", reason: "a traffic collision elsewhere, with no trip coming up", minutes: 12 }]];
+			}
+			return [[]];
+		});
+		const block = await watch.promptBlock(1);
+		expect(block).toMatch(/Calls elsewhere in the county, not raised with them/);
+		expect(block).toMatch(/- Traffic Collision — 6600 S I77, HARMONY, 12 min ago/);
 	});
 
 	test("a reverse-lookup failure falls back to the saved places' towns", async () => {

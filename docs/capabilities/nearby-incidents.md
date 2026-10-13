@@ -27,8 +27,16 @@ sources feed this:
   street still can't be found, I ask a model for other ways to write it (the
   road's other name, a cross street) and use one only if the geocoder finds it
   in the same town; distances placed that way are "about".
-  If I can't put it on a map at all, I still tell you what PulsePoint said —
-  just without a distance.
+  If I can't put it on a map at all, it's almost always somewhere else in the
+  county, so I decide whether it could affect you before I interrupt. A
+  traffic collision or medical call I can't place stays quiet unless something
+  on your calendar in the next six hours, with a location, might take you past
+  it. Anything else (a gas leak, a big fire, wires down, something at a school
+  or hospital) gets a quick model check of whether it could reach your
+  community or your route. If I think it might, I tell you why, without a
+  distance. If any of those checks fails, I tell you anyway and say the check
+  failed. Calls I keep quiet are still recorded, and I can tell you about them
+  if you ask what's going on.
 - **National Weather Service alerts** for each watched place, checked every 15
   minutes (every 5 for an hour after something comes up). A warning that is
   happening now is urgent; a watch is not.
@@ -77,7 +85,9 @@ notify you about the call types you care about. It also has:
 - **A call was on PulsePoint but I said nothing:** it was outside every
   watched radius (three miles of where your phone is, if location is on), its
   call type wasn't one I recognise, or it was a drill, standby or unit move.
-  A call I recognise but can't place still reaches you, marked as unplaced.
+  If I recognise a call but can't place it, I only push it when it might
+  affect you. Ask me "anything going on?" and I'll list the ones I kept quiet
+  from the last three hours.
 - **The weather service can't be read:** I'll tell you once, and I'll say so if
   you ask about the weather.
 
@@ -95,9 +105,14 @@ notify you about the call types you care about. It also has:
 
 ## Under the hood
 
-**Model use:** only the situation assessment (headline, body, level), once per
-change, through the normal access gate; parsing, placing and the floor are
-rules. Background calls are charged to `ATHENA_BACKGROUND_GOOGLE_ID`.
+**Model use:** the situation assessment (headline, body, level), once per
+change; the address rescue; and `watch.judgeUnplaced` (tell / keep quietly,
+with a reason) for an unplaced call that isn't a Vehicle/Medical call with no
+trip coming up. All three go through the normal access gate. Parsing, placing,
+the floor, and "a failed check means tell" are rules. Trips come from
+`googleCalendar.collectEvents` (not connected = no trips, any other error =
+tell). Each unplaced decision is a row in `athena_incident_elsewhere`
+(migration 0063); `promptBlock` lists the quiet ones from the last 3 h. Background calls are charged to `ATHENA_BACKGROUND_GOOGLE_ID`.
 
 - Service: `../../src/services/pulsepoint/` — `watch.js` (situation, telling,
   weather rhythm, banner ack, prompt block), `phoneAlerts.js` (notification text
