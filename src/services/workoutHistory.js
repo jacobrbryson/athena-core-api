@@ -128,7 +128,7 @@ function localDate(startedAt, offset) {
 /** Recorded workouts, newest first, for this profile only. */
 async function list(profileId, { days = 90, sport, limit = 100 } = {}) {
 	const lookback = Math.max(1, Math.min(Number(days) || 90, MAX_DAYS));
-	const cap = Math.max(1, Math.min(Number(limit) || 100, 500));
+	const cap = Math.max(1, Math.min(Number(limit) || 100, 2000));
 	const params = [profileId, new Date(Date.now() - lookback * 86400_000)];
 	let sportClause = "";
 	if (typeof sport === "string" && sport.trim()) {

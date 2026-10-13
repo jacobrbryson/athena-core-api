@@ -129,6 +129,7 @@ module.exports = (clients) => {
 	router.use("/sms", smsRouter);
 	router.use("/memory", memoryRouter);
 	router.use("/attention", require('./attention'));
+	router.use("/workouts", require("./workouts"));
 	router.use("/integrations", integrationRouter);
 	router.use("/", companionRouter);
 

@@ -28,6 +28,12 @@ last month?" has an answer. For each workout I have the sport, when and how
 long, strain, average and peak heart rate, energy burned, and how many minutes
 you spent in each heart-rate zone.
 
+You can see that history yourself on **Health & Performance** → **Workouts**:
+sessions per week or month, time in each heart-rate zone, and each session
+with its time, strain, heart rate and energy. Filter by sport — **Lifting**
+groups weightlifting, Strength Trainer and powerlifting — and by range (3
+months, 6 months, a year, or everything).
+
 That means when you say you're exhausted, I can look rather than sympathise
 blindly: two bad nights and a red recovery is a different conversation from
 feeling flat on a good one.
@@ -89,6 +95,8 @@ the same row deletes the credential.
   `recovery.*`, `sleep.*` and `workout.*` webhooks call
   `whoop.invalidateAccount()` from `src/controllers/whoopWebhook.js`.
 - Health card verdict: `readinessOf()` in `../../../companion/src/components/Dashboard.tsx`.
+- Workouts panel: `GET /api/v1/workouts?days=` (`src/routes/workouts.js`,
+  adult only, own rows, up to 2000) → `../../../companion/src/components/Workouts.tsx`.
 - Workout history: `athena_workout` (migration 0067) via
   `src/services/workoutHistory.js` — upserted from `listWorkouts()`, the signed
   `workout.*` webhook (`fromWebhook` reads the workout back; a 404 sets
