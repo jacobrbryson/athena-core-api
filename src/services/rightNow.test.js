@@ -76,6 +76,12 @@ describe('openWindow', () => {
     expect(w.busyWith).toBe('Standup');
   });
 
+  it('is not closed by a shared calendar outside a workday', () => {
+    const w = rightNow.openWindow([{ title: 'DL246 KFK-KIA Business', start: inMinutes(-60), end: inMinutes(300), allDay: false, calendar: 'Family', shared: true }]);
+    expect(w.busyWith).toBeNull();
+    expect(w.freeMinutes).toBeNull();
+  });
+
   it('is open-ended when nothing is scheduled', () => {
     expect(rightNow.openWindow([]).freeMinutes).toBeNull();
   });
@@ -97,9 +103,13 @@ describe('openWindow', () => {
       expect(w.busyWith).toBeNull();
     });
 
-    it('counts every calendar once the working location has ended', () => {
+    it('counts only their own calendar once the working location has ended', () => {
       const over = { ...location, start: inMinutes(-600), end: inMinutes(-60) };
-      expect(rightNow.openWindow(events, [over]).nextEvent.title).toBe('Docs');
+      const after = [
+        { title: 'Docs', start: inMinutes(30), end: inMinutes(60), allDay: false, calendar: 'Family', shared: true },
+        { title: 'Piano', start: inMinutes(90), end: inMinutes(120), allDay: false, calendar: 'Me', shared: false },
+      ];
+      expect(rightNow.openWindow(after, [over]).nextEvent.title).toBe('Piano');
     });
 
     it('covers the day for an all-day working location', () => {

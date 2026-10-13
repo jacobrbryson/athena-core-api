@@ -18,7 +18,9 @@ one of a different kind underneath it.
 
 While your Working location in Google Calendar covers the moment, "your next
 appointment" means the next one on your work calendar — a family calendar's
-event doesn't end your workday window. An Out of office block never counts as
+event doesn't end your workday window. Outside work, only your own calendar
+counts — a calendar someone shared with you shows what they're doing, so it
+never tells you you're in something. An Out of office block never counts as
 an appointment. During work hours the ticket I suggest is the same one the Work
 banner shows you have in progress, when there is one.
 

@@ -61,12 +61,15 @@ const hoursLabel = (minutes) => {
  *
  * While a Working location covers now, only the calendar it lives on — the
  * work calendar — bounds the window, the same rule the Work banner uses: a
- * family calendar's "Docs" at 2pm is not what a workday is waiting on. An Out
- * of office block is never a commitment.
+ * family calendar's "Docs" at 2pm is not what a workday is waiting on. Outside
+ * one, only their own (primary) calendar does: a shared calendar records what
+ * someone else is doing, and "You're in DL246" from one was wrong (owner,
+ * 2026-10-12). An Out of office block is never a commitment.
  */
 function openWindow(events = [], workingLocations = [], timeZone = "UTC") {
 	const work = workCalendar(workingLocations, timeZone);
-	const timed = events.filter((e) => !e.allDay && e.eventType !== "outOfOffice" && (!work || !e.calendar || e.calendar === work));
+	const mine = (e) => (work ? !e.calendar || e.calendar === work : !e.shared);
+	const timed = events.filter((e) => !e.allDay && e.eventType !== "outOfOffice" && mine(e));
 	const running = timed.find((e) => {
 		const start = Date.parse(e.start);
 		const end = Date.parse(e.end || e.start);
