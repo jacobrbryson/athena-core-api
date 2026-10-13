@@ -4,7 +4,8 @@ const pool = require('../helpers/db');
 const { runOnce } = require('../services/attention/worker');
 
 async function main() {
-  // Bounded invocation; run every minute using the deployment's scheduler.
+  // Manual catch-up only: there is no scheduler (owner, 2026-10-13) — the
+  // WHOOP webhook and the attention routes drain the inbox via runFor().
   // Limits defer work in the durable inbox rather than discard events.
   const report = await runOnce();
   console.log('[attention]', JSON.stringify(report));

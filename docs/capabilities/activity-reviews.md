@@ -36,8 +36,11 @@ it off. Pausing with the switch keeps saved reviews but stops processing.
 
 ## When it doesn't work
 
-- **No completed check yet:** deployment needs the activity worker scheduled and
-  the database migration applied. Enabling the switch alone does not run it.
+- **No completed check yet:** I review an activity when WHOOP tells me about
+  it, and when you turn the switch on, press Recheck, or correct a review —
+  a few activities at a time. Anything left waits for the next of those; there
+  is no background timer, so on a day with no new WHOOP workout a queue can
+  sit until you press Recheck.
 - **An update is waiting:** a source or model failed. Work stays queued and is
   retried; a server restart does not erase it.
 - **Connect Google Calendar:** this first version requires both connections and
@@ -50,10 +53,9 @@ it off. Pausing with the switch keeps saved reviews but stops processing.
 ## Limits
 
 - I cannot edit WHOOP. My interpretation is stored only in Athena.
-- This implementation needs deployment, migration, webhook registration and a
-  scheduled worker before it can run against live accounts; live acceptance is pending.
-- Hourly catch-up covers the last seven days, with pagination. Older activities
-  are processed if WHOOP sends their webhook, but this is not a full-history sync.
+- Catch-up covers the last seven days, with pagination, and runs alongside a
+  webhook or a Recheck rather than on a schedule. Older activities are processed
+  if WHOOP sends their webhook, but this is not a full-history sync.
 - Recent known activities are also revisited to notice source removals and changed
   calendar context. Results are timestamped snapshots, not continuous proof.
 - Context includes up to fifty ranked facts and thirty recent correction records.
@@ -72,7 +74,11 @@ it off. Pausing with the switch keeps saved reviews but stops processing.
 - Storage and lease fencing: `src/services/attention/store.js`.
 - Generic interpretation contract: `src/services/attention/interpret.js`.
 - WHOOP source/context: `src/services/attention/whoop.js`.
-- Worker: `src/services/attention/worker.js`, `src/jobs/attention.js`.
+- Worker: `src/services/attention/worker.js`. No scheduled job (owner,
+  2026-10-13): `runFor({ accountId })` runs from the workout webhook and
+  `runFor({ profileId })` from the enable/recheck/feedback routes, 5 events per
+  call. `src/jobs/attention.js` (`runOnce`, every due watch) is kept for manual
+  catch-up only.
 - API and chat grounding: `src/services/attention/index.js`, `src/routes/attention.js`.
 - UI: `../../../companion/src/components/WhoopActivityReviews.tsx`.
 - Migration: `db/migrations/0036_attention.up.sql`.

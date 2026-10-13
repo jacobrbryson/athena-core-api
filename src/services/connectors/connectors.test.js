@@ -849,6 +849,7 @@ describe("context aggregation", () => {
 			"get_whoop_recovery",
 			"get_whoop_sleep",
 			"get_whoop_strain",
+			"get_workout_history",
 		]);
 	});
 

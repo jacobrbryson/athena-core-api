@@ -29,7 +29,7 @@ const BUCKET_MS = 6 * 3_600_000;
 const COLLECTION_READ = { invalidateOnAuthFailure: false };
 
 const KEYWORDS =
-	/\b(whoop|workouts?|activity reviews?|recovery|recovered|strain|sleep|slept|sleeping|hrv|heart rate variability|resting heart rate|rhr|respiratory rate|readiness|rested|tired|fatigue)\b/i;
+	/\b(whoop|workouts?|lift(?:s|ed|ing)?|weightlifting|gym|activity reviews?|recovery|recovered|strain|sleep|slept|sleeping|hrv|heart rate variability|resting heart rate|rhr|respiratory rate|readiness|rested|tired|fatigue)\b/i;
 
 function matches(message) {
 	return typeof message === "string" && KEYWORDS.test(message);
@@ -103,7 +103,12 @@ async function listWorkouts(profileId, { days = 7, limit } = {}) {
 		...COLLECTION_READ,
 		query: { start: since(days), limit: limitOf(limit) },
 	});
-	return (data?.records || []).map(normalizeWorkout);
+	const workouts = (data?.records || []).map(normalizeWorkout);
+	// Everything read is also history (athena_workout) — a failed write must not
+	// cost the conversation its answer.
+	await require("../workoutHistory").record(profileId, workouts).catch((err) =>
+		console.error("[whoop] workout history write failed:", err.message));
+	return workouts;
 }
 
 function normalizeWorkout(r) {
@@ -118,6 +123,14 @@ function normalizeWorkout(r) {
 		average_heart_rate: r.score?.average_heart_rate ?? null,
 		max_heart_rate: r.score?.max_heart_rate ?? null,
 		kilojoules: r.score?.kilojoule ?? null,
+		percent_recorded: r.score?.percent_recorded ?? null,
+		distance_meter: r.score?.distance_meter ?? null,
+		altitude_gain_meter: r.score?.altitude_gain_meter ?? null,
+		altitude_change_meter: r.score?.altitude_change_meter ?? null,
+		// Milliseconds in each heart-rate zone — for lifting, the most telling
+		// thing WHOOP reports (it has no sets, reps or weights).
+		zone_durations: r.score?.zone_durations ?? null,
+		sport_id: Number.isSafeInteger(r.sport_id) ? r.sport_id : null,
 	};
 }
 
@@ -273,6 +286,27 @@ const FUNCTION_DECLARATIONS = [
 			},
 		},
 	},
+	{
+		name: "get_workout_history",
+		description:
+			"Workouts Athena has recorded from Whoop over months, newest first: sport, " +
+			"duration, strain, average/max heart rate, kJ and minutes in each heart-rate " +
+			'zone. Use for "how often have I lifted", "my workouts since June", or ' +
+			"trends longer than a week. Whoop does not report exercises, sets, reps or weight.",
+		parameters: {
+			type: "OBJECT",
+			properties: {
+				days: {
+					type: "NUMBER",
+					description: "How many days back to look. Default 90, maximum 3650.",
+				},
+				sport: {
+					type: "STRING",
+					description: 'Optional sport name filter, e.g. "weightlifting" or "running".',
+				},
+			},
+		},
+	},
 ];
 
 async function executeTool(name, args = {}, { profileId }) {
@@ -288,6 +322,9 @@ async function executeTool(name, args = {}, { profileId }) {
 			listCycles(profileId, { days: args.days }),
 		]);
 		return { workouts, daily: cycles };
+	}
+	if (name === "get_workout_history") {
+		return { workouts: await require("../workoutHistory").list(profileId, { days: args.days, sport: args.sport }) };
 	}
 	throw new Error(`Unknown Whoop tool: ${name}`);
 }

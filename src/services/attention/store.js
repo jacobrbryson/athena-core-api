@@ -61,6 +61,13 @@ async function dueWatches(limit = 20) {
   return rows;
 }
 
+async function watchesFor({ accountId, profileId } = {}) {
+  if (accountId === undefined && profileId === undefined) return [];
+  const [rows] = await pool.query(`SELECT * FROM attention_watch WHERE enabled = 1 AND source = 'whoop_workout'
+    AND ${accountId !== undefined ? 'external_account_id = ?' : 'profile_id = ?'}`, [accountId !== undefined ? String(accountId) : profileId]);
+  return rows;
+}
+
 async function claim(w) {
   const token = randomUUID();
   const [r] = await pool.query(`UPDATE attention_watch SET lease_token = ?, lease_until = DATE_ADD(NOW(3), INTERVAL 5 MINUTE)
@@ -201,5 +208,5 @@ async function recheck(w) {
   });
 }
 
-module.exports = { hash, parse, watch, configure, enqueue, receive, dueWatches, claim, nextEvent,
+module.exports = { hash, parse, watch, configure, enqueue, receive, dueWatches, watchesFor, claim, nextEvent,
   latest, records, corrections, complete, retry, syncPage, release, feedback, forget, queueStatus, recheck };

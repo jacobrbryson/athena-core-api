@@ -2,7 +2,7 @@ jest.mock('../../helpers/db', () => ({ query: jest.fn() }));
 jest.mock('../../security/access', () => ({ assertModelAccess: jest.fn(), context: { run: jest.fn((_ctx, fn) => fn()) } }));
 jest.mock('./store', () => ({
   hash: value => JSON.stringify(value), latest: jest.fn(), complete: jest.fn(),
-  dueWatches: jest.fn(), claim: jest.fn(), nextEvent: jest.fn(), retry: jest.fn(), syncPage: jest.fn(), release: jest.fn(),
+  dueWatches: jest.fn(), watchesFor: jest.fn(), claim: jest.fn(), nextEvent: jest.fn(), retry: jest.fn(), syncPage: jest.fn(), release: jest.fn(),
 }));
 jest.mock('./interpret', () => ({ VERSION: 'test', interpret: jest.fn() }));
 jest.mock('./whoop', () => ({ authorize: jest.fn(), observe: jest.fn(), context: jest.fn(), sync: jest.fn() }));
@@ -11,7 +11,7 @@ const access = require('../../security/access');
 const store = require('./store');
 const interpreter = require('./interpret');
 const source = require('./whoop');
-const { processEvent, runOnce } = require('./worker');
+const { processEvent, runOnce, runFor } = require('./worker');
 const w = { id: 1, profile_id: 42, source: 'whoop_workout', enabled: 1, next_sync_at: new Date(Date.now() + 86400000), lease_token: 'lease' };
 const event = { id: 2, resource_id: 'workout-1', event_type: 'workout.updated', attempts: 1 };
 const observation = { id: 'workout-1', state: 'present', label: 'Ultimate frisbee' };
@@ -85,4 +85,21 @@ test('missing/revoked access never falls through to the background owner identit
   await runOnce();
   expect(access.context.run).toHaveBeenCalledWith({ identity: null }, expect.any(Function));
   expect(source.observe).not.toHaveBeenCalled(); expect(interpreter.interpret).not.toHaveBeenCalled();
+});
+
+test('runFor drains only the watches for that account, bounded per call', async () => {
+  store.watchesFor.mockResolvedValue([w]);
+  store.claim.mockResolvedValue(w);
+  store.nextEvent.mockResolvedValue(event);
+  const report = await runFor({ accountId: '9012' }, { eventLimit: 2 });
+  expect(store.watchesFor).toHaveBeenCalledWith({ accountId: '9012', profileId: undefined });
+  expect(store.dueWatches).not.toHaveBeenCalled();
+  expect(report).toMatchObject({ watches: 1, processed: 2 });
+  expect(store.release).toHaveBeenCalledWith(w, null);
+});
+test('runFor leaves a watch another request has leased alone', async () => {
+  store.watchesFor.mockResolvedValue([w]);
+  store.claim.mockResolvedValue(null);
+  expect(await runFor({ profileId: 42 })).toMatchObject({ watches: 0, processed: 0 });
+  expect(store.nextEvent).not.toHaveBeenCalled();
 });

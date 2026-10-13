@@ -4,6 +4,7 @@ jest.mock('../consent', () => ({ hasConsentForProfile: jest.fn() }));
 jest.mock('../audience', () => ({ audienceForProfile: jest.fn() }));
 jest.mock('../connectors/whoop', () => ({ getWorkout: jest.fn(), getProfile: jest.fn(), workoutPage: jest.fn() }));
 jest.mock('../connectors/googleCalendar', () => ({ eventsInInterval: jest.fn() }));
+jest.mock('../workoutHistory', () => ({ record: jest.fn().mockResolvedValue(0) }));
 jest.mock('./store', () => ({ hash: v => JSON.stringify(v), parse: v => v, corrections: jest.fn() }));
 const pool = require('../../helpers/db');
 const credentials = require('../credentials');

@@ -1,10 +1,14 @@
 jest.mock('../services/secrets', () => ({ getSecret: jest.fn() }));
 jest.mock('../services/attention/store', () => ({ receive: jest.fn() }));
 jest.mock('../services/connectors/whoop', () => ({ invalidateAccount: jest.fn() }));
+jest.mock('../services/workoutHistory', () => ({ fromWebhook: jest.fn() }));
+jest.mock('../services/attention/worker', () => ({ runFor: jest.fn() }));
 const crypto = require('node:crypto');
 const secrets = require('../services/secrets');
 const store = require('../services/attention/store');
 const whoop = require('../services/connectors/whoop');
+const workoutHistory = require('../services/workoutHistory');
+const attentionWorker = require('../services/attention/worker');
 const { validSignature, receive } = require('./whoopWebhook');
 
 const SECRET = 'test-only-webhook-secret';
@@ -20,7 +24,7 @@ function response() {
   for (const method of ['set', 'status', 'json', 'end']) res[method] = jest.fn(() => res);
   return res;
 }
-beforeEach(() => { jest.clearAllMocks(); secrets.getSecret.mockResolvedValue(SECRET); store.receive.mockResolvedValue(); whoop.invalidateAccount.mockResolvedValue(1); });
+beforeEach(() => { jest.clearAllMocks(); secrets.getSecret.mockResolvedValue(SECRET); store.receive.mockResolvedValue(); whoop.invalidateAccount.mockResolvedValue(1); workoutHistory.fromWebhook.mockResolvedValue(1); attentionWorker.runFor.mockResolvedValue({}); });
 
 test('signature covers exact bytes and timestamp; changed bytes, stale time and missing secrets fail closed', () => {
   const ts = String(Date.now()), raw = Buffer.from('{ "x": 1 }');
@@ -77,4 +81,25 @@ test('unknown signed event is acknowledged and touches nothing', async () => {
   const res = response(); await receive(request({ ...payload, type: 'body_measurement.updated' }), res);
   expect(res.status).toHaveBeenCalledWith(204);
   expect(store.receive).not.toHaveBeenCalled(); expect(whoop.invalidateAccount).not.toHaveBeenCalled();
+});
+
+test('workout events are recorded to history by the signed account; recovery events are not', async () => {
+  const res = response(); await receive(request(), res);
+  expect(workoutHistory.fromWebhook).toHaveBeenCalledWith(42, payload.id);
+  expect(res.status).toHaveBeenCalledWith(204);
+  workoutHistory.fromWebhook.mockClear();
+  await receive(request({ ...payload, type: 'recovery.updated' }), response());
+  expect(workoutHistory.fromWebhook).not.toHaveBeenCalled();
+});
+
+test('workout webhooks drive activity reviews for the signed account; a review failure still acknowledges', async () => {
+  const error = jest.spyOn(console, 'error').mockImplementation(() => {});
+  attentionWorker.runFor.mockRejectedValue(new Error('lease db down'));
+  const res = response(); await receive(request(), res);
+  expect(attentionWorker.runFor).toHaveBeenCalledWith({ accountId: '42' });
+  expect(res.status).toHaveBeenCalledWith(204);
+  attentionWorker.runFor.mockClear();
+  await receive(request({ ...payload, type: 'sleep.updated' }), response());
+  expect(attentionWorker.runFor).not.toHaveBeenCalled();
+  error.mockRestore();
 });

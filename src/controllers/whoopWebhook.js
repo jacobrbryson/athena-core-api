@@ -2,6 +2,8 @@ const crypto = require('node:crypto');
 const secrets = require('../services/secrets');
 const store = require('../services/attention/store');
 const whoop = require('../services/connectors/whoop');
+const workoutHistory = require('../services/workoutHistory');
+const attentionWorker = require('../services/attention/worker');
 
 // Recovery and sleep only refresh the cache; workouts also feed activity reviews.
 const KNOWN = new Set(['workout.updated', 'workout.deleted', 'recovery.updated', 'recovery.deleted', 'sleep.updated', 'sleep.deleted']);
@@ -41,9 +43,19 @@ async function receive(req, res) {
       await store.receive(String(payload.user_id), {
         key: ['webhook', payload.trace_id, payload.type, payload.id.toLowerCase()], resourceId: payload.id.toLowerCase(), type: payload.type,
       });
+      // History is best-effort (it logs its own failures): a WHOOP outage must
+      // not turn into retries of an inbox write that already committed.
+      await workoutHistory.fromWebhook(payload.user_id, payload.id.toLowerCase());
+      // There is no scheduled worker: the webhook itself reviews the activity.
+      // The event is already durable, so a failure here waits for the next
+      // delivery instead of asking WHOOP to resend this one.
+      await attentionWorker.runFor({ accountId: String(payload.user_id) })
+        .catch(error => console.error('[whoop webhook] activity review failed', { code: error?.code || null, message: error?.message }));
     }
     return res.status(204).end(); // only after the inbox transaction committed
-  } catch {
+  } catch (error) {
+    // Logged because a silent catch hid a collation error here for two weeks.
+    console.error('[whoop webhook] failed', { code: error?.code || null, message: error?.message });
     return res.status(503).json({ message: 'Webhook could not be persisted; retry delivery' });
   }
 }

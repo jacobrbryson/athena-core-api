@@ -6,7 +6,7 @@ where: the ⋯ menu (top right) → Connected apps → Whoop → Connect
 status: live
 surfaces: [companion]
 audiences: [adult]
-triggers: [whoop, recovery, recovered, strain, sleep, slept, hrv, heart rate variability, resting heart rate, readiness, rested, tired, fatigue]
+triggers: [whoop, workout, workouts, lifting, weightlifting, gym, recovery, recovered, strain, sleep, slept, hrv, heart rate variability, resting heart rate, readiness, rested, tired, fatigue]
 ---
 
 ## What I can do
@@ -14,12 +14,19 @@ triggers: [whoop, recovery, recovered, strain, sleep, slept, hrv, heart rate var
 For activity labels that do not match real life, **Activity reviews** in the
 Whoop row can compare workouts with calendar entries and memories. You can
 inspect and correct my interpretation; WHOOP itself stays unchanged. This
-separate opt-in requires the activity worker to be deployed. See
+separate opt-in runs whenever Whoop reports a workout. See
 [activity-reviews.md](activity-reviews.md).
 
 With Whoop connected I can see roughly the last week of your recovery scores,
 daily strain, sleep, and the numbers underneath them — HRV, resting heart rate,
 how long you actually slept versus how long you needed.
+
+I also keep a history of your Whoop workouts — every session from the day it
+was recorded, kept even after Whoop's own one-week window has scrolled past —
+so "how often have I lifted since summer?" or "how hard were my gym sessions
+last month?" has an answer. For each workout I have the sport, when and how
+long, strain, average and peak heart rate, energy burned, and how many minutes
+you spent in each heart-rate zone.
 
 That means when you say you're exhausted, I can look rather than sympathise
 blindly: two bad nights and a red recovery is a different conversation from
@@ -51,7 +58,14 @@ the same row deletes the credential.
 ## Limits
 
 - Read-only, and I can't set anything or log a workout.
-- About a week back, not months of history or long-term trends.
+- Recovery and sleep go about a week back. Workouts go back as far as I've
+  recorded them, but only for an adult whose family has agreed to share health
+  data with me.
+- Whoop tells me nothing about what happened inside a lifting session: no
+  exercises, sets, reps or weights. I see the heart-rate side only — strain,
+  heart rate and time in each zone.
+- Disconnecting Whoop stops new workouts being recorded; the history already
+  kept stays, and there is no button to clear it yet.
 - I'm not a doctor and this isn't medical advice — it's your own data, read
   back to you.
 - One Whoop account.
@@ -75,4 +89,11 @@ the same row deletes the credential.
   `recovery.*`, `sleep.*` and `workout.*` webhooks call
   `whoop.invalidateAccount()` from `src/controllers/whoopWebhook.js`.
 - Health card verdict: `readinessOf()` in `../../../companion/src/components/Dashboard.tsx`.
-- Tests: `src/services/connectors/connectors.test.js`.
+- Workout history: `athena_workout` (migration 0067) via
+  `src/services/workoutHistory.js` — upserted from `listWorkouts()`, the signed
+  `workout.*` webhook (`fromWebhook` reads the workout back; a 404 sets
+  `deleted_at`), and the activity-review sync page. Gated on adult +
+  `health_data` consent. Tool `get_workout_history` (days ≤ 3650, sport
+  filter). Backfill: `node scripts/backfillWorkouts.js <profileId> [--dry-run]`.
+- Tests: `src/services/connectors/connectors.test.js`,
+  `src/services/workoutHistory.test.js`, `src/controllers/whoopWebhook.test.js`.

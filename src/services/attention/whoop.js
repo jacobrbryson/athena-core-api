@@ -85,6 +85,9 @@ async function sync(w) {
   const page = await whoop.workoutPage(w.profile_id, state);
   if (page.nextToken && page.nextToken === state.nextToken) throw unavailable('source_pagination_stalled');
   if (page.records.some(r => String(r.user_id) !== w.external_account_id || !/^[a-f0-9-]{36}$/i.test(r.id))) throw unavailable('source_identity_mismatch');
+  // The page is already read, so it is history too; that write is best-effort.
+  await require('../workoutHistory').record(w.profile_id, page.records)
+    .catch(error => console.error('[attention] workout history write failed:', error.message));
   const entries = page.records.map(r => ({ key: ['sync', state.round, r.id], resourceId: r.id, type: 'reconcile' }));
   if (!page.nextToken) {
     // Revisit known resources too, so a deleted activity need not remain

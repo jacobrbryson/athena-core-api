@@ -43,41 +43,57 @@ function errorCode(error) {
   return known.includes(error?.code) ? error.code : 'processing_failed';
 }
 
+async function runWatch(candidate, { eventLimit }, report) {
+  const w = await store.claim(candidate);
+  if (!w) return; // another request holds the lease and is draining this inbox
+  report.watches++;
+  let failure = null;
+  try {
+    const [profiles] = await pool.query('SELECT google_id FROM profile WHERE id = ?', [w.profile_id]);
+    const identity = profiles[0]?.google_id ? { google_id: profiles[0].google_id } : null;
+    await access.context.run({ identity }, async () => {
+      await access.assertModelAccess();
+      const source = sources[w.source];
+      if (!source) throw new Error('Unsupported attention source');
+      await source.authorize(w);
+      if (new Date(w.next_sync_at).getTime() <= Date.now()) {
+        const { entries, nextState } = await source.sync(w);
+        await source.authorize(w);
+        await store.syncPage(w, entries, nextState);
+      }
+      for (let i = 0; i < eventLimit; i++) {
+        const event = await store.nextEvent(w);
+        if (!event) break;
+        try { await processEvent(w, event, source); report.processed++; }
+        catch (error) {
+          if (error.code === 'lease_lost') throw error;
+          await store.retry(w, event, errorCode(error));
+          report.retried++;
+        }
+      }
+    });
+  } catch (error) { failure = errorCode(error); report.failed++; }
+  finally { await store.release(w, failure); }
+}
+
 async function runOnce({ watchLimit = 20, eventLimit = 20 } = {}) {
   const report = { watches: 0, processed: 0, retried: 0, failed: 0 };
-  for (const candidate of await store.dueWatches(watchLimit)) {
-    const w = await store.claim(candidate);
-    if (!w) continue;
-    report.watches++;
-    let failure = null;
-    try {
-      const [profiles] = await pool.query('SELECT google_id FROM profile WHERE id = ?', [w.profile_id]);
-      const identity = profiles[0]?.google_id ? { google_id: profiles[0].google_id } : null;
-      await access.context.run({ identity }, async () => {
-        await access.assertModelAccess();
-        const source = sources[w.source];
-        if (!source) throw new Error('Unsupported attention source');
-        await source.authorize(w);
-        if (new Date(w.next_sync_at).getTime() <= Date.now()) {
-          const { entries, nextState } = await source.sync(w);
-          await source.authorize(w);
-          await store.syncPage(w, entries, nextState);
-        }
-        for (let i = 0; i < eventLimit; i++) {
-          const event = await store.nextEvent(w);
-          if (!event) break;
-          try { await processEvent(w, event, source); report.processed++; }
-          catch (error) {
-            if (error.code === 'lease_lost') throw error;
-            await store.retry(w, event, errorCode(error));
-            report.retried++;
-          }
-        }
-      });
-    } catch (error) { failure = errorCode(error); report.failed++; }
-    finally { await store.release(w, failure); }
-  }
+  for (const candidate of await store.dueWatches(watchLimit)) await runWatch(candidate, { eventLimit }, report);
   return report;
 }
 
-module.exports = { processEvent, runOnce, errorCode };
+/**
+ * Drain the watches for one WHOOP account (a signed webhook) or one profile
+ * (the person toggled, rechecked or corrected) — there is no scheduled worker
+ * (owner, 2026-10-13: "ideally the webhook is enough"). Bounded, so a request
+ * never waits on a whole backlog: what is left stays durable in the inbox and
+ * the next webhook or kick picks it up.
+ */
+async function runFor({ accountId, profileId }, { eventLimit = 5 } = {}) {
+  const report = { watches: 0, processed: 0, retried: 0, failed: 0 };
+  for (const candidate of await store.watchesFor({ accountId, profileId })) await runWatch(candidate, { eventLimit }, report);
+  if (report.failed || report.retried) console.error('[attention] run incomplete', JSON.stringify(report));
+  return report;
+}
+
+module.exports = { processEvent, runOnce, runFor, errorCode };

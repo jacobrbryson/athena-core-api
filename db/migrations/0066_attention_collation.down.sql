@@ -1,0 +1,3 @@
+ALTER TABLE attention_watch CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+ALTER TABLE attention_event CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+ALTER TABLE attention_record CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
