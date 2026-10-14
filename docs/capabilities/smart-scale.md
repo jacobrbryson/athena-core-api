@@ -38,8 +38,9 @@ red or green on these numbers, because that's your call.
 ## Where to find it
 
 Companion dashboard → **Health**. Your weight and body fat sit on the Health
-card. The Health page has **Body composition**, **Weight** and **Body fat**
-panels, and a Weight tile at the top. **Calibrate with a lab result** under
+card. On the Health page, the **Progress** card has **Weight** and **Body Fat**
+tabs (with body fat, lean mass and your target weight beside the chart), and
+the **Body composition** panel is further down, under The detail. **Calibrate with a lab result** under
 Body composition opens the form for a reference, and lists the ones you've
 entered with a Remove button each.
 

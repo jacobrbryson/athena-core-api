@@ -11,6 +11,9 @@ router.use(requireAuth);
 
 router.get('/', c.list);
 router.post('/', json, c.create);
+router.get('/property', require('../controllers/properties').list);
+router.get('/property/weather', require('../controllers/properties').weather);
+router.put('/property', express.json({ limit: '4mb' }), require('../controllers/properties').save);
 
 router.post('/concerns', json, c.createConcern);
 router.patch('/concerns/:uuid', json, c.updateConcern);

@@ -1,0 +1,49 @@
+const { requireAdultActor } = require("../helpers/actor");
+const healthPlan = require("../services/healthPlan");
+
+/**
+ * The Health page's plan: training program, nutrition targets and food log.
+ * Adult-only; every call reads or writes the caller's own rows.
+ */
+
+function failed(res, err, what) {
+	if (err.code === "ER_NO_SUCH_TABLE") return res.status(503).json({ success: false, message: "Training and nutrition aren't set up on this server yet." });
+	if (err.status) return res.status(err.status).json({ success: false, message: err.message });
+	console.error(`[healthPlan] ${what} failed:`, err.message);
+	return res.status(500).json({ success: false, message: `Could not ${what}.` });
+}
+
+/** Wraps a handler: no-store, adult actor resolved, errors mapped. */
+const handler = (what, fn) => async (req, res) => {
+	res.set("Cache-Control", "no-store");
+	const actor = await requireAdultActor(req, res);
+	if (!actor) return;
+	try {
+		return await fn(actor.profileId, req, res);
+	} catch (err) {
+		return failed(res, err, what);
+	}
+};
+
+module.exports = {
+	overview: handler("load your plan", async (profileId, req, res) => res.json(await healthPlan.overview(profileId, { today: req.query.today }))),
+	saveProgram: handler("save that program", async (profileId, req, res) => {
+		await healthPlan.saveProgram(profileId, req.body || {});
+		return res.status(201).json({ program: await healthPlan.program(profileId, { today: req.body?.today }) });
+	}),
+	endProgram: handler("end that program", async (profileId, req, res) => res.json({ ended: await healthPlan.endProgram(profileId) })),
+	markSession: handler("mark that session", async (profileId, req, res) => {
+		const status = req.body?.status === undefined ? null : req.body.status;
+		if (!(await healthPlan.markSession(profileId, req.params.uuid, { date: req.body?.date, status }))) return res.status(404).json({ success: false, message: "Not found." });
+		return res.json({ program: await healthPlan.program(profileId, { today: req.body?.today }) });
+	}),
+	saveTargets: handler("save those targets", async (profileId, req, res) => res.json({ targets: await healthPlan.saveTargets(profileId, req.body || {}) })),
+	addEntry: handler("log that", async (profileId, req, res) => {
+		await healthPlan.addEntry(profileId, req.body || {});
+		return res.status(201).json({ nutrition: await healthPlan.nutrition(profileId, { today: req.body?.today || req.body?.eaten_on }) });
+	}),
+	removeEntry: handler("remove that", async (profileId, req, res) => {
+		if (!(await healthPlan.removeEntry(profileId, req.params.uuid))) return res.status(404).json({ success: false, message: "Not found." });
+		return res.json({ nutrition: await healthPlan.nutrition(profileId, { today: req.query.today }) });
+	}),
+};

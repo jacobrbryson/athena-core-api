@@ -2,7 +2,7 @@
 id: projects
 title: Projects
 summary: I keep your projects across every part of life — steps, what each needs first, the concerns behind them — ordered by what matters most.
-where: the left menu → Projects (everything) or Home (the house); tap any project to edit it
+where: the left menu → Projects (everything) or Property (the house and land); tap any project to edit it
 status: live
 surfaces: [companion]
 audiences: [adult]
@@ -46,7 +46,7 @@ from your start to your target across the project's dates, so I can say "on
 track", "ahead" or "behind" and by how much), your **WHOOP workouts** for the
 sports you pick (sessions per week, the last one), and **calendar events**
 whose titles contain words you choose (the next 60 days). The plan line also
-appears on the Health page's Weight panel.
+appears as a dashed line on the Weight tab of the Health page's Progress card.
 
 Right Now uses this list: a project that fits your free time, in season, with
 the weather it needs, can be what I suggest. Work projects stay on your Work
@@ -56,11 +56,11 @@ page and off the Dashboard.
 
 - **Projects** in the left menu: every project, filterable by area, with a
   search box and **New project**. Tap one to open it.
-- **Home** in the left menu: the house — open projects, programs with their
+- **Property** in the left menu: the house and land — open projects, programs with their
   parts, your concerns, and your charter.
 - Health, Family and Community each show the projects that touch them, and
   Work has its own Work projects panel.
-- The Dashboard has a **Projects** card and a **Home** card.
+- The Dashboard has a **Projects** card and a **Property** card.
 
 Inside a project you can change anything: Start, Mark done, Hold (and say what
 it's waiting on), Drop or Reopen in one tap, plus every field, its steps (add,

@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS athena_property (
+  uuid CHAR(36) NOT NULL PRIMARY KEY,
+  profile_id BIGINT NOT NULL,
+  details MEDIUMTEXT NOT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY idx_property_profile (profile_id)
+);

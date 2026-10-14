@@ -155,6 +155,30 @@ browser. On a larger screen every card stays open. I don't re-sort them — you 
 timings behind each card, to decide whether anything deserves the alert
 banner across the top of the screen; most days nothing does.
 
+The Calendar page lays out the next seven days: how many events, how many
+today and how many of those are done, what's next, and which calendars they
+come from. A strip of the seven days picks the day shown below it — each event
+with its times, a coloured bar for what it's about (work, family, health,
+sports, travel or personal, judged from the words in the title), a countdown
+on the next one, and ⋯ to ask me about it. Beside it are a month (dots mark
+only the days I've read), the next two days, and any trips or time off. At
+the bottom: Focus Areas (tap one to show only those events), Quick Add (time
+block, reminder, workout, family event, travel — each starts a message to me,
+and I ask before anything goes on your calendar), and your calendars with a
+switch that hides one from this page.
+
+The Family page opens with my take on the family's week — how much is on the
+calendar and what it is (soccer, softball, school), anyone reported unwell, a
+birthday coming up, and any family events that overlap — written from what the
+page shows, not guessed. Then: people remembered, today's chores, the next
+family event and family health; today's chores and the family's day; your
+closest people as cards (spouse, children, pets) with what's on for them today,
+and everyone else as smaller tiles; the family's upcoming events; and Kids
+(age, grade, and the sports their events mention), Pets, and Birthdays (from
+what I remember and from birthdays on your calendar). Tapping a person asks me
+about them. The full list where you edit people, link contacts and mark someone
+better is under The detail, further down.
+
 There is no refresh button, because there is nothing to refresh by hand: the
 dashboard updates itself when the server tells it something moved.
 
@@ -212,7 +236,12 @@ from earlier days; a missing score is displayed as unknown, never zero.
 
 The landscape is decorative, not local weather. I never present sample personal
 data as yours. Opening a card does not send a message or approve an action, and
-I can't reorder the cards. Live updates only reach a dashboard whose
+I can't reorder the cards. The Calendar page shows only the
+seven days I read — the month beyond them is blank, not empty — and its focus
+areas are a guess from each title. Its calendar switches hide events on that
+page in this browser only; they don't change Google Calendar or what I read. On the Family page I can't add or change
+chores — they come from Family Chores — and the sports tags are words found in
+calendar titles that mention the child. Live updates only reach a dashboard whose
 connection is healthy; when the socket is down it falls back to re-reading
 quietly in the background, which is slower but never wrong.
 
@@ -232,6 +261,11 @@ in memory and are cleared on sign-in, sign-out, access errors, and updates.
 - Freshness, invalidation, rollout and diagnostic counters: `../architecture/caching.md`.
 
 - Data endpoint: `../../src/controllers/dashboard.js` and `../../src/services/dashboard.js`.
+- Family page: `../../../companion/src/components/FamilyPage.tsx` + `family.css`; people come
+  from `familyRoster.ts` (rows now carry `birthday`), the take is built in code.
+- Calendar page: `../../../companion/src/components/CalendarPage.tsx` + `calendar.css`
+  (reuses the Health page's panels, `Icon` and `Ring`); Quick Add only pre-fills chat,
+  so writes still go through `create_calendar_event` and an approval.
 - News: `../../src/services/news/`, described in `news.md`. The card and page
   only render what that service has already stored.
 - News source UI: `../../../companion/src/components/NewsSourcesPanel.tsx`.

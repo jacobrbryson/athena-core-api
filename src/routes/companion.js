@@ -130,6 +130,17 @@ router.patch('/dashboard/health/family/:uuid/resolve', requireAuth, express.json
 router.post('/dashboard/health/body/calibration', requireAuth, express.json({ limit: '2kb' }), require('../controllers/bodyCalibration').add);
 router.delete('/dashboard/health/body/calibration/:uuid', requireAuth, require('../controllers/bodyCalibration').remove);
 
+// Training program + nutrition (migration 0073): what the person means to do
+// and what they ate — the two things no connected device can see.
+const healthPlan = require('../controllers/healthPlan');
+router.get('/dashboard/health/plan', requireAuth, healthPlan.overview);
+router.put('/dashboard/health/program', requireAuth, express.json({ limit: '16kb' }), healthPlan.saveProgram);
+router.delete('/dashboard/health/program', requireAuth, healthPlan.endProgram);
+router.put('/dashboard/health/program/sessions/:uuid/mark', requireAuth, express.json({ limit: '1kb' }), healthPlan.markSession);
+router.put('/dashboard/health/targets', requireAuth, express.json({ limit: '2kb' }), healthPlan.saveTargets);
+router.post('/dashboard/health/nutrition', requireAuth, express.json({ limit: '2kb' }), healthPlan.addEntry);
+router.delete('/dashboard/health/nutrition/:uuid', requireAuth, healthPlan.removeEntry);
+
 // Family card: children's birthdays from the family profiles, and the Google
 // Contact (if any) linked to each remembered family member. Contact search is
 // the community one — same address book, same endpoint.

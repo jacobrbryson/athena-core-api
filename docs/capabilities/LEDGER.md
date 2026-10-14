@@ -1,5 +1,29 @@
 # Capability ledger
 
+- 2026-10-14 — Family page redesigned to the owner's concept: Athena's take on the family's week (built from the calendar, health reports and birthdays, never a model), four tiles, chores and the family's day, people as cards with today's status, family upcoming events, Kids with sports tags, Pets and Birthdays; the editable people list stays under The detail — `companion-dashboard.md` (status: live)
+
+- 2026-10-14 — Calendar page redesigned to the owner's concept: four week-at-a-glance tiles, a seven-day strip that picks the day, an agenda with times, topic colours and a countdown, a month view, the next two days, travel and time away, Focus Areas filters, Quick Add (starts a message — events still need approval) and per-calendar show/hide switches for the page — `companion-dashboard.md` (status: live)
+
+- 2026-10-14 — Up next shows three projects, matches the adjacent property card height, and separates the Projects navigation link from the New project drawer button; shared controls establish the app convention — `property.md` (status: live)
+
+- 2026-10-14 — Health page redesigned to the owner's concept: heart hero with Athena's Take, five WHOOP tiles, Today's Plan, the training program's week (auto-ticked by matching WHOOP workouts), nutrition rings against targets with a food log, Progress (weight, body fat, strength, cardio) and Wellness; new program/targets/food-log tables (migration 0073, not yet applied) and chat grounding — `training-and-nutrition.md` (new), `smart-scale.md`, `projects.md` (status: partial)
+
+- 2026-10-14 — Key area names, positions and project/concern links move into a separate Manage key areas drawer; Edit property keeps details, images and boundary controls — `property.md` (status: live)
+
+- 2026-10-14 — Property tab highlights fill equal-width segments without inset gaps and follow the navigation bar's rounded edges — `property.md` (status: live)
+
+- 2026-10-14 — Property summary cards gain circular house, project-list, warning and completion icons matching the reference design — `property.md` (status: live)
+
+- 2026-10-14 — Property tabs switch content instead of scrolling; Property Map displays the full-width map and the overview's full-map button is removed — `property.md` (status: live)
+
+- 2026-10-14 — Property navigation matches the rounded reference bar with section icons, cyan selected states and horizontal scrolling on mobile — `property.md` (status: live)
+
+- 2026-10-14 — Property title and description align beside Ask Athena and weather on wide screens and stack on mobile — `property.md` (status: live)
+
+- 2026-10-14 — Property header photo spans the full area above the tabs; address-based NWS hourly weather appears beneath Ask Athena — `property.md` (status: live)
+
+- 2026-10-14 — Home becomes Property, with editable property details, uploaded image map, named areas and boundary, calculated linked-area health, seasonal projects and recent project updates — `property.md`, `projects.md` (status: live)
+
 - 2026-10-13 — Projects read connected data: weight from the scale against a
   project's start→target line (on track / ahead / behind), WHOOP workouts by
   sport per week, and calendar events by title words. The plan line shows on
@@ -507,3 +531,4 @@ See [`README.md`](README.md) for the full contract.
 - 2026-10-13 — Workplace links are now small chips: green ✓ when I can read the app, red ✕ when I can't (needs reconnecting, removed, or my last read failed — including a Jira API token Jira now rejects); tap one for why. Edit, Link, Make primary, Unlink and Remove moved into each workplace's ⋯ menu — `workplaces.md` (status: live)
 - 2026-10-13 — Whoop workouts are now kept as history, not just the last week: sport, duration, strain, heart rate and minutes in each heart-rate zone, so I can answer "how often have I lifted since June?". Whoop doesn't report sets, reps or weights — `whoop.md` (status: live)
 - 2026-10-13 — Health & Performance has a Workouts panel: every WHOOP workout I've kept, sessions per week or month, heart-rate zone mix and a session list, filterable by sport (Lifting groups the lifting kinds) and range — `whoop.md` (status: live)
+- 2026-10-14 — The Right Now block no longer shows while the Work banner is up — the banner already says what's next during work hours — `right-now.md` (status: planned)

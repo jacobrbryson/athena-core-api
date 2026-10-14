@@ -60,7 +60,9 @@ bottom of the dashboard — opens the two lists:
   place that's open now, something due
   today or marked high priority). A goal worth mulling on a quiet afternoon
   doesn't earn the top of your page, so I leave it off; ask me in chat and
-  I'll still tell you what I'd do with the time.
+  I'll still tell you what I'd do with the time. It's also left off while the
+  Work banner is across the top — that already shows your next meeting and
+  the ticket you're on.
 - **I don't mention your habits.** I don't read your workout history, so I
   work from the hours, the weather and your calendar.
 
