@@ -120,6 +120,8 @@ async function getDashboard(profileId, user) {
             .sort((a, b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')));
           return {
             name: creds.displayName,
+            // The Family Chores site itself, for the page's "View all" link.
+            appUrl: /^https:\/\//.test(creds.baseUrl || '') ? creds.baseUrl : null,
             chores: [...due, ...done].slice(0, 25).map(c => ({ title: c.title || 'Untitled chore', status: c.status || null, completed: !!c.completed, dueDate: c.dueDate || null })),
           };
         });

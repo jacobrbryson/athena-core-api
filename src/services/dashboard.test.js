@@ -78,6 +78,7 @@ test('family chores uses only the resolved caller’s linked player and strips t
   expect(JSON.stringify(result)).not.toContain('private-token');
   expect(JSON.stringify(result)).not.toContain('secret');
   expect(result.familyChores.data.chores[0]).toEqual({ title: 'Walk dog', completed: true, status: 'Approved', dueDate: null });
+  expect(result.familyChores.data.appUrl).toBe('https://chores.example.com');
 });
 test('family chores shows overdue open chores, not only ones due exactly today', async () => {
   jest.useFakeTimers().setSystemTime(new Date('2026-10-14T16:00:00Z'));

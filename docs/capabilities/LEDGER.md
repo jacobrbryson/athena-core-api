@@ -533,3 +533,4 @@ See [`README.md`](README.md) for the full contract.
 - 2026-10-13 — Health & Performance has a Workouts panel: every WHOOP workout I've kept, sessions per week or month, heart-rate zone mix and a session list, filterable by sport (Lifting groups the lifting kinds) and range — `whoop.md` (status: live)
 - 2026-10-14 — The Right Now block no longer shows while the Work banner is up — the banner already says what's next during work hours — `right-now.md` (status: planned)
 - 2026-10-14 — The Chores card and Family page now show overdue chores too: everything still open and due today or earlier, matching Family Chores' own Today list, plus what was finished today — `companion-dashboard.md` (status: live)
+- 2026-10-14 — The Family page's chore list scrolls inside its panel and has a View all link to Family Chores; due dates no longer show a day early — `companion-dashboard.md` (status: live)
