@@ -1,5 +1,6 @@
 const pool = require('../helpers/db');
 const { ACTIONS } = require('./actions/registry');
+const codeAgents = require('./codeAgents');
 
 // Time Athena has saved one person, counted only from actions she actually
 // carried out after an approval (athena_action rows that reached 'done').
@@ -33,10 +34,16 @@ const MINUTES = {
   // Writing the bug up and finding the right file yourself. The debugging the
   // agents do is worth more, but how much varies too much to claim it.
   investigate_code: 5,
-  // Writing, testing and shipping a small fix yourself, kept low: many fixes
-  // are bigger, and one that doesn't merge saved nothing.
-  fix_code: 10,
+  // Making a small fix yourself, priced at the small ones the agents mostly
+  // get (a padding tweak is a few minutes by hand): bigger fixes undercount.
+  // Only a fix whose pull request merged counts (see MERGE_GATED).
+  fix_code: 3,
 };
+
+// Actions whose 'done' means only "handed to someone else": they count once
+// GitHub says the pull request merged, and nothing while it is open, closed,
+// unknown, or GitHub can't be reached.
+const MERGE_GATED = new Set(['fix_code']);
 
 const labels = new Map(ACTIONS.map((a) => [a.id, a.label]));
 const minutesFor = (actionId) => MINUTES[actionId] ?? 0;
@@ -47,18 +54,36 @@ function monthStart(now, offset = 0) {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + offset, 1));
 }
 
+/** Merge-gated actions as grouped rows, one per merged pull request. */
+async function mergedRows(profileId) {
+  const [done] = await pool.query(
+    `SELECT action_id, DATE_FORMAT(executed_at, '%Y-%m-%d') AS day, result_ref
+       FROM athena_action
+      WHERE profile_id = ? AND status = 'done' AND executed_at IS NOT NULL
+        AND action_id IN (?)`,
+    [profileId, [...MERGE_GATED]],
+  );
+  const states = await Promise.all(
+    done.map((r) => codeAgents.fixStatus(r.result_ref).then((s) => s.state, () => 'unknown')),
+  );
+  return done.filter((_, i) => states[i] === 'merged').map((r) => ({ action_id: r.action_id, day: r.day, n: 1 }));
+}
+
 async function getTimeSaved(profileId, now = new Date()) {
   const thisMonth = monthStart(now), lastMonth = monthStart(now, -1);
   const weekStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 6));
-  // One grouped read; everything else is arithmetic here, where it can be tested.
+  // One grouped read plus the merge check; everything else is arithmetic here,
+  // where it can be tested.
   const [rows] = await pool.query(
     `SELECT action_id, DATE_FORMAT(executed_at, '%Y-%m-%d') AS day,
             SUM(COALESCE(JSON_LENGTH(params, '$.email_triage_uuids'), JSON_LENGTH(params, '$.items'), 1)) AS n
        FROM athena_action
       WHERE profile_id = ? AND status = 'done' AND executed_at IS NOT NULL
+        AND action_id NOT IN (?)
       GROUP BY action_id, day`,
-    [profileId],
+    [profileId, [...MERGE_GATED]],
   );
+  rows.push(...(await mergedRows(profileId)));
   const monthKey = (d) => d.toISOString().slice(0, 7);
   const byAction = new Map();
   const daily = new Map();

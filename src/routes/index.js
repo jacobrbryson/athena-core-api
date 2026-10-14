@@ -130,6 +130,7 @@ module.exports = (clients) => {
 	router.use("/memory", memoryRouter);
 	router.use("/attention", require('./attention'));
 	router.use("/workouts", require("./workouts"));
+	router.use("/projects", require("./projects"));
 	router.use("/integrations", integrationRouter);
 	router.use("/", companionRouter);
 

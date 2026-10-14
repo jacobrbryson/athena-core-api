@@ -94,8 +94,8 @@ router.post('/dashboard/community/events', requireAuth, express.json({ limit: '4
 router.patch('/dashboard/community/events/:uuid', requireAuth, express.json({ limit: '4kb' }), require('../controllers/community').updateEvent);
 router.delete('/dashboard/community/events/:uuid', requireAuth, require('../controllers/community').removeEvent);
 
-// "Right now": one suggestion for the gap in front of them, and the two lists
-// it is drawn from. The suggestion route reads; it never acts. Places are read
+// "Right now": one suggestion for the gap in front of them, and the places
+// list it draws on (projects live under /projects). The suggestion route reads; it never acts. Places are read
 // on Athena's rhythm like news pages, so there is no route for setting one.
 router.get('/dashboard/right-now', requireAuth, require('../controllers/rightNow').suggestion);
 router.get('/dashboard/places', requireAuth, require('../controllers/rightNow').listPlaces);
@@ -103,12 +103,6 @@ router.post('/dashboard/places', requireAuth, express.json({ limit: '4kb' }), re
 router.patch('/dashboard/places/:uuid', requireAuth, express.json({ limit: '4kb' }), require('../controllers/rightNow').patchPlace);
 router.delete('/dashboard/places/:uuid', requireAuth, require('../controllers/rightNow').deletePlace);
 router.post('/dashboard/places/:uuid/check', requireAuth, require('../controllers/rightNow').checkPlace);
-router.get('/dashboard/projects', requireAuth, require('../controllers/rightNow').listProjects);
-router.post('/dashboard/projects', requireAuth, express.json({ limit: '16kb' }), require('../controllers/rightNow').addProject);
-router.patch('/dashboard/projects/:uuid', requireAuth, express.json({ limit: '16kb' }), require('../controllers/rightNow').patchProject);
-router.delete('/dashboard/projects/:uuid', requireAuth, require('../controllers/rightNow').deleteProject);
-// The one-time move out of a spreadsheet. 512kb is a few hundred rows of CSV.
-router.post('/dashboard/projects/import', requireAuth, express.json({ limit: '600kb' }), require('../controllers/rightNow').importProjects);
 
 // Mail: on-demand Gmail triage. Scanning and proposing are POSTs that call out
 // (to the model / to Gmail via the action layer) so they get their own json

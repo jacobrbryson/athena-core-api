@@ -46,6 +46,9 @@ const placeReminders = require("../placeReminders");
 const timeReminders = require("../timeReminders");
 const codeAgents = require("../codeAgents");
 const familyHealth = require("../familyHealth");
+const projectStore = require("../projects");
+const projectShape = require("../projects/shape");
+const projectEntries = require("../projects/entries");
 
 /** A rejection that is the model's fault, not the person's or the server's. */
 function invalid(message) {
@@ -1386,6 +1389,192 @@ const ACTIONS = [
 			return { ref: open.map((r) => r.uuid).join(","), detail: { archived: open.length } };
 		},
 	},
+	// Projects (services/projects), added on the owner's instruction 2026-10-13
+	// (projects phase 1b: "add and update projects from chat"). The same writes
+	// the Projects page makes, so "I finished the gutters" or "add a step to the
+	// porch" doesn't need the app open. Which project is meant is resolved here
+	// against their own list by title — exact, or one unambiguous match — and
+	// never taken on trust; an ambiguous title is refused, naming the choices.
+	{
+		id: "add_project",
+		label: "Start a project",
+		provider: null,
+		consentType: null,
+		// Their own list; they can edit or delete it on the Projects page.
+		reversible: true,
+		standing: true,
+		describe:
+			"Start tracking a new project on their Projects page — something they want to get done or work toward " +
+			'("I need to fix the attic insulation before winter", "track my bulk through March"). Not for a one-off ' +
+			"reminder (remind_at_time) or a calendar slot (create_calendar_event). Check their projects list first; " +
+			"if it already exists, use update_project instead.",
+		params: {
+			project_title: "Short name for it, e.g. \"Insulate the attic\". Required.",
+			project_goal: "What done looks like or why it matters, in their words. Optional.",
+			project_area: '"health", "family", "community", "home" or "work" — the part of life it mostly belongs to. Default "home".',
+			project_priority: "1 (low) to 5 (critical). Optional; default 3.",
+			project_deadline: "A hard deadline as YYYY-MM-DD, only if they gave one. Optional.",
+			project_part_of: "The title of a bigger project or program this is part of, exactly as listed. Optional.",
+		},
+
+		async normalize(raw = {}, ctx = {}) {
+			if (!ctx.profileId) throw invalid("A project needs a person");
+			const input = {
+				title: str(raw.project_title, 190),
+				goal: str(raw.project_goal, 2000),
+				priority: raw.project_priority === undefined || raw.project_priority === null || raw.project_priority === "" ? 3 : Number(raw.project_priority),
+				hardDeadline: str(raw.project_deadline, 10),
+				primaryArea: (str(raw.project_area, 16) || "home").toLowerCase(),
+			};
+			if (!input.title) throw invalid("A project needs a title");
+			try {
+				projectShape.normalizeProject(input);
+				projectShape.normalizeAreas(input);
+			} catch (err) {
+				throw invalid(err.message);
+			}
+			let partOf = null;
+			if (str(raw.project_part_of, 190)) {
+				try {
+					const parent = await projectStore.findByTitle(ctx.profileId, raw.project_part_of);
+					partOf = { uuid: parent.uuid, title: parent.title };
+				} catch (err) {
+					throw invalid(err.message);
+				}
+			}
+			return {
+				project_title: input.title,
+				...(input.goal ? { project_goal: input.goal } : {}),
+				project_area: input.primaryArea,
+				project_priority: input.priority,
+				...(input.hardDeadline ? { project_deadline: input.hardDeadline } : {}),
+				...(partOf ? { part_of_uuid: partOf.uuid, part_of_title: partOf.title } : {}),
+			};
+		},
+
+		summarize(p) {
+			const bits = [
+				p.project_area !== "home" ? `under ${p.project_area[0].toUpperCase()}${p.project_area.slice(1)}` : null,
+				p.part_of_title ? `as part of "${p.part_of_title}"` : null,
+				p.project_deadline ? `due ${p.project_deadline}` : null,
+			].filter(Boolean);
+			return `Start the project "${p.project_title}"${bits.length ? ` ${bits.join(", ")}` : ""}`.slice(0, 500);
+		},
+
+		async execute(profileId, params) {
+			const { uuid } = await projectStore.create(profileId, {
+				title: params.project_title,
+				goal: params.project_goal ?? null,
+				priority: params.project_priority,
+				hardDeadline: params.project_deadline ?? null,
+				areas: [params.project_area],
+				primaryArea: params.project_area,
+				status: "idea",
+			}, { source: "chat" });
+			if (params.part_of_uuid) {
+				await projectStore.addLink(profileId, uuid, { relation: "contributes_to", to: params.part_of_uuid })
+					.catch((err) => console.warn("[actions] add_project link failed:", err.message));
+			}
+			return { ref: uuid, detail: null };
+		},
+	},
+
+	{
+		id: "update_project",
+		label: "Update a project",
+		provider: null,
+		consentType: null,
+		reversible: true,
+		standing: true,
+		describe:
+			"Change one of their existing projects: mark it started, done, on hold or dropped; add a step; tick a step " +
+			'off; add a note; set a deadline or priority ("I finished the gutters", "the porch is waiting on the ' +
+			'lights", "add buying batts to the attic project"). Name the project exactly as it appears in their projects list.',
+		params: {
+			project: "The project's title exactly as listed. Required.",
+			project_status: '"active" (started), "done", "waiting" (on hold), "dropped", or "ready". Optional.',
+			project_waiting_on: 'With "waiting": what it waits on, short ("rain", "a quote"). Optional.',
+			project_step: "A new step to add, short. Optional.",
+			project_step_done: "The title of an existing step they finished. Optional.",
+			project_note: "A note for the project's journal, in their words. Optional.",
+			project_priority: "1 (low) to 5 (critical). Optional.",
+			project_deadline: "A new hard deadline, YYYY-MM-DD. Optional.",
+		},
+
+		async normalize(raw = {}, ctx = {}) {
+			if (!ctx.profileId) throw invalid("A project update needs a person");
+			let row;
+			try {
+				row = await projectStore.findByTitle(ctx.profileId, str(raw.project, 190));
+			} catch (err) {
+				throw invalid(err.message);
+			}
+			const out = { project_uuid: row.uuid, project_title: row.title };
+			const status = str(raw.project_status, 16)?.toLowerCase();
+			if (status) {
+				if (!["active", "done", "waiting", "dropped", "ready"].includes(status)) {
+					throw invalid('Status must be "active", "done", "waiting", "dropped" or "ready"');
+				}
+				out.project_status = status;
+				if (status === "waiting" && str(raw.project_waiting_on, 32)) out.project_waiting_on = str(raw.project_waiting_on, 32);
+			}
+			const step = str(raw.project_step, 190);
+			if (step) out.project_step = step;
+			const doneTitle = str(raw.project_step_done, 190)?.toLowerCase();
+			if (doneTitle) {
+				const [steps] = await projectStore.stepsOf(row.id);
+				const match = steps.filter((s) => s.title.toLowerCase() === doneTitle);
+				const loose = match.length ? match : steps.filter((s) => s.title.toLowerCase().includes(doneTitle) || doneTitle.includes(s.title.toLowerCase()));
+				if (loose.length !== 1) {
+					throw invalid(loose.length
+						? `"${raw.project_step_done}" could be ${loose.slice(0, 4).map((s) => `"${s.title}"`).join(", ")} — say which`
+						: `"${row.title}" has no step called "${raw.project_step_done}"`);
+				}
+				out.step_done_uuid = loose[0].uuid;
+				out.step_done_title = loose[0].title;
+			}
+			const note = str(raw.project_note, 4000);
+			if (note) out.project_note = note;
+			const deadline = str(raw.project_deadline, 10);
+			if (deadline) {
+				if (!/^\d{4}-\d{2}-\d{2}$/.test(deadline) || Number.isNaN(Date.parse(deadline))) throw invalid("Deadline must be YYYY-MM-DD");
+				out.project_deadline = deadline;
+			}
+			if (raw.project_priority !== undefined && raw.project_priority !== null && raw.project_priority !== "") {
+				const n = Number(raw.project_priority);
+				if (!Number.isInteger(n) || n < 1 || n > 5) throw invalid("Priority is 1 to 5");
+				out.project_priority = n;
+			}
+			if (Object.keys(out).length === 2) throw invalid("Say what to change about the project");
+			return out;
+		},
+
+		summarize(p) {
+			const word = { active: "started", done: "done", waiting: "on hold", dropped: "dropped", ready: "ready" };
+			const parts = [
+				p.project_status ? `mark it ${word[p.project_status]}${p.project_waiting_on ? ` (waiting on ${p.project_waiting_on})` : ""}` : null,
+				p.step_done_title ? `tick off "${p.step_done_title}"` : null,
+				p.project_step ? `add the step "${p.project_step}"` : null,
+				p.project_note ? `add a note: "${p.project_note.slice(0, 120)}${p.project_note.length > 120 ? "…" : ""}"` : null,
+				p.project_deadline ? `set the deadline to ${p.project_deadline}` : null,
+				p.project_priority ? `set priority ${p.project_priority} of 5` : null,
+			].filter(Boolean);
+			return `"${p.project_title}": ${parts.join("; ")}`.slice(0, 500);
+		},
+
+		async execute(profileId, params) {
+			const patch = {};
+			if (params.project_status) patch.status = params.project_status;
+			if (params.project_waiting_on) patch.waitingOn = params.project_waiting_on;
+			if (params.project_deadline) patch.hardDeadline = params.project_deadline;
+			if (params.project_priority) patch.priority = params.project_priority;
+			if (Object.keys(patch).length) await projectStore.update(profileId, params.project_uuid, patch);
+			if (params.step_done_uuid) await projectStore.updateStep(profileId, params.project_uuid, params.step_done_uuid, { status: "done" });
+			if (params.project_step) await projectStore.addStep(profileId, params.project_uuid, { title: params.project_step });
+			if (params.project_note) await projectEntries.add(profileId, params.project_uuid, { type: "note", body: params.project_note }, { source: "chat" });
+			return { ref: params.project_uuid, detail: null };
+		},
+	},
 ];
 
 const BY_ID = new Map(ACTIONS.map((a) => [a.id, a]));
@@ -1412,6 +1601,7 @@ const PARAM_TYPES = {
 	agent: { type: "string", enum: ["claude", "codex"] },
 	within_hours: { type: "number" },
 	check_in_hours: { type: "number" },
+	project_priority: { type: "number" },
 	feeling_better: { type: "boolean" },
 	email_triage_uuids: { type: "array", items: { type: "string" } },
 	items: {

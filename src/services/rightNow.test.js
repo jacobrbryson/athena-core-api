@@ -1,7 +1,7 @@
 jest.mock('./llm', () => ({ generateJson: jest.fn() }));
 jest.mock('./dashboard', () => ({ cachedDashboard: jest.fn(), getDashboard: jest.fn() }));
 jest.mock('./places', () => ({ list: jest.fn(), MAX_PLACES: 25 }));
-jest.mock('./homeProjects', () => ({ list: jest.fn() }));
+jest.mock('./projects', () => ({ getAll: jest.fn() }));
 jest.mock('./weather', () => ({ forecast: jest.fn() }));
 jest.mock('./pulsepoint/watch', () => ({ listPlaces: jest.fn() }));
 jest.mock('../helpers/db', () => ({ query: jest.fn() }));
@@ -10,7 +10,8 @@ jest.mock('./readCache', () => ({ read: (_opts, load) => load(), hash: (parts) =
 const llm = require('./llm');
 const dashboard = require('./dashboard');
 const places = require('./places');
-const homeProjects = require('./homeProjects');
+const projectStore = require('./projects');
+const { forRightNow } = require('./projects/rank');
 const weather = require('./weather');
 const incidents = require('./pulsepoint/watch');
 const pool = require('../helpers/db');
@@ -30,10 +31,12 @@ const park = (over = {}) => ({
   ...over,
 });
 
+// The shape services/projects getAll() returns (only what Right Now reads).
 const project = (over = {}) => ({
-  uuid: 'proj-1', title: 'Rehang the garage shelves', detail: null, area: 'Garage',
-  status: 'todo', priority: 'normal', effortMinutes: 120, indoor: true, costEstimate: null,
-  dueDate: null, blockedOn: null, source: 'manual', ...over,
+  uuid: 'proj-1', title: 'Rehang the garage shelves', goal: null, kind: null,
+  status: 'ready', effectiveStatus: 'ready', priority: 3, primaryArea: 'home',
+  effort: { min: 120, max: 120, note: null }, indoor: true, conditions: [], seasonMonths: null,
+  hardDeadline: null, ...over,
 });
 
 beforeEach(() => {
@@ -41,7 +44,7 @@ beforeEach(() => {
   dashboard.cachedDashboard.mockReturnValue(null);
   dashboard.getDashboard.mockResolvedValue({ calendar: { status: 'ready', data: { events: [], timeZone: 'America/New_York' } } });
   places.list.mockResolvedValue([]);
-  homeProjects.list.mockResolvedValue([]);
+  projectStore.getAll.mockResolvedValue({ projects: [] });
   weather.forecast.mockResolvedValue(null);
   incidents.listPlaces.mockResolvedValue([]);
   pool.query.mockResolvedValue([[]]);
@@ -173,21 +176,43 @@ describe('placeCandidates', () => {
 
 describe('projectCandidates', () => {
   const window = { freeMinutes: 120, busyWith: null, nextEvent: null };
+  // Right Now scores what services/projects/rank.forRightNow hands it.
+  const offer = (list) => forRightNow(list, new Date('2026-10-13T12:00:00Z'));
 
   it('prefers indoor work when it is wet', () => {
     const list = [project({ uuid: 'in', indoor: true }), project({ uuid: 'out', title: 'Stain the deck', indoor: false })];
-    const ranked = rightNow.projectCandidates(list, window, true);
+    const ranked = rightNow.projectCandidates(offer(list), window, true);
     expect(ranked[0].id).toBe('project:in');
   });
 
   it('marks a project that does not fit the window', () => {
-    const ranked = rightNow.projectCandidates([project({ effortMinutes: 480 })], window, false);
+    const ranked = rightNow.projectCandidates(offer([project({ effort: { min: 480, max: 480 } })]), window, false);
     expect(ranked[0].fitsWindow).toBe(false);
   });
 
-  it('leaves finished and blocked work out', () => {
-    const list = [project({ uuid: 'a', status: 'done' }), project({ uuid: 'b', status: 'blocked' })];
-    expect(rightNow.projectCandidates(list, window, false)).toHaveLength(0);
+  it('leaves finished, blocked and waiting work out', () => {
+    const list = [
+      project({ uuid: 'a', status: 'done', effectiveStatus: 'done' }),
+      project({ uuid: 'b', effectiveStatus: 'blocked' }),
+      project({ uuid: 'c', status: 'waiting', effectiveStatus: 'waiting' }),
+    ];
+    expect(rightNow.projectCandidates(offer(list), window, false)).toHaveLength(0);
+  });
+
+  it('leaves out programs, work projects, out-of-season work and rain-only jobs', () => {
+    const list = [
+      project({ uuid: 'prog', kind: 'program' }),
+      project({ uuid: 'work', primaryArea: 'work' }),
+      project({ uuid: 'spring', seasonMonths: [3, 4, 5] }),
+      project({ uuid: 'rain', conditions: ['during_rain'] }),
+      project({ uuid: 'fall', seasonMonths: [9, 10, 11] }),
+    ];
+    expect(rightNow.projectCandidates(offer(list), window, false).map((c) => c.id)).toEqual(['project:fall']);
+  });
+
+  it('treats dry-weather work as outdoor when nobody said', () => {
+    const [mapped] = offer([project({ indoor: null, conditions: ['dry', 'mild'] })]);
+    expect(mapped.indoor).toBe(false);
   });
 });
 
@@ -201,7 +226,7 @@ describe('getRightNow', () => {
 
   it('leads with the park, and says why, when Athena answers', async () => {
     places.list.mockResolvedValue([park()]);
-    homeProjects.list.mockResolvedValue([project()]);
+    projectStore.getAll.mockResolvedValue({ projects: [project()] });
     dashboard.getDashboard.mockResolvedValue({
       calendar: { status: 'ready', data: { timeZone: 'America/New_York', events: [{ title: 'Piano lessons', start: inMinutes(280), end: inMinutes(340), allDay: false }] } },
     });
@@ -224,7 +249,7 @@ describe('getRightNow', () => {
 
   it('falls back to its own ranking when the model is down', async () => {
     places.list.mockResolvedValue([park()]);
-    homeProjects.list.mockResolvedValue([project()]);
+    projectStore.getAll.mockResolvedValue({ projects: [project()] });
     llm.generateJson.mockRejectedValue(new Error('no model available'));
 
     const result = await rightNow.getRightNow(7, {});

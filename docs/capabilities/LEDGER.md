@@ -1,5 +1,25 @@
 # Capability ledger
 
+- 2026-10-13 — Projects read connected data: weight from the scale against a
+  project's start→target line (on track / ahead / behind), WHOOP workouts by
+  sport per week, and calendar events by title words. The plan line shows on
+  the Health page's Weight panel, and I can say how a weight goal is going in
+  chat — `projects.md` (status: live).
+
+- 2026-10-13 — Projects journal and chat: photos (concept/before/progress/
+  after/memory) and notes on every project — adults' photos stored privately,
+  children's photos kept on the device with only the caption saved — and
+  "add/update a project" from chat as approvable actions — `projects.md`
+  (status: live).
+
+- 2026-10-13 — Projects rebuilt: projects across Health, Family, Community,
+  Home and Work, with steps, "part of" programs, "needs first" dependencies
+  (shown as blocked until done), concerns and a per-area charter, ordered by
+  priority, concerns, charter weights and deadlines. Everything is editable in
+  the app. New Home section for the house; work projects stay off the
+  Dashboard. Replaces the around-the-house list and its spreadsheet paste —
+  `projects.md` (status: live).
+
 - 2026-10-13 — Smart scale: Athena estimates skeletal muscle, lean mass, body
   water and BMR from the scale's impedance (published equations, marked est.),
   and corrects readings to lab references entered under Body composition →

@@ -27,7 +27,8 @@
 const llm = require("./llm");
 const dashboard = require("./dashboard");
 const places = require("./places");
-const homeProjects = require("./homeProjects");
+const projectStore = require("./projects");
+const { forRightNow } = require("./projects/rank");
 const weather = require("./weather");
 const readCache = require("./readCache");
 const incidents = require("./pulsepoint/watch");
@@ -489,7 +490,7 @@ async function getRightNow(profileId, user) {
 			console.warn("[rightNow] places unavailable:", err.message);
 			return [];
 		}),
-		homeProjects.list(profileId).catch((err) => {
+		projectStore.getAll(profileId).then((all) => forRightNow(all.projects)).catch((err) => {
 			console.warn("[rightNow] projects unavailable:", err.message);
 			return [];
 		}),

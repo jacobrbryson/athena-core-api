@@ -507,6 +507,21 @@ async function processAiResponse(session, message, clients, ctx = {}) {
       }
     }
 
+    // Their projects (services/projects): the open ones in their own order,
+    // so "how's the porch going" and "I finished the gutters" land on the
+    // right one. Read-only; changes go through add_project/update_project.
+    if (mayPropose) {
+      try {
+        const projectBlock = await require("../services/projects/prompt").promptBlock(session.profile_id);
+        if (projectBlock)
+          initiativeBlock = initiativeBlock
+            ? [initiativeBlock, projectBlock].join("\n\n")
+            : projectBlock;
+      } catch (e) {
+        console.warn("[gemini] projects block failed:", e.message);
+      }
+    }
+
     // Where they work: the workplaces listed on the Work page, so "my work"
     // means the right company. A few lines; never fatal.
     if (mayPropose) {

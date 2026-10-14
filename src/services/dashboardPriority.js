@@ -31,6 +31,8 @@ const CARDS = [
 	{ id: "health", title: "Health & Performance" },
 	{ id: "family", title: "Family" },
 	{ id: "community", title: "Community" },
+	// The house (2026-10-13). Placement after the hierarchy is the owner's call.
+	{ id: "home", title: "Home" },
 	{ id: "calendar", title: "Calendar" },
 	{ id: "mail", title: "Mail" },
 	{ id: "work", title: "Work" },
@@ -159,11 +161,20 @@ function describe(summary, pendingCount) {
 			signals: { note: "Background reading from the news pages this person chose." },
 		},
 		{
+			// Projects (and Home, below) are read from their own endpoint, not
+			// this summary — so, like news, this sheet cannot say they are empty.
 			id: "projects",
 			title: "Projects",
-			source: status("jira"),
-			empty: issues.length === 0,
-			signals: { activeProjects: new Set(issues.map((i) => i.project)).size },
+			source: "ready",
+			empty: null,
+			signals: { note: "The person's own projects, read from /projects; work projects are not shown on this card." },
+		},
+		{
+			id: "home",
+			title: "Home",
+			source: "ready",
+			empty: null,
+			signals: { note: "House projects and concerns, read from /projects." },
 		},
 		{
 			id: "notifications",
