@@ -7,6 +7,7 @@ const whoop = require('./connectors/whoop');
 const vesync = require('./connectors/vesync');
 const integration = require('./integration');
 const chores = require('./familyChores');
+const clock = require('./clock');
 const work = require('./connectors/work');
 const emailTriage = require('./emailTriage');
 const emailSync = require('./emailSync');
@@ -103,11 +104,25 @@ async function getDashboard(profileId, user) {
         if (!status.connected) return section('not_connected');
         const creds = await integration.getUsableCredentials(profileId);
         if (!creds?.playerId) return section('error');
-        return read(async () => ({
-          name: creds.displayName,
-          chores: (await chores.getChoresToday(creds.playerId, { token: creds.token, baseUrl: creds.baseUrl }))
-            .slice(0, 25).map(c => ({ title: c.title || 'Untitled chore', status: c.status || null, completed: !!c.completedAt, dueDate: c.dueDate || null })),
-        }));
+        // "Today" means what Family Chores' own Today list shows: every open
+        // chore due today or earlier, overdue ones included. /chores/today only
+        // returns chores due exactly today (in UTC), so a week-old chore that
+        // is still on the person's list vanished here. Chores finished today
+        // ride along so the done/total count means something.
+        const opts = { token: creds.token, baseUrl: creds.baseUrl };
+        const today = clock.describeNow(new Date()).iso;
+        return read(async () => {
+          const [open, done] = await Promise.all([
+            chores.getChores(creds.playerId, { range: 'all', status: 'open', includeRecurring: false }, opts),
+            chores.getChores(creds.playerId, { range: 'today', status: 'completed', includeRecurring: false }, opts),
+          ]);
+          const due = open.filter(c => !c.dueDate || c.dueDate <= today)
+            .sort((a, b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')));
+          return {
+            name: creds.displayName,
+            chores: [...due, ...done].slice(0, 25).map(c => ({ title: c.title || 'Untitled chore', status: c.status || null, completed: !!c.completed, dueDate: c.dueDate || null })),
+          };
+        });
       } catch { return section('error'); }
     })(),
     provider('jira', () => work.jira(profileId)),

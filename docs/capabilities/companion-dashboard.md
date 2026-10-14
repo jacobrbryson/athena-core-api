@@ -13,7 +13,7 @@ triggers: [dashboard, briefing, today, home screen, navigation, order, community
 
 I populate the cards from connected sources: Google Calendar events for the next
 seven days; dated WHOOP recovery, sleep and strain;
-the linked Family Chores player's chores for today; saved family and work
+the linked Family Chores player's chores for today — everything still open and due today or earlier, overdue ones included, plus what was finished today; saved family and work
 memories; assigned Jira issues; unread Gmail headers; Slack mentions; and
 pending action approvals. A missing connection, missing health consent, empty
 result and failed read are distinct states. I do not invent missing metrics.

@@ -4,7 +4,7 @@ jest.mock('./connectors/googleCalendar', () => ({ collectEvents: jest.fn(), disp
 jest.mock('./connectors/whoop', () => ({ listRecovery: jest.fn(), listSleep: jest.fn(), listCycles: jest.fn() }));
 jest.mock('./connectors/vesync', () => ({ bodySummary: jest.fn() }));
 jest.mock('./integration', () => ({ getStatus: jest.fn(), getUsableCredentials: jest.fn(), PROVIDER_FAMILY_CHORES: 'family_chores' }));
-jest.mock('./familyChores', () => ({ getChoresToday: jest.fn() }));
+jest.mock('./familyChores', () => ({ getChores: jest.fn() }));
 jest.mock('./connectors/work', () => ({ jira: jest.fn(), slack: jest.fn() }));
 jest.mock('./connectors/context', () => ({ technicalDetail: () => null }));
 jest.mock('./emailTriage', () => ({ summary: jest.fn() }));
@@ -70,12 +70,29 @@ test('credential lookup failure is not represented as disconnected or empty', as
 test('family chores uses only the resolved caller’s linked player and strips token material', async () => {
   integration.getStatus.mockResolvedValue({ connected: true });
   integration.getUsableCredentials.mockResolvedValue({ token: 'private-token', playerId: 'p42', baseUrl: 'https://chores.example.com', displayName: 'Person' });
-  chores.getChoresToday.mockResolvedValue([{ title: 'Walk dog', completedAt: 'date', privateField: 'secret' }]);
+  chores.getChores.mockImplementation(async (_p, q) => q.status === 'completed'
+    ? [{ title: 'Walk dog', completed: true, status: 'Approved', privateField: 'secret' }] : []);
   const result = await getDashboard(42, { googleId: 'caller' });
   expect(integration.getUsableCredentials).toHaveBeenCalledWith(42);
-  expect(chores.getChoresToday).toHaveBeenCalledWith('p42', expect.anything());
+  expect(chores.getChores).toHaveBeenCalledWith('p42', expect.anything(), expect.anything());
   expect(JSON.stringify(result)).not.toContain('private-token');
-  expect(result.familyChores.data.chores[0]).toEqual({ title: 'Walk dog', completed: true, status: null, dueDate: null });
+  expect(JSON.stringify(result)).not.toContain('secret');
+  expect(result.familyChores.data.chores[0]).toEqual({ title: 'Walk dog', completed: true, status: 'Approved', dueDate: null });
+});
+test('family chores shows overdue open chores, not only ones due exactly today', async () => {
+  jest.useFakeTimers().setSystemTime(new Date('2026-10-14T16:00:00Z'));
+  integration.getStatus.mockResolvedValue({ connected: true });
+  integration.getUsableCredentials.mockResolvedValue({ token: 't', playerId: 'p42', baseUrl: 'https://chores.example.com', displayName: 'Person' });
+  chores.getChores.mockImplementation(async (_p, q) => q.status === 'open' ? [
+    { title: 'Tomorrow', dueDate: '2026-10-15', status: 'Open', completed: false },
+    { title: 'Today', dueDate: '2026-10-14', status: 'Open', completed: false },
+    { title: 'Overdue', dueDate: '2026-08-29', status: 'Open', completed: false },
+    { title: 'Undated', dueDate: null, status: 'Open', completed: false },
+  ] : []);
+  try {
+    const result = await getDashboard(42, {});
+    expect(result.familyChores.data.chores.map(c => c.title)).toEqual(['Undated', 'Overdue', 'Today']);
+  } finally { jest.useRealTimers(); }
 });
 test('the VeSync scale feeds the body section behind health consent', async () => {
   credentials.list.mockResolvedValue([{ provider: 'vesync', status: 'active' }]);
