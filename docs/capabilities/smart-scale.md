@@ -2,7 +2,7 @@
 id: smart-scale
 title: Smart scale
 summary: With your VeSync scale linked, I can see your weigh-ins — weight, body fat and the rest of your body composition — on the Health page and in chat.
-where: Companion dashboard → Health → Body composition, Weight and Body fat panels
+where: Companion dashboard → Health → Progress card (Weight and Body Fat tabs)
 status: partial
 surfaces: [companion]
 audiences: [adult]
@@ -39,10 +39,11 @@ red or green on these numbers, because that's your call.
 
 Companion dashboard → **Health**. Your weight and body fat sit on the Health
 card. On the Health page, the **Progress** card has **Weight** and **Body Fat**
-tabs (with body fat, lean mass and your target weight beside the chart), and
-the **Body composition** panel is further down, under The detail. **Calibrate with a lab result** under
-Body composition opens the form for a reference, and lists the ones you've
-entered with a Remove button each.
+tabs (with body fat, lean mass and your target weight beside the chart).
+The page no longer has a Body composition panel, and with it went the
+**Calibrate with a lab result** button — there's currently nowhere in the app
+to enter or remove a lab reference. References entered before still correct
+your readings.
 
 There's no Connect button for the scale. VeSync doesn't offer a sign-in
 other apps can use, so the owner links it for you.

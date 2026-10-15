@@ -28,7 +28,8 @@ last month?" has an answer. For each workout I have the sport, when and how
 long, strain, average and peak heart rate, energy burned, and how many minutes
 you spent in each heart-rate zone.
 
-You can see that history yourself on **Health & Performance** → **Workouts**:
+You can see that history yourself on the **Workouts** page — **Health &
+Performance** → **View all activities** at the bottom of the Training Program card:
 sessions per week or month, time in each heart-rate zone, and each session
 with its time, strain, heart rate and energy. Filter by sport — **Lifting**
 groups weightlifting, Strength Trainer and powerlifting — and by range (3

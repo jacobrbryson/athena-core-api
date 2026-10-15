@@ -1,5 +1,6 @@
 const { requireAdultActor } = require("../helpers/actor");
 const healthPlan = require("../services/healthPlan");
+const foodScan = require("../services/foodScan");
 
 /**
  * The Health page's plan: training program, nutrition targets and food log.
@@ -7,7 +8,8 @@ const healthPlan = require("../services/healthPlan");
  */
 
 function failed(res, err, what) {
-	if (err.code === "ER_NO_SUCH_TABLE") return res.status(503).json({ success: false, message: "Training and nutrition aren't set up on this server yet." });
+	// ER_BAD_FIELD_ERROR: 0073 is in but 0074 (food sources, favorites) isn't yet.
+	if (err.code === "ER_NO_SUCH_TABLE" || err.code === "ER_BAD_FIELD_ERROR") return res.status(503).json({ success: false, message: "Training and nutrition aren't set up on this server yet." });
 	if (err.status) return res.status(err.status).json({ success: false, message: err.message });
 	console.error(`[healthPlan] ${what} failed:`, err.message);
 	return res.status(500).json({ success: false, message: `Could not ${what}.` });
@@ -40,6 +42,26 @@ module.exports = {
 	saveTargets: handler("save those targets", async (profileId, req, res) => res.json({ targets: await healthPlan.saveTargets(profileId, req.body || {}) })),
 	addEntry: handler("log that", async (profileId, req, res) => {
 		await healthPlan.addEntry(profileId, req.body || {});
+		return res.status(201).json({ nutrition: await healthPlan.nutrition(profileId, { today: req.body?.today || req.body?.eaten_on }) });
+	}),
+	updateEntry: handler("save that", async (profileId, req, res) => {
+		if (!(await healthPlan.updateEntry(profileId, req.params.uuid, req.body || {}))) return res.status(404).json({ success: false, message: "Not found." });
+		return res.json({ nutrition: await healthPlan.nutrition(profileId, { today: req.body?.today }) });
+	}),
+	scan: handler("look at that", async (profileId, req, res) => {
+		const { entry, how, note } = await foodScan.scan(profileId, req.body || {});
+		return res.status(201).json({ entry, how, note, nutrition: await healthPlan.nutrition(profileId, { today: req.body?.today || req.body?.eaten_on }) });
+	}),
+	saveFavorite: handler("star that", async (profileId, req, res) => {
+		await healthPlan.saveFavorite(profileId, req.body || {});
+		return res.status(201).json({ nutrition: await healthPlan.nutrition(profileId, { today: req.body?.today }) });
+	}),
+	removeFavorite: handler("unstar that", async (profileId, req, res) => {
+		if (!(await healthPlan.removeFavorite(profileId, req.params.uuid))) return res.status(404).json({ success: false, message: "Not found." });
+		return res.json({ nutrition: await healthPlan.nutrition(profileId, { today: req.query.today }) });
+	}),
+	logFavorite: handler("log that", async (profileId, req, res) => {
+		if (!(await healthPlan.logFavorite(profileId, req.params.uuid, { eaten_on: req.body?.eaten_on }))) return res.status(404).json({ success: false, message: "Not found." });
 		return res.status(201).json({ nutrition: await healthPlan.nutrition(profileId, { today: req.body?.today || req.body?.eaten_on }) });
 	}),
 	removeEntry: handler("remove that", async (profileId, req, res) => {

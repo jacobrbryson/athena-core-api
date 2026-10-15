@@ -140,6 +140,13 @@ router.put('/dashboard/health/program/sessions/:uuid/mark', requireAuth, express
 router.put('/dashboard/health/targets', requireAuth, express.json({ limit: '2kb' }), healthPlan.saveTargets);
 router.post('/dashboard/health/nutrition', requireAuth, express.json({ limit: '2kb' }), healthPlan.addEntry);
 router.delete('/dashboard/health/nutrition/:uuid', requireAuth, healthPlan.removeEntry);
+// Food by camera and favorites (migration 0074). The scan's photo arrives as
+// base64 JSON; server.js gives this path an 8 MB parser, as for memory photos.
+router.post('/dashboard/health/nutrition/scan', requireAuth, express.json({ limit: '8mb' }), healthPlan.scan);
+router.patch('/dashboard/health/nutrition/:uuid', requireAuth, express.json({ limit: '2kb' }), healthPlan.updateEntry);
+router.post('/dashboard/health/favorites', requireAuth, express.json({ limit: '2kb' }), healthPlan.saveFavorite);
+router.delete('/dashboard/health/favorites/:uuid', requireAuth, healthPlan.removeFavorite);
+router.post('/dashboard/health/favorites/:uuid/log', requireAuth, express.json({ limit: '1kb' }), healthPlan.logFavorite);
 
 // Family card: children's birthdays from the family profiles, and the Google
 // Contact (if any) linked to each remembered family member. Contact search is

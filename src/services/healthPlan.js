@@ -47,6 +47,8 @@ const ENTRY = {
 	fat_g: [0, 400],
 	water_oz: [0, 200],
 };
+/** Where an entry came from: typed, estimated from a photo, a barcode lookup, a starred favorite. */
+const SOURCES = new Set(["manual", "photo", "barcode", "favorite"]);
 
 function badRequest(message) {
 	return Object.assign(new Error(message), { status: 400 });
@@ -264,8 +266,61 @@ function entryOf(row) {
 	return {
 		uuid: row.uuid, eaten_on: ymd(row.eaten_on), label: row.label,
 		calories: num(row.calories), protein_g: num(row.protein_g), carbs_g: num(row.carbs_g), fat_g: num(row.fat_g), water_oz: num(row.water_oz),
+		source: row.source || "manual", serving: row.serving || null, barcode: row.barcode || null,
 		created_at: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
 	};
+}
+
+function favoriteOf(row) {
+	return {
+		uuid: row.uuid, label: row.label,
+		calories: num(row.calories), protein_g: num(row.protein_g), carbs_g: num(row.carbs_g), fat_g: num(row.fat_g), water_oz: num(row.water_oz),
+		serving: row.serving || null, barcode: row.barcode || null,
+	};
+}
+const sameFood = (a, b) => String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
+
+/** The person's starred foods, alphabetical. */
+async function favorites(profileId) {
+	const [rows] = await pool.query(
+		`SELECT uuid, label, calories, protein_g, carbs_g, fat_g, water_oz, serving, barcode FROM nutrition_favorite WHERE profile_id = ? ORDER BY label LIMIT 200`,
+		[profileId],
+	);
+	return rows.map(favoriteOf);
+}
+
+/** The label, numbers and serving of a food, validated: what an entry and a favorite share. */
+function foodOf(body) {
+	const values = bounded(body, ENTRY);
+	if (TOTAL_FIELDS.every((f) => values[f] === null)) throw badRequest("Enter calories, a macro, or water.");
+	const label = text(body.label, 120) || (values.water_oz !== null && TOTAL_FIELDS.every((f) => f === "water_oz" || values[f] === null) ? "Water" : null);
+	if (!label) throw badRequest("Say what it was.");
+	const barcode = typeof body.barcode === "string" && /^\d{8,14}$/.test(body.barcode) ? body.barcode : null;
+	return { label, ...values, serving: text(body.serving, 60), barcode };
+}
+
+/** Star a food. Saved by label, so starring it again updates the numbers. */
+async function saveFavorite(profileId, body = {}) {
+	const food = foodOf(body);
+	await pool.query(
+		`INSERT INTO nutrition_favorite (uuid, profile_id, label, calories, protein_g, carbs_g, fat_g, water_oz, serving, barcode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE calories = VALUES(calories), protein_g = VALUES(protein_g), carbs_g = VALUES(carbs_g), fat_g = VALUES(fat_g),
+		 water_oz = VALUES(water_oz), serving = VALUES(serving), barcode = VALUES(barcode)`,
+		[uuidv4(), profileId, food.label, food.calories, food.protein_g, food.carbs_g, food.fat_g, food.water_oz, food.serving, food.barcode],
+	);
+	return (await favorites(profileId)).find((f) => sameFood(f.label, food.label)) || null;
+}
+
+async function removeFavorite(profileId, uuid) {
+	const [result] = await pool.query(`DELETE FROM nutrition_favorite WHERE uuid = ? AND profile_id = ?`, [String(uuid || ""), profileId]);
+	return result.affectedRows > 0;
+}
+
+/** Log one serving of a starred food. Null when it isn't theirs. */
+async function logFavorite(profileId, uuid, { eaten_on } = {}) {
+	const fav = (await favorites(profileId)).find((f) => f.uuid === String(uuid || ""));
+	if (!fav) return null;
+	return addEntry(profileId, { ...fav, eaten_on, source: "favorite" });
 }
 
 const TOTAL_FIELDS = ["calories", "protein_g", "carbs_g", "fat_g", "water_oz"];
@@ -281,33 +336,62 @@ async function nutrition(profileId, { today } = {}) {
 	const day = dayOr(today);
 	const from = addDays(day, -6);
 	const [rows] = await pool.query(
-		`SELECT uuid, eaten_on, label, calories, protein_g, carbs_g, fat_g, water_oz, created_at FROM nutrition_entry
+		`SELECT uuid, eaten_on, label, calories, protein_g, carbs_g, fat_g, water_oz, source, serving, barcode, created_at FROM nutrition_entry
 		 WHERE profile_id = ? AND deleted_at IS NULL AND eaten_on BETWEEN ? AND ? ORDER BY eaten_on, id`,
 		[profileId, from, day],
 	);
+	const starred = await favorites(profileId);
 	const entries = rows.map(entryOf);
-	const todays = entries.filter((e) => e.eaten_on === day);
+	// An entry is starred when a favorite has its name; the star on the Today list toggles that favorite.
+	const todays = entries.filter((e) => e.eaten_on === day).map((e) => ({ ...e, favorite: starred.find((f) => sameFood(f.label, e.label))?.uuid || null }));
 	const days = Array.from({ length: 7 }, (_, i) => {
 		const date = addDays(from, i);
 		const those = entries.filter((e) => e.eaten_on === date);
 		return { date, logged: those.length > 0, totals: totalsOf(those) };
 	});
-	return { date: day, entries: todays, totals: totalsOf(todays), days };
+	return { date: day, entries: todays, totals: totalsOf(todays), days, favorites: starred };
 }
 
+/**
+ * Log a food. `source` says how it arrived (manual, photo, barcode, favorite);
+ * `favorite: true` also stars it, which is the manual form's checkbox.
+ */
 async function addEntry(profileId, body = {}) {
 	const eatenOn = dayOr(body.eaten_on);
 	if (Date.parse(eatenOn) > Date.now() + 2 * DAY_MS) throw badRequest("That date is in the future.");
-	const values = bounded(body, ENTRY);
-	if (TOTAL_FIELDS.every((f) => values[f] === null)) throw badRequest("Enter calories, a macro, or water.");
-	const label = text(body.label, 120) || (values.water_oz !== null && TOTAL_FIELDS.every((f) => f === "water_oz" || values[f] === null) ? "Water" : null);
-	if (!label) throw badRequest("Say what it was.");
+	const food = foodOf(body);
+	const source = SOURCES.has(body.source) ? body.source : "manual";
 	const uuid = uuidv4();
 	await pool.query(
-		`INSERT INTO nutrition_entry (uuid, profile_id, eaten_on, label, calories, protein_g, carbs_g, fat_g, water_oz) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		[uuid, profileId, eatenOn, label, values.calories, values.protein_g, values.carbs_g, values.fat_g, values.water_oz],
+		`INSERT INTO nutrition_entry (uuid, profile_id, eaten_on, label, calories, protein_g, carbs_g, fat_g, water_oz, source, serving, barcode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		[uuid, profileId, eatenOn, food.label, food.calories, food.protein_g, food.carbs_g, food.fat_g, food.water_oz, source, food.serving, food.barcode],
 	);
-	return { uuid, eaten_on: eatenOn, label, ...values };
+	if (body.favorite === true) await saveFavorite(profileId, food);
+	return { uuid, eaten_on: eatenOn, source, ...food };
+}
+
+/**
+ * Correct a logged food, since a photo estimate or a barcode lookup can be
+ * wrong. If it was starred, the favorite takes the corrected numbers too.
+ * False when it isn't theirs.
+ */
+async function updateEntry(profileId, uuid, body = {}) {
+	const [rows] = await pool.query(`SELECT id, label, barcode FROM nutrition_entry WHERE uuid = ? AND profile_id = ? AND deleted_at IS NULL`, [String(uuid || ""), profileId]);
+	if (!rows.length) return false;
+	const food = foodOf({ ...body, barcode: rows[0].barcode });
+	await pool.query(
+		`UPDATE nutrition_entry SET label = ?, calories = ?, protein_g = ?, carbs_g = ?, fat_g = ?, water_oz = ?, serving = ? WHERE id = ?`,
+		[food.label, food.calories, food.protein_g, food.carbs_g, food.fat_g, food.water_oz, food.serving, rows[0].id],
+	);
+	const fav = (await favorites(profileId)).find((f) => sameFood(f.label, rows[0].label));
+	if (fav) {
+		// IGNORE: renaming onto another favorite's name keeps both as they were.
+		await pool.query(
+			`UPDATE IGNORE nutrition_favorite SET label = ?, calories = ?, protein_g = ?, carbs_g = ?, fat_g = ?, water_oz = ?, serving = ? WHERE uuid = ? AND profile_id = ?`,
+			[food.label, food.calories, food.protein_g, food.carbs_g, food.fat_g, food.water_oz, food.serving, fav.uuid, profileId],
+		);
+	}
+	return true;
 }
 
 async function removeEntry(profileId, uuid) {
@@ -374,7 +458,8 @@ async function buildContext(profileId, { message, audience, force = false, today
 
 module.exports = {
 	KINDS, KIND_SPORTS, program, saveProgram, endProgram, markSession,
-	targets, saveTargets, nutrition, addEntry, removeEntry, overview,
+	targets, saveTargets, nutrition, addEntry, updateEntry, removeEntry, overview,
+	favorites, saveFavorite, removeFavorite, logFavorite, ENTRY,
 	matches, buildContext,
 	_test: { weekdayOf, mondayOf, addDays, totalsOf },
 };

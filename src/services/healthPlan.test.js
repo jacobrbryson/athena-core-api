@@ -90,7 +90,7 @@ test('nutrition totals sum the day and fill the week with empty days', async () 
     { uuid: 'a', eaten_on: '2026-10-13', label: 'Eggs', calories: 300, protein_g: '24.0', carbs_g: '2.0', fat_g: '20.0', water_oz: null, created_at: new Date() },
     { uuid: 'b', eaten_on: '2026-10-13', label: 'Shake', calories: 200, protein_g: '40.5', carbs_g: null, fat_g: null, water_oz: '12.0', created_at: new Date() },
     { uuid: 'c', eaten_on: '2026-10-10', label: 'Pasta', calories: 800, protein_g: null, carbs_g: null, fat_g: null, water_oz: null, created_at: new Date() },
-  ]]);
+  ]]).mockResolvedValueOnce([[{ uuid: 'fav-1', label: 'shake', calories: 200, protein_g: '40.5', carbs_g: null, fat_g: null, water_oz: null, serving: null, barcode: null }]]);
   const n = await healthPlan.nutrition(42, { today: '2026-10-13' });
   expect(n.totals).toEqual({ calories: 500, protein_g: 64.5, carbs_g: 2, fat_g: 20, water_oz: 12 });
   expect(n.entries).toHaveLength(2);
@@ -98,6 +98,42 @@ test('nutrition totals sum the day and fill the week with empty days', async () 
   expect(n.days[0].date).toBe('2026-10-07');
   expect(n.days.find(d => d.date === '2026-10-10').totals.calories).toBe(800);
   expect(n.days.find(d => d.date === '2026-10-11').logged).toBe(false);
+  // A favorite with the same name (any case) stars the entry; an entry without one isn't.
+  expect(n.entries.map(e => [e.label, e.favorite, e.source])).toEqual([['Eggs', null, 'manual'], ['Shake', 'fav-1', 'manual']]);
+  expect(n.favorites.map(f => f.uuid)).toEqual(['fav-1']);
+});
+
+test('the manual form\'s favorite box stars the food as it logs it', async () => {
+  db.query.mockResolvedValueOnce([{}]).mockResolvedValueOnce([{}]).mockResolvedValueOnce([[]]);
+  const e = await healthPlan.addEntry(42, { eaten_on: '2026-10-13', label: 'Greek yogurt', calories: 150, protein_g: 20, source: 'nonsense', favorite: true });
+  expect(e.source).toBe('manual');
+  expect(db.query.mock.calls[0][1].slice(-3)).toEqual(['manual', null, null]);
+  expect(db.query.mock.calls[1][0]).toContain('INSERT INTO nutrition_favorite');
+  expect(db.query.mock.calls[1][1].slice(1, 4)).toEqual([42, 'Greek yogurt', 150]);
+});
+
+test('correcting an entry is the caller\'s own, and carries to its favorite', async () => {
+  db.query.mockResolvedValueOnce([[]]);
+  await expect(healthPlan.updateEntry(42, 'someone-elses', { label: 'X', calories: 1 })).resolves.toBe(false);
+  expect(db.query.mock.calls[0][1]).toEqual(['someone-elses', 42]);
+  db.query.mockReset();
+  db.query
+    .mockResolvedValueOnce([[{ id: 5, label: 'Granola bar', barcode: '0123456789012' }]])
+    .mockResolvedValueOnce([{}])
+    .mockResolvedValueOnce([[{ uuid: 'fav-9', label: 'granola bar', calories: 900 }]])
+    .mockResolvedValueOnce([{}]);
+  await expect(healthPlan.updateEntry(42, 'mine', { label: 'Granola bar', calories: 190, protein_g: 4 })).resolves.toBe(true);
+  expect(db.query.mock.calls[1][1]).toEqual(['Granola bar', 190, 4, null, null, null, null, 5]);
+  expect(db.query.mock.calls[3][0]).toContain('UPDATE IGNORE nutrition_favorite');
+  expect(db.query.mock.calls[3][1].slice(-2)).toEqual(['fav-9', 42]);
+});
+
+test('a favorite logs one serving only for its owner', async () => {
+  db.query.mockResolvedValueOnce([[]]);
+  await expect(healthPlan.logFavorite(42, 'not-mine')).resolves.toBeNull();
+  db.query.mockResolvedValueOnce([[{ uuid: 'fav-1', label: 'Shake', calories: 200, protein_g: '40', carbs_g: null, fat_g: null, water_oz: null, serving: '1 scoop', barcode: null }]]).mockResolvedValueOnce([{}]);
+  const e = await healthPlan.logFavorite(42, 'fav-1', { eaten_on: '2026-10-13' });
+  expect(e).toMatchObject({ label: 'Shake', calories: 200, protein_g: 40, serving: '1 scoop', source: 'favorite' });
 });
 
 test('targets reject an upside-down weight range', async () => {

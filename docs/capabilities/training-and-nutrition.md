@@ -6,7 +6,7 @@ where: Health page → Training Program card (Week N of N) and Nutrition card (T
 status: partial
 surfaces: [companion]
 audiences: [adult]
-triggers: [training program, program, workout plan, gym, leg day, hypertrophy, what am i doing today, tomorrow's workout, protein, calories, macros, carbs, nutrition, food log, what i ate, water, hydrate, target weight, today's plan]
+triggers: [training program, program, workout plan, gym, leg day, hypertrophy, what am i doing today, tomorrow's workout, protein, calories, macros, carbs, nutrition, food log, what i ate, log food, barcode, scan food, food photo, favorite foods, water, hydrate, target weight, today's plan]
 ---
 
 ## What I can do
@@ -20,6 +20,14 @@ for a run, cycling for a ride), and you can tick or skip any day yourself.
 I also keep your daily targets (calories, protein, carbs, fat, water, sleep
 and a target weight range) and what you log eating and drinking, and show
 today's totals against them as rings.
+
+You can log food three ways: tap a starred favorite to log it again, take a
+picture, or type it in. A picture of a plate gets my estimate of the food and
+its calories and macros; a picture of a barcode is looked up in the Open Food
+Facts database and one serving is logged. Either way it's logged straight
+away and opens ready for you to correct or remove, because an estimate from a
+photo can be off. Star any food in today's list (or tick "Save to favorites"
+when typing one in) and it joins your favorites.
 
 The Health page puts it together: my take on today from your WHOOP recovery,
 today's plan (the session, or a lighter swap when your recovery is low, plus
@@ -35,8 +43,14 @@ Open the Health page from the sidebar (or the bottom bar on a phone).
   N" to edit it. Each weekday gets a kind (gym, run, ride, sport, recovery,
   rest), a title, a focus, a detail and its exercises. Tap a day on the card
   to mark it done; tap again to mark it skipped, again to clear it.
-- **Food and water:** the Nutrition card → "Today" or "Log food" to add what
-  you ate (calories and macros), "+16 oz water" for a glass.
+  **View all activities** at the bottom of the card opens the Workouts page —
+  every Whoop workout I've kept.
+- **Food and water:** the Nutrition card → **Log food** opens a menu: your
+  favorites (tap one to log a serving), **Take a picture** (the food or its
+  barcode) or **Manual entry** (name, serving, calories, macros, water, and a
+  "Save to favorites" box). "Today" lists what's logged: the star adds or
+  removes a favorite, the pencil corrects an entry, ✕ removes it. Entries from
+  a photo are tagged "Photo estimate", lookups "Barcode".
 - **Targets:** the Nutrition card → "Targets" (or "Set a target" under
   Progress).
 
@@ -50,14 +64,23 @@ Open the Health page from the sidebar (or the bottom bar on a phone).
   day to mark it yourself.
 - **The rings look empty** — I only count what you log. Nothing is read from a
   food app.
+- **"Couldn't make out a food or a barcode"** — retake it closer and in better
+  light, or use Manual entry.
+- **A barcode logged the wrong thing, or isn't found** — the product database
+  is crowd-sourced and has gaps. If it isn't found I estimate from the photo
+  instead; correct the entry with the pencil.
 
 ## Limits
 
 - I can read your program, targets and food log in chat, but I can't change
   them from chat yet — logging food or editing the program happens on the
   Health page.
-- I don't connect to MyFitnessPal, Cronometer or any food app, and I don't
-  look up nutrition for a food — you enter the numbers.
+- I don't connect to MyFitnessPal, Cronometer or any food app. Nutrition is
+  looked up only for a barcode (Open Food Facts); a plate is my estimate from
+  the photo, not a weighed measurement.
+- A barcode logs exactly one serving as the package defines it; change the
+  numbers if you ate more.
+- The photo isn't kept — only the entry it produced.
 - A program has no sets, reps or weights yet — sessions carry exercise names
   only. WHOOP doesn't record them either.
 - One program at a time. Saving an edited program starts a new block; marks
@@ -77,5 +100,7 @@ Open the Health page from the sidebar (or the bottom bar on a phone).
 - Routes (`src/routes/companion.js`): `GET /api/v1/dashboard/health/plan?today=`, `PUT|DELETE /dashboard/health/program`, `PUT /dashboard/health/program/sessions/:uuid/mark`, `PUT /dashboard/health/targets`, `POST /dashboard/health/nutrition`, `DELETE /dashboard/health/nutrition/:uuid`
 - Chat: `src/controllers/gemini.js` adds the `healthPlan.buildContext` block when `healthPlan.matches(message)`; adults only
 - Frontend: `../../../companion/src/components/HealthPage.tsx` (+ `health.css`), `../../../companion/src/api/healthPlan.ts`; `Dashboard.tsx` HealthPage passes WHOOP/scale data through `SectionPage`'s `hero`
-- Tests: `src/services/healthPlan.test.js`
+- Food by camera: `src/services/foodScan.js` — barcode read on the phone (`BarcodeDetector`, EAN/UPC) or by the "vision" task from the photo, check digit validated, looked up at `world.openfoodfacts.org/api/v2/product/:code`; otherwise the vision task estimates the plate. Values clamped to the entry bounds; the photo is never stored. `POST /dashboard/health/nutrition/scan` (8 MB body, listed in `server.js`)
+- Favorites + corrections (migration `0074_nutrition_favorites`: `nutrition_favorite`, `nutrition_entry.source/serving/barcode`): `PATCH /dashboard/health/nutrition/:uuid`, `POST /dashboard/health/favorites`, `DELETE /dashboard/health/favorites/:uuid`, `POST /dashboard/health/favorites/:uuid/log`. An entry is starred when a favorite has its label; correcting a starred entry updates the favorite.
+- Tests: `src/services/healthPlan.test.js`, `src/services/foodScan.test.js`
 - Notes: "done" from WHOOP is computed on read from `athena_workout` (via `workoutHistory.list`), never stored, so a deleted workout can't leave a stale tick. The client sends its local date (`today=`) because the server can't know the person's day. Hero image: `companion/public/assets/heart.png`.
