@@ -1,5 +1,5 @@
 const pool = require('../helpers/db');
-const { ACTIONS } = require('./actions/registry');
+const { ACTIONS, DIRECT_ACTIONS } = require('./actions/registry');
 const codeAgents = require('./codeAgents');
 
 // Time Athena has saved one person, counted only from actions she actually
@@ -45,7 +45,9 @@ const MINUTES = {
 // unknown, or GitHub can't be reached.
 const MERGE_GATED = new Set(['fix_code']);
 
-const labels = new Map(ACTIONS.map((a) => [a.id, a.label]));
+// Direct actions (a tick on the Family page) save nothing over ticking it in
+// the app itself, so they have no rate and count 0; they still get their label.
+const labels = new Map([...ACTIONS, ...DIRECT_ACTIONS].map((a) => [a.id, a.label]));
 const minutesFor = (actionId) => MINUTES[actionId] ?? 0;
 const round = (n) => Math.round(n * 10) / 10;
 

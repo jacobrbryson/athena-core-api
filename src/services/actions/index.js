@@ -335,7 +335,10 @@ async function attempt(profileId, sessionId, raw, ctx = {}) {
 	if (!profileId || !raw || typeof raw !== "object") return reject("shape", "No proposal");
 
 	const action = registry.get(raw.id);
-	if (!action) {
+	// A direct action (registry DIRECT_ACTIONS) runs only from a person's own
+	// click via perform(). One named in a proposal is refused as if it did not
+	// exist: the model was never told about it and must not be able to reach it.
+	if (!action || action.direct) {
 		console.warn("[actions] model proposed an unknown action:", raw.id);
 		return reject("unknown", `There is no action called "${String(raw.id).slice(0, 60)}"`);
 	}
@@ -529,6 +532,72 @@ async function listRecent(profileId, limit = 25) {
 		[profileId, Math.min(Math.max(Number(limit) || 25, 1), 100)]
 	);
 	return rows.map(publicAction);
+}
+
+// ---------------------------------------------------------------------------
+// Direct actions: the person's own click is the approval
+// ---------------------------------------------------------------------------
+
+/**
+ * Run a direct action (registry DIRECT_ACTIONS) because the person clicked
+ * something in the app that means exactly it — the chore checkbox on the
+ * Family page, or its Undo. Owner-approved 2026-10-14.
+ *
+ * There is no proposal card because the click IS the decision, so this is
+ * propose() and confirm() in one request with nothing a model wrote anywhere
+ * in it: the action id is fixed by the route the app called, the params are
+ * the app's, and the profile is the verified caller's. Every gate still runs:
+ *
+ *   1. the id is a registry action AND marked `direct` — perform() cannot run
+ *      a proposable action without its card;
+ *   2. consent and availableTo, exactly as availableFor() applies them;
+ *   3. normalize() vouches for the params against the person's own data;
+ *   4. the row is written, then claimed and executed through runPending() as
+ *      approval "human" — the same live access check, single execution and
+ *      audit rows as a pressed Approve.
+ *
+ * No repeat check (earlierCopy): ticking, undoing and ticking again is a
+ * normal thing to do, and the provider refuses a transition that is not
+ * valid any more (completing a chore that is already done).
+ */
+async function perform(profileId, actionId, rawParams, ctx = {}) {
+	const action = registry.get(actionId);
+	if (!profileId || !action || !action.direct) throw failure("No such action", 404, "unknown_action");
+
+	let open = true;
+	if (action.consentType) {
+		open = await consent.hasConsentForProfile(profileId, action.consentType).catch(() => false);
+	}
+	if (open && action.availableTo) {
+		open = await Promise.resolve(action.availableTo(profileId)).then(Boolean, () => false);
+	}
+	if (!open) throw failure(`${action.label} isn't available`, 403, "unavailable");
+
+	let params;
+	try {
+		params = await action.normalize(rawParams && typeof rawParams === "object" ? rawParams : {}, { ...ctx, profileId });
+	} catch (err) {
+		throw failure(err.message, Number.isInteger(err.status) ? err.status : 400, err.code || "invalid_action_params");
+	}
+
+	const uuid = randomUUID();
+	await pool.query(
+		`INSERT INTO athena_action
+			(uuid, profile_id, session_id, action_id, params, rationale, summary, status, expires_at)
+		 VALUES (?, ?, NULL, ?, ?, ?, ?, 'pending', DATE_ADD(NOW(), INTERVAL ? SECOND))`,
+		[
+			uuid,
+			profileId,
+			action.id,
+			JSON.stringify(params),
+			// Fixed text, never from the request: where the click came from.
+			"Done by the person from the app",
+			action.summarize(params).slice(0, 500),
+			Math.round(PROPOSAL_TTL_MS / 1000),
+		]
+	);
+	await audit(profileId, "action_direct", action.id);
+	return runPending(profileId, uuid, { approval: "human", ctx });
 }
 
 /** A person pressed Approve. */
@@ -727,6 +796,7 @@ async function revokeAuthority(profileId, actionId) {
 }
 
 module.exports = {
+	perform,
 	PROPOSAL_TTL_MS,
 	REPEAT_WINDOW_HOURS,
 	availableFor,

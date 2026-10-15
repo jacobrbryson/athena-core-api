@@ -149,6 +149,27 @@ async function confirm(req, res) {
 	}
 }
 
+/**
+ * A person's own click that is itself the decision (registry DIRECT_ACTIONS):
+ * ticking a chore done on the Family page, or its Undo. The action id comes
+ * from the path and only a `direct` action is accepted; the params go through
+ * that action's normalize() against the caller's own data (services/actions
+ * perform()). Answers with the executed row.
+ */
+async function perform(req, res) {
+	const caller = await callerProfile(req, res);
+	if (!caller) return undefined;
+	try {
+		const result = await actions.perform(caller.profileId, req.params.actionId, req.body?.params, {
+			familyId: caller.familyId,
+		});
+		announce(req, caller.profileId, "action_performed");
+		return res.json({ success: true, action: result });
+	} catch (err) {
+		return fail(res, err, "Failed to carry that out");
+	}
+}
+
 async function decline(req, res) {
 	const caller = await callerProfile(req, res);
 	if (!caller) return undefined;
@@ -199,6 +220,7 @@ async function revokeAuthority(req, res) {
 }
 
 module.exports = {
+	perform,
 	getStatus,
 	listPending,
 	listRecent,

@@ -3,7 +3,7 @@ jest.mock('./consent', () => ({ hasConsentForProfile: jest.fn() }));
 jest.mock('./connectors/googleCalendar', () => ({ collectEvents: jest.fn(), displayTimeZone: () => 'America/New_York' }));
 jest.mock('./connectors/whoop', () => ({ listRecovery: jest.fn(), listSleep: jest.fn(), listCycles: jest.fn() }));
 jest.mock('./connectors/vesync', () => ({ bodySummary: jest.fn() }));
-jest.mock('./integration', () => ({ getStatus: jest.fn(), getUsableCredentials: jest.fn(), PROVIDER_FAMILY_CHORES: 'family_chores' }));
+jest.mock('./integration', () => ({ getStatus: jest.fn(), getUsableCredentials: jest.fn(), canWriteChores: jest.fn(), PROVIDER_FAMILY_CHORES: 'family_chores' }));
 jest.mock('./familyChores', () => ({ getChores: jest.fn() }));
 jest.mock('./connectors/work', () => ({ jira: jest.fn(), slack: jest.fn() }));
 jest.mock('./connectors/context', () => ({ technicalDetail: () => null }));
@@ -25,6 +25,7 @@ beforeEach(() => {
   credentials.list.mockResolvedValue([]);
   consent.hasConsentForProfile.mockResolvedValue(false);
   integration.getStatus.mockResolvedValue({ connected: false });
+  integration.canWriteChores.mockResolvedValue(false);
   familyHealth.activeFor.mockResolvedValue([]);
 });
 test('unlinked sources remain explicit and make no provider calls', async () => {
@@ -71,14 +72,31 @@ test('family chores uses only the resolved caller’s linked player and strips t
   integration.getStatus.mockResolvedValue({ connected: true });
   integration.getUsableCredentials.mockResolvedValue({ token: 'private-token', playerId: 'p42', baseUrl: 'https://chores.example.com', displayName: 'Person' });
   chores.getChores.mockImplementation(async (_p, q) => q.status === 'completed'
-    ? [{ title: 'Walk dog', completed: true, status: 'Approved', privateField: 'secret' }] : []);
+    ? [{ id: 'c1', title: 'Walk dog', completed: true, status: 'Approved', privateField: 'secret' }] : []);
   const result = await getDashboard(42, { googleId: 'caller' });
   expect(integration.getUsableCredentials).toHaveBeenCalledWith(42);
   expect(chores.getChores).toHaveBeenCalledWith('p42', expect.anything(), expect.anything());
   expect(JSON.stringify(result)).not.toContain('private-token');
   expect(JSON.stringify(result)).not.toContain('secret');
-  expect(result.familyChores.data.chores[0]).toEqual({ title: 'Walk dog', completed: true, status: 'Approved', dueDate: null });
+  expect(result.familyChores.data.chores[0]).toEqual({ id: 'c1', title: 'Walk dog', completed: true, status: 'Approved', dueDate: null });
   expect(result.familyChores.data.appUrl).toBe('https://chores.example.com');
+});
+test('family chores says whether the checkbox can write, with the reconnect link when it cannot', async () => {
+  integration.getStatus.mockResolvedValue({ connected: true });
+  const creds = { token: 't', playerId: 'p42', baseUrl: 'https://chores.example.com/', displayName: 'Person' };
+  integration.getUsableCredentials.mockResolvedValue(creds);
+  chores.getChores.mockResolvedValue([]);
+  integration.canWriteChores.mockResolvedValue(false);
+  let result = await getDashboard(42, {});
+  expect(integration.canWriteChores).toHaveBeenCalledWith(42, creds);
+  expect(result.familyChores.data.canComplete).toBe(false);
+  expect(result.familyChores.data.reconnectUrl).toBe('https://chores.example.com/profile?tab=integrations');
+  integration.canWriteChores.mockRejectedValue(new Error('down'));
+  result = await getDashboard(42, {});
+  expect(result.familyChores).toMatchObject({ status: 'ready', data: { canComplete: false } });
+  integration.canWriteChores.mockResolvedValue(true);
+  result = await getDashboard(42, {});
+  expect(result.familyChores.data.canComplete).toBe(true);
 });
 test('family chores shows overdue open chores, not only ones due exactly today', async () => {
   jest.useFakeTimers().setSystemTime(new Date('2026-10-14T16:00:00Z'));

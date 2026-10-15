@@ -239,7 +239,8 @@ data as yours. Opening a card does not send a message or approve an action, and
 I can't reorder the cards. The Calendar page shows only the
 seven days I read — the month beyond them is blank, not empty — and its focus
 areas are a guess from each title. Its calendar switches hide events on that
-page in this browser only; they don't change Google Calendar or what I read. On the Family page I can't add or change
+page in this browser only; they don't change Google Calendar or what I read. On the Family page you can tick
+your own chores done (with a few seconds to Undo), but I can't add or edit
 chores — they come from Family Chores — and the sports tags are words found in
 calendar titles that mention the child. Live updates only reach a dashboard whose
 connection is healthy; when the socket is down it falls back to re-reading

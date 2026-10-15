@@ -1,10 +1,14 @@
 const config = require("../config");
 
 /**
- * Thin client for the Family Chores Public API (read-only, scoped).
+ * Thin client for the Family Chores Public API (scoped).
  *
  * Spec: GET /api/v1/me, /api/v1/players,
  *       /api/v1/players/{id}/coins, /api/v1/players/{id}/chores/today.
+ * One write: POST/DELETE /api/v1/players/{id}/chores/{choreId}/complete
+ * (scope write:chores). Only the action layer calls it — the complete_chore
+ * and undo_complete_chore descriptors in services/actions/registry.js — so a
+ * write here always has a recorded human approval behind it.
  * All requests are Bearer-authenticated with the user's Family Chores API
  * token. Responses are small JSON documents (see the OpenAPI doc shipped
  * with this integration).
@@ -18,10 +22,10 @@ function normalizeBase(baseUrl) {
 }
 
 /**
- * Perform an authenticated GET against the Family Chores API.
+ * Perform an authenticated request against the Family Chores API.
  * Throws an Error tagged with `.status` on non-2xx so callers can map it.
  */
-async function fcGet(path, { token, baseUrl, timeoutMs = DEFAULT_TIMEOUT_MS }) {
+async function fcRequest(method, path, { token, baseUrl, timeoutMs = DEFAULT_TIMEOUT_MS }) {
 	const base = normalizeBase(baseUrl);
 	if (!base) throw new Error("Family Chores API base URL is not configured");
 	if (!token) throw new Error("Missing Family Chores API token");
@@ -30,7 +34,7 @@ async function fcGet(path, { token, baseUrl, timeoutMs = DEFAULT_TIMEOUT_MS }) {
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
 	try {
 		const resp = await fetch(`${base}${path}`, {
-			method: "GET",
+			method,
 			headers: {
 				Authorization: `Bearer ${token}`,
 				Accept: "application/json",
@@ -59,6 +63,10 @@ async function fcGet(path, { token, baseUrl, timeoutMs = DEFAULT_TIMEOUT_MS }) {
 	} finally {
 		clearTimeout(timer);
 	}
+}
+
+function fcGet(path, opts) {
+	return fcRequest("GET", path, opts);
 }
 
 /** GET /api/v1/me — token owner + family context (also validates the token). */
@@ -178,6 +186,24 @@ async function resolveIdentity(opts) {
 	};
 }
 
+function completePath(playerId, choreId) {
+	return `/api/v1/players/${encodeURIComponent(playerId)}/chores/${encodeURIComponent(choreId)}/complete`;
+}
+
+/**
+ * Mark a chore done, as ticking it in the app does (approval-required chores
+ * a player completes go to Submitted; coins are paid the app's way).
+ * Resolves to { choreId, playerId, status }. Action layer only.
+ */
+async function completeChore(playerId, choreId, opts) {
+	return fcRequest("POST", completePath(playerId, choreId), opts);
+}
+
+/** Undo a completion, as the app's Undo does (coins taken back). Action layer only. */
+async function undoCompleteChore(playerId, choreId, opts) {
+	return fcRequest("DELETE", completePath(playerId, choreId), opts);
+}
+
 module.exports = {
 	getMe,
 	listPlayers,
@@ -187,4 +213,6 @@ module.exports = {
 	getOpenApiSpec,
 	apiGet,
 	resolveIdentity,
+	completeChore,
+	undoCompleteChore,
 };

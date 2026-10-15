@@ -7,6 +7,7 @@ const {
 	decline,
 	grantAuthority,
 	revokeAuthority,
+	perform,
 } = require("../controllers/actions");
 const { requireAuthOrDevice } = require("../middleware/auth");
 
@@ -30,6 +31,11 @@ router.get("/history", listRecent);
 // ordering would otherwise decide which handler wins.
 router.post("/authority/:actionId", express.json(), grantAuthority);
 router.delete("/authority/:actionId", revokeAuthority);
+
+// A click in the app that is itself the approval (a chore's checkbox, its
+// Undo). Only registry actions marked `direct` are accepted. Declared before
+// the /:uuid/* routes for the same reason as /authority.
+router.post("/direct/:actionId", express.json(), perform);
 
 // The two buttons on a proposal card.
 router.post("/:uuid/confirm", express.json(), confirm);

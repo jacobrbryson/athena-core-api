@@ -112,9 +112,12 @@ async function getDashboard(profileId, user) {
         const opts = { token: creds.token, baseUrl: creds.baseUrl };
         const today = clock.describeNow(new Date()).iso;
         return read(async () => {
-          const [open, done] = await Promise.all([
+          const [open, done, canComplete] = await Promise.all([
             chores.getChores(creds.playerId, { range: 'all', status: 'open', includeRecurring: false }, opts),
             chores.getChores(creds.playerId, { range: 'today', status: 'completed', includeRecurring: false }, opts),
+            // Whether the page may offer the checkbox: the token needs
+            // write:chores, which tokens minted before 2026-10-14 lack.
+            integration.canWriteChores(profileId, creds).catch(() => false),
           ]);
           const due = open.filter(c => !c.dueDate || c.dueDate <= today)
             .sort((a, b) => String(a.dueDate || '').localeCompare(String(b.dueDate || '')));
@@ -122,7 +125,12 @@ async function getDashboard(profileId, user) {
             name: creds.displayName,
             // The Family Chores site itself, for the page's "View all" link.
             appUrl: /^https:\/\//.test(creds.baseUrl || '') ? creds.baseUrl : null,
-            chores: [...due, ...done].slice(0, 25).map(c => ({ title: c.title || 'Untitled chore', status: c.status || null, completed: !!c.completed, dueDate: c.dueDate || null })),
+            // Ticking a chore runs the complete_chore action (actions/registry.js
+            // DIRECT_ACTIONS); a read-only token gets the reconnect link instead,
+            // which is where Family Chores re-mints Athena's token.
+            canComplete,
+            reconnectUrl: /^https:\/\//.test(creds.baseUrl || '') ? `${creds.baseUrl.replace(/\/+$/, '')}/profile?tab=integrations` : null,
+            chores: [...due, ...done].slice(0, 25).map(c => ({ id: c.id ? String(c.id) : null, title: c.title || 'Untitled chore', status: c.status || null, completed: !!c.completed, dueDate: c.dueDate || null })),
           };
         });
       } catch { return section('error'); }

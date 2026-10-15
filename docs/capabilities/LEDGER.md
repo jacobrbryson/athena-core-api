@@ -1,5 +1,7 @@
 # Capability ledger
 
+- 2026-10-14 — Chores can be ticked done on the Family page: the tap marks it done in Family Chores (the click is the approval, recorded in the action layer as complete_chore), a snackbar offers Undo for a few seconds (undo_complete_chore), then the chore leaves the list; a read-only link shows a reconnect prompt instead of checkboxes. Needs Family Chores' new write:chores scope — `family-chores.md`, `companion-dashboard.md` (status: live)
+
 - 2026-10-14 — Family page redesigned to the owner's concept: Athena's take on the family's week (built from the calendar, health reports and birthdays, never a model), four tiles, chores and the family's day, people as cards with today's status, family upcoming events, Kids with sports tags, Pets and Birthdays; the editable people list stays under The detail — `companion-dashboard.md` (status: live)
 
 - 2026-10-14 — Calendar page redesigned to the owner's concept: four week-at-a-glance tiles, a seven-day strip that picks the day, an agenda with times, topic colours and a countdown, a month view, the next two days, travel and time away, Focus Areas filters, Quick Add (starts a message — events still need approval) and per-calendar show/hide switches for the page — `companion-dashboard.md` (status: live)

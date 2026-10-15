@@ -49,6 +49,7 @@ const familyHealth = require("../familyHealth");
 const projectStore = require("../projects");
 const projectShape = require("../projects/shape");
 const projectEntries = require("../projects/entries");
+const familyChores = require("../familyChores");
 
 /** A rejection that is the model's fault, not the person's or the server's. */
 function invalid(message) {
@@ -1577,7 +1578,141 @@ const ACTIONS = [
 	},
 ];
 
-const BY_ID = new Map(ACTIONS.map((a) => [a.id, a]));
+// ---------------------------------------------------------------------------
+// Direct actions — a person's own click in the app, never a proposal
+// ---------------------------------------------------------------------------
+
+/**
+ * Actions only a person's own click can run (index.js perform()).
+ *
+ * Added on the owner's instruction 2026-10-14: ticking a chore on the
+ * companion's Family page marks it done in Family Chores, and the snackbar's
+ * Undo takes it back. The owner chose "the click is the approval, through the
+ * action layer": each tick is one athena_action row, normalized, access-checked
+ * and audited exactly like an approved proposal, recorded as approval "human".
+ *
+ * Kept out of ACTIONS on purpose. Everything that builds Athena's prompt and
+ * reply schema reads ACTIONS (availableFor, promptBlock, paramsSchema, the
+ * proposed_action id enum), so these are never offered to the model, never
+ * proposable from chat, and attempt() refuses one by name. They are never
+ * standing either — a click is the approval every time. Letting Athena propose
+ * a chore completion in chat would be a separate, owner-approved change (it
+ * would also need chore ids in her chat context, which she doesn't have).
+ *
+ * Which chore is meant is never taken on trust: normalize() finds the id on
+ * the person's OWN linked player's list, as Family Chores reports it now, and
+ * takes the title from there. The player is always the linked one, never a
+ * request field.
+ */
+const CHORE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+async function choreLink(profileId) {
+	// Lazy: integration.js pulls in half the services, some of which read this file.
+	const integration = require("../integration");
+	const creds = await integration.getUsableCredentials(profileId);
+	if (!creds?.playerId) throw invalid("Family Chores isn't connected");
+	return { integration, creds, opts: { token: creds.token, baseUrl: creds.baseUrl } };
+}
+
+/** The chore on the person's own list, in the state this action needs, or a refusal. */
+async function findOwnChore(profileId, raw, status) {
+	const id = str(raw.chore_id, 128);
+	if (!id || !CHORE_ID.test(id)) throw invalid("A chore id is required");
+	const { creds, opts } = await choreLink(profileId);
+	// Open: due any time (overdue ones are on the list too). Completed: today,
+	// which is what the Family page lists and what Undo is for.
+	const list = await familyChores.getChores(
+		creds.playerId,
+		status === "open" ? { range: "all", status: "open", includeRecurring: false } : { range: "today", status: "completed", includeRecurring: false },
+		opts
+	);
+	const chore = list.find((c) => c && String(c.id) === id);
+	if (!chore) {
+		throw invalid(status === "open" ? "That chore isn't open on your list" : "That chore wasn't completed today");
+	}
+	return { chore_id: id, chore_title: str(chore.title, 160) || "Untitled chore" };
+}
+
+/** A Family Chores refusal, worded for the person; the API's own message when it has one. */
+function choreWriteError(err) {
+	// 401: the token was revoked. 403 naming a scope: a read-only token from
+	// before write:chores existed. Either way the fix is reconnecting; any other
+	// 403 (a role Family Chores refuses) keeps its own message.
+	if (err?.status === 401 || (err?.status === 403 && /scope/i.test(err.message || ""))) {
+		return Object.assign(new Error("Family Chores needs to be reconnected to allow marking chores done"), {
+			status: 403,
+			code: "family_chores_reconnect",
+		});
+	}
+	return err;
+}
+
+const DIRECT_ACTIONS = [
+	{
+		id: "complete_chore",
+		label: "Mark a chore done",
+		provider: null,
+		consentType: "action_authority",
+		reversible: true,
+		standing: false,
+		direct: true,
+		describe: "Mark one of their own Family Chores chores done (the Family page checkbox).",
+		params: { chore_id: "The Family Chores chore id." },
+		sameAs: false,
+		async availableTo(profileId) {
+			const integration = require("../integration");
+			return integration.canWriteChores(profileId);
+		},
+		async normalize(raw = {}, ctx = {}) {
+			return findOwnChore(ctx.profileId, raw, "open");
+		},
+		summarize(p) {
+			return `Mark "${p.chore_title}" done in Family Chores`.slice(0, 500);
+		},
+		async execute(profileId, params) {
+			const { creds, opts } = await choreLink(profileId);
+			try {
+				const result = await familyChores.completeChore(creds.playerId, params.chore_id, opts);
+				return { ref: params.chore_id, detail: result?.status ? `Now ${result.status}` : null };
+			} catch (err) {
+				throw choreWriteError(err);
+			}
+		},
+	},
+	{
+		id: "undo_complete_chore",
+		label: "Undo a chore",
+		provider: null,
+		consentType: "action_authority",
+		reversible: true,
+		standing: false,
+		direct: true,
+		describe: "Undo marking one of their own Family Chores chores done (the Family page snackbar's Undo).",
+		params: { chore_id: "The Family Chores chore id." },
+		sameAs: false,
+		async availableTo(profileId) {
+			const integration = require("../integration");
+			return integration.canWriteChores(profileId);
+		},
+		async normalize(raw = {}, ctx = {}) {
+			return findOwnChore(ctx.profileId, raw, "completed");
+		},
+		summarize(p) {
+			return `Undo "${p.chore_title}" in Family Chores`.slice(0, 500);
+		},
+		async execute(profileId, params) {
+			const { creds, opts } = await choreLink(profileId);
+			try {
+				const result = await familyChores.undoCompleteChore(creds.playerId, params.chore_id, opts);
+				return { ref: params.chore_id, detail: result?.status ? `Now ${result.status}` : null };
+			} catch (err) {
+				throw choreWriteError(err);
+			}
+		},
+	},
+];
+
+const BY_ID = new Map([...ACTIONS, ...DIRECT_ACTIONS].map((a) => [a.id, a]));
 
 /**
  * The JSON schema for `proposed_action.params` in the reply schema: every
@@ -1690,4 +1825,4 @@ function get(id) {
 	return (typeof id === "string" && BY_ID.get(id)) || null;
 }
 
-module.exports = { ACTIONS, get, invalid, paramsSchema };
+module.exports = { ACTIONS, DIRECT_ACTIONS, get, invalid, paramsSchema };

@@ -474,6 +474,44 @@ async function getUsableCredentials(profileId, provider = PROVIDER_FAMILY_CHORES
 	};
 }
 
+/** The scope a Family Chores token needs to mark chores done. */
+const CHORE_WRITE_SCOPE = "write:chores";
+
+/**
+ * Can this person's Family Chores token mark chores done?
+ *
+ * Read from the link's stored scopes when we have them. Links made before
+ * Family Chores reported scopes have none stored, so the first check asks the
+ * token itself (/me lists its scopes) and remembers the answer on the link; a
+ * reconnect replaces the row's scopes and the next check asks again. A check
+ * that cannot reach Family Chores answers false and stores nothing — the
+ * checkbox shows the reconnect prompt for one load rather than offering a
+ * write that might not be allowed.
+ */
+async function canWriteChores(profileId, creds = null) {
+	const row = await getActiveLinkRow(profileId);
+	if (!row) return false;
+	if (row.scopes) return String(row.scopes).split(/[\s,]+/).includes(CHORE_WRITE_SCOPE);
+	const usable = creds || (await getUsableCredentials(profileId));
+	if (!usable) return false;
+	let scopes;
+	try {
+		const me = await familyChores.getMe({ token: usable.token, baseUrl: usable.baseUrl });
+		if (!Array.isArray(me?.scopes)) return false;
+		scopes = me.scopes.filter((x) => typeof x === "string");
+	} catch (err) {
+		console.warn("[integration] family chores scope check failed:", err.message);
+		return false;
+	}
+	await pool
+		.query(
+			"UPDATE integration_link SET scopes = ? WHERE id = ? AND scopes IS NULL",
+			[scopes.join(" ").slice(0, 255), row.id]
+		)
+		.catch((err) => console.warn("[integration] storing family chores scopes failed:", err.message));
+	return scopes.includes(CHORE_WRITE_SCOPE);
+}
+
 /** Keywords that signal a message is about Family Chores data. */
 const FC_KEYWORDS =
 	/\b(chore|chores|task|tasks|coin|coins|allowance|balance|reward|rewards|achievement|achievements|to.?do)\b/i;
@@ -1037,6 +1075,8 @@ module.exports = {
 	getStatus,
 	disconnect,
 	getUsableCredentials,
+	canWriteChores,
+	CHORE_WRITE_SCOPE,
 	touchSynced,
 	messageNeedsFamilyChores,
 	buildFamilyChoresContext,
