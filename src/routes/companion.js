@@ -142,6 +142,7 @@ router.post('/dashboard/health/nutrition', requireAuth, express.json({ limit: '2
 router.delete('/dashboard/health/nutrition/:uuid', requireAuth, healthPlan.removeEntry);
 // Food by camera and favorites (migration 0074). The scan's photo arrives as
 // base64 JSON; server.js gives this path an 8 MB parser, as for memory photos.
+router.get('/dashboard/health/nutrition', requireAuth, healthPlan.day);
 router.post('/dashboard/health/nutrition/scan', requireAuth, express.json({ limit: '8mb' }), healthPlan.scan);
 router.patch('/dashboard/health/nutrition/:uuid', requireAuth, express.json({ limit: '2kb' }), healthPlan.updateEntry);
 router.post('/dashboard/health/favorites', requireAuth, express.json({ limit: '2kb' }), healthPlan.saveFavorite);

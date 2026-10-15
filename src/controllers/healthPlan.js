@@ -44,6 +44,13 @@ module.exports = {
 		await healthPlan.addEntry(profileId, req.body || {});
 		return res.status(201).json({ nutrition: await healthPlan.nutrition(profileId, { today: req.body?.today || req.body?.eaten_on }) });
 	}),
+	/** One day's food log, for paging back through past days. Never ahead of the person's today. */
+	day: handler("load that day", async (profileId, req, res) => {
+		const { date, today } = req.query;
+		if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) return res.status(400).json({ success: false, message: "A date (YYYY-MM-DD) is required." });
+		if (typeof today === "string" && date > today) return res.status(400).json({ success: false, message: "That day hasn't happened yet." });
+		return res.json({ nutrition: await healthPlan.nutrition(profileId, { today: date }) });
+	}),
 	updateEntry: handler("save that", async (profileId, req, res) => {
 		if (!(await healthPlan.updateEntry(profileId, req.params.uuid, req.body || {}))) return res.status(404).json({ success: false, message: "Not found." });
 		return res.json({ nutrition: await healthPlan.nutrition(profileId, { today: req.body?.today }) });

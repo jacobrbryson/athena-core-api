@@ -49,7 +49,9 @@ Open the Health page from the sidebar (or the bottom bar on a phone).
   favorites (tap one to log a serving), **Take a picture** (the food or its
   barcode) or **Manual entry** (name, serving, calories, macros, water, and a
   "Save to favorites" box). "Today" lists what's logged: the star adds or
-  removes a favorite, the pencil corrects an entry, ✕ removes it. Entries from
+  removes a favorite, the pencil corrects an entry, ✕ removes it. The arrows
+  beside the date page back through past days (never ahead of today) to fix,
+  remove or add to them; **New record** opens the form for the day shown. Entries from
   a photo are tagged "Photo estimate", lookups "Barcode".
 - **Targets:** the Nutrition card → "Targets" (or "Set a target" under
   Progress).
@@ -101,6 +103,6 @@ Open the Health page from the sidebar (or the bottom bar on a phone).
 - Chat: `src/controllers/gemini.js` adds the `healthPlan.buildContext` block when `healthPlan.matches(message)`; adults only
 - Frontend: `../../../companion/src/components/HealthPage.tsx` (+ `health.css`), `../../../companion/src/api/healthPlan.ts`; `Dashboard.tsx` HealthPage passes WHOOP/scale data through `SectionPage`'s `hero`
 - Food by camera: `src/services/foodScan.js` — barcode read on the phone (`BarcodeDetector`, EAN/UPC) or by the "vision" task from the photo, check digit validated, looked up at `world.openfoodfacts.org/api/v2/product/:code`; otherwise the vision task estimates the plate. Values clamped to the entry bounds; the photo is never stored. `POST /dashboard/health/nutrition/scan` (8 MB body, listed in `server.js`)
-- Favorites + corrections (migration `0074_nutrition_favorites`: `nutrition_favorite`, `nutrition_entry.source/serving/barcode`): `PATCH /dashboard/health/nutrition/:uuid`, `POST /dashboard/health/favorites`, `DELETE /dashboard/health/favorites/:uuid`, `POST /dashboard/health/favorites/:uuid/log`. An entry is starred when a favorite has its label; correcting a starred entry updates the favorite.
+- Favorites + corrections (migration `0074_nutrition_favorites`: `nutrition_favorite`, `nutrition_entry.source/serving/barcode`): `GET /dashboard/health/nutrition?date=&today=` (a past day's log), `PATCH /dashboard/health/nutrition/:uuid`, `POST /dashboard/health/favorites`, `DELETE /dashboard/health/favorites/:uuid`, `POST /dashboard/health/favorites/:uuid/log`. An entry is starred when a favorite has its label; correcting a starred entry updates the favorite.
 - Tests: `src/services/healthPlan.test.js`, `src/services/foodScan.test.js`
 - Notes: "done" from WHOOP is computed on read from `athena_workout` (via `workoutHistory.list`), never stored, so a deleted workout can't leave a stale tick. The client sends its local date (`today=`) because the server can't know the person's day. Hero image: `companion/public/assets/heart.png`.
