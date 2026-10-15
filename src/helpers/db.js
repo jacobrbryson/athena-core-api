@@ -7,6 +7,9 @@ const pool = mysql.createPool({
 	password: process.env.DB_PASS,
 	database: process.env.DB_NAME,
 	port: process.env.DB_PORT || 3306,
+	// DATETIMEs are stored as UTC (prod runs in UTC). Without this, a process
+	// in another zone reads token expiries hours off and stops refreshing them.
+	timezone: 'Z',
 	...(process.env.DB_TLS_REQUIRED === 'true' ? { ssl: {
 		rejectUnauthorized: true,
 		verifyIdentity: true,
