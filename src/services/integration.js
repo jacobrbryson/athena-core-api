@@ -1,3 +1,4 @@
+const crypto = require("node:crypto");
 const { v4: uuidv4 } = require("uuid");
 const pool = require("../helpers/db");
 const config = require("../config");
@@ -74,16 +75,23 @@ async function resolveActingProfile(user) {
 	return { profileId: profile.id, familyId: family ? family.id : null };
 }
 
-/** Constant-time-ish compare for the partner secret. */
+/**
+ * The partner secret is the ONLY thing authorizing the Family Chores partner
+ * endpoints: since 2026-10-15 the access boundary lets the connect,
+ * disconnect and suggestion paths through without a user (middleware/access.js
+ * PARTNER_PATHS). So this fails closed — an unset secret refuses every call
+ * rather than, as it used to, letting every call in — and compares in
+ * constant time.
+ */
 function verifyPartnerSecret(provided) {
 	const expected = config.FAMILY_CHORES_PARTNER_SECRET;
 	if (!expected) {
-		console.warn(
-			"[integration] FAMILY_CHORES_PARTNER_SECRET is not set; allowing connect without partner auth (set it in production)."
-		);
-		return;
+		console.error("[integration] FAMILY_CHORES_PARTNER_SECRET is not set; refusing partner call.");
+		throw httpError("Partner access is not configured", 503);
 	}
-	if (!provided || provided !== expected) {
+	const a = Buffer.from(String(provided || ""));
+	const b = Buffer.from(String(expected));
+	if (!provided || a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
 		throw httpError("Invalid or missing partner credentials", 401);
 	}
 }

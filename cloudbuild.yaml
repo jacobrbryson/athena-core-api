@@ -50,7 +50,7 @@ steps:
       # needs must be listed here. Anything set out-of-band with `gcloud run
       # services update` is wiped by the next deploy — which is exactly how the
       # OAuth connector callback broke once already.
-      - "--set-env-vars=^@^GCP_PROJECT_ID=$PROJECT_ID@DB_HOST=$_DB_HOST@DB_USER=$_DB_USER@DB_NAME=$_DB_NAME@RECAPTCHA_PROJECT_ID=$_RECAPTCHA_PROJECT_ID@RECAPTCHA_SITE_KEY=$_RECAPTCHA_SITE_KEY@FAMILY_CHORES_ADMIN_ROLES=$_FAMILY_CHORES_ADMIN_ROLES@PUBLIC_API_BASE_URL=$_PUBLIC_API_BASE_URL@OAUTH_GOOGLE_CALLBACK_URL=$_OAUTH_GOOGLE_CALLBACK_URL@INTEGRATION_REDIRECT_ALLOWLIST=$_INTEGRATION_REDIRECT_ALLOWLIST"
+      - "--set-env-vars=^@^GCP_PROJECT_ID=$PROJECT_ID@DB_HOST=$_DB_HOST@DB_USER=$_DB_USER@DB_NAME=$_DB_NAME@RECAPTCHA_PROJECT_ID=$_RECAPTCHA_PROJECT_ID@RECAPTCHA_SITE_KEY=$_RECAPTCHA_SITE_KEY@FAMILY_CHORES_ADMIN_ROLES=$_FAMILY_CHORES_ADMIN_ROLES@PUBLIC_API_BASE_URL=$_PUBLIC_API_BASE_URL@OAUTH_GOOGLE_CALLBACK_URL=$_OAUTH_GOOGLE_CALLBACK_URL@INTEGRATION_REDIRECT_ALLOWLIST=$_INTEGRATION_REDIRECT_ALLOWLIST@FAMILY_CHORES_PARTNER_GOOGLE_ID=$_FAMILY_CHORES_PARTNER_GOOGLE_ID"
 
   # 4. Move the Cloud Run JOBS onto the image this build just deployed.
   #
@@ -112,6 +112,11 @@ substitutions:
   # Family Chores roles allowed to connect Athena (matched against /me.role).
   # Adjust to match Family Chores' real parent/admin role names.
   _FAMILY_CHORES_ADMIN_ROLES: "parent,admin,owner,guardian"
+  # Whose model access Family Chores' chore-suggestion calls are charged to
+  # (middleware/access.js PARTNER_MODEL_PATHS, owner 2026-10-15). The owner's
+  # Google subject id, the same one the nightly job runs as; it must pass the
+  # live grant check like any caller. "" turns partner suggestions off.
+  _FAMILY_CHORES_PARTNER_GOOGLE_ID: "106192760134019149107"
   # Public base URL of the API as the BROWSER sees it — the proxy, not this
   # service. OAuth redirect URIs are built from it, and each must be registered
   # with the provider as <_PUBLIC_API_BASE_URL>/integrations/<provider>/callback.

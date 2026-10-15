@@ -77,6 +77,14 @@ to **profile → Integrations**, disconnect Athena and connect it again.
   Chores POSTs its scoped token to the public connect endpoint with the shared
   partner secret), `/me` check requiring a parent/admin role, email match to an
   existing Athena profile, encrypted token on an `integration_link` row.
+- Partner calls and the access boundary (owner, 2026-10-15): connect,
+  disconnect, suggest-chores and suggest-ghost-chores pass
+  `src/middleware/access.js` without a user (`PARTNER_PATHS`,
+  `PARTNER_MODEL_PATHS`); the partner secret is their only authorization and
+  `verifyPartnerSecret()` fails closed. Suggestion model calls are charged to
+  `FAMILY_CHORES_PARTNER_GOOGLE_ID` (cloudbuild substitution). remember and
+  the child-linking endpoints are still refused. Tests:
+  `src/middleware/access.test.js`, `src/services/integrationPartner.test.js`.
 - Keyword gate + prompt block: `messageNeedsFamilyChores()` /
   `buildFamilyChoresContext()` in the same file; tool-calling path in
   `src/services/familyChoresTools.js`, client in `src/services/familyChores.js`.
