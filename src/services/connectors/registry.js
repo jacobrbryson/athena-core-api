@@ -242,6 +242,64 @@ const PROVIDERS = {
 	},
 
 	// -----------------------------------------------------------------
+	// Google Nest (Smart Device Management) — read-only
+	// -----------------------------------------------------------------
+	// Not a member of the google group. Nest consent is not Google's ordinary
+	// screen: it is the Device Access "Partner Connections" page, scoped to
+	// one Device Access project, where the person picks which homes and
+	// devices to share. So it has its own authorize URL, its own callback
+	// (/integrations/nest/callback, registered on the OAuth client) and its
+	// own revoke. It reuses the Google OAuth client, which the Device Access
+	// project names as its client.
+	//
+	// sdm.service is the only scope asked. Partner Connections is documented
+	// with that scope alone, and identity comes from the structures list
+	// instead of an id_token — see identifyAsync.
+	//
+	// PKCE is off: Partner Connections is documented without it, and a
+	// verifier sent for a challenge that never reached Google fails the
+	// exchange. The client is confidential, so the secret still binds it.
+	nest: {
+		id: "nest",
+		label: "Google Nest",
+		authorizeUrl: `${env("NEST_PCM_BASE_URL", "https://nestservices.google.com/partnerconnections")}/${env("NEST_DEVICE_ACCESS_PROJECT_ID", "unconfigured")}/auth`,
+		tokenUrl: env("GOOGLE_OAUTH_TOKEN_URL", "https://oauth2.googleapis.com/token"),
+		revokeUrl: env("GOOGLE_OAUTH_REVOKE_URL", "https://oauth2.googleapis.com/revoke"),
+		revokeMethod: "POST",
+		revokeBody: (token) => ({ token }),
+		scopes: ["https://www.googleapis.com/auth/sdm.service"],
+		scopeSeparator: " ",
+		clientIdSecret: "GOOGLE_OAUTH_CLIENT_ID",
+		clientSecretSecret: "GOOGLE_OAUTH_CLIENT_SECRET",
+		pkce: false,
+		authorizeParams: { access_type: "offline", prompt: "consent" },
+		tokenAuth: "body",
+		consentType: null,
+		rotatesRefreshToken: false,
+		apiBase: env("NEST_SDM_API_BASE", "https://smartdevicemanagement.googleapis.com/v1"),
+		identify: null,
+		// SDM has no "who am I". A structure's resource name is stable for the
+		// grant and is what every device belongs to, so it keys the link; its
+		// custom name ("Home") labels it. Inlined for the same cycle reason as
+		// Whoop's below.
+		identifyAsync: async (_tokens, { accessToken, apiBase }) => {
+			const project = env("NEST_DEVICE_ACCESS_PROJECT_ID", null);
+			if (!project) return null;
+			const response = await fetch(`${apiBase}/enterprises/${encodeURIComponent(project)}/structures`, {
+				headers: { Authorization: `Bearer ${accessToken}` },
+				signal: AbortSignal.timeout(10000),
+			});
+			if (!response.ok) return null;
+			const first = (await response.json())?.structures?.[0];
+			if (!first?.name) return null;
+			const home = first.traits?.["sdm.structures.traits.Info"]?.customName;
+			// Hashed: a structure name can outrun external_account_id's 190 chars.
+			const key = require("node:crypto").createHash("sha256").update(String(first.name)).digest("hex").slice(0, 40);
+			return { externalAccountId: `structure:${key}`, displayName: home ? `Nest — ${home}` : "Google Nest" };
+		},
+	},
+
+	// -----------------------------------------------------------------
 	// Whoop
 	// -----------------------------------------------------------------
 	whoop: {

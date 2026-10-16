@@ -19,6 +19,8 @@ If you turn it on, I'll say something when there's a real reason to:
   on your calendar — early enough to move, late enough to matter.
 - **Two things clash.** When one event runs into the next, and there's still
   time to do something about it.
+- **A thermostat went offline.** If you've linked Google Nest, I tell you
+  within moments of a thermostat losing its connection — once per outage.
 - **Your day is heavier than your night was.** When your Whoop recovery is low
   *and* you've got a full afternoon. Neither of those is worth saying on its
   own; together they usually are.

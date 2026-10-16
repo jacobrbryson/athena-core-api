@@ -13,6 +13,9 @@ app.set("trust proxy", 1);
 // over exact bytes, then only persists work for opted-in, connected owners.
 // All model work runs later under that owner's live access context.
 app.post('/webhooks/whoop', express.raw({ type: 'application/json', limit: '32kb', inflate: false }), require('./controllers/whoopWebhook').receive);
+// Google Nest events via Pub/Sub push: the controller verifies Google's OIDC
+// token for the configured subscription account before reading anything.
+app.post('/webhooks/nest', express.json({ limit: '96kb' }), require('./controllers/nestWebhook').receive);
 // Image-bearing routes (photo memories, camera keyframes, project photos) get a larger body
 // limit; everything else keeps the 100kb default. body-parser skips a body
 // that is already parsed, so the global parser below is a no-op for these.

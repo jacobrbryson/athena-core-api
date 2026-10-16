@@ -1,12 +1,12 @@
 ---
 id: property
 title: Property
-summary: I show your property details and image map beside your projects, concerns, and calculated area conditions.
-where: the left menu → Property → Add property or Edit property
+summary: I show your property details and image map beside your projects, concerns, reported issues and calculated area conditions.
+where: the left menu → Property → Add property or Edit property; Report an issue in the Issues card or tab
 status: live
 surfaces: [companion]
 audiences: [adult]
-triggers: [property, property map, acreage, aerial image, property health, key areas, property details]
+triggers: [property, property map, acreage, aerial image, property health, key areas, property details, report an issue, property issue, something broke, not working, repair, find a pro, hvac, plumbing, leak]
 ---
 
 ## What I can do
@@ -28,7 +28,24 @@ The overview's **Up next** card shows the three highest-ranked open projects.
 It matches the height of **Property at a glance** when they sit side by side.
 At its bottom, **See all projects** is a text link to the Projects tab, while
 **New project** is a separate button that opens the project drawer.
-The rounded navigation bar has icons for **Overview**, **Projects**, **Concerns**,
+You can report an issue — something wrong at the house right now — with
+**Report an issue**. Choose where it is (your key areas first, then Heating &
+cooling, Plumbing, Electrical, Roof & exterior, Appliances, Security,
+Yard / Irrigation, or Other with your own words), describe what's happening,
+pick a severity (Low, Medium, High or Emergency), say when you noticed it
+(Today, Yesterday or a date), add up to four photos, and leave me a note.
+The most serious open issue shows as a banner across the top of Overview and
+Issues, with **View details**, **Troubleshoot with Athena** and **Find a pro**.
+Troubleshoot and Find a pro open a conversation with me about that issue; I
+also see your open issues whenever we talk, so you can just ask. The details
+drawer lets you edit an issue, mark it resolved, reopen it or delete it. Its
+**Notes** section is a running log for the issue — "Left a voicemail at 8:45" —
+with each note's time; web addresses and phone numbers in a note become links
+you can tap. Delete a note with its ✕. I see the latest few notes on each open
+issue when we talk.
+The **Active issues** card counts open issues, and Recent activity lists issues
+reported and resolved beside project updates.
+The rounded navigation bar has icons for **Overview**, **Issues**, **Vehicles**, **Projects**, **Concerns**,
 **Property Map** and **Seasonal focus**. Selecting a tab replaces the content
 below the bar and highlights the tab in cyan. The selected highlight fills its
 entire segment, following the bar's rounded outer edges. **Overview** shows the
@@ -51,6 +68,9 @@ You can also open **Manage key areas** from the **Property Map** tab.
 
 ## When it doesn't work
 
+- If issues fail to load or save, I say so with **Retry**; a failed save keeps
+  the form open with what you typed.
+
 - If details fail to load, use **Retry**. A failed save leaves your edits open.
 - Choose an image under 20 MB. I resize uploads to JPEG; unusually detailed
   images may need a smaller source image.
@@ -65,15 +85,29 @@ I currently support one property per person. This is an uploaded image map,
 not a satellite service or a legal survey. Replacing the overview image clears
 its pins and boundary. Images are saved with your account's property details.
 
-Area conditions are indicators from records, not inspections. Unresolved linked
-concerns of severity 4 or 5 mean **At risk**. Other unresolved concerns, blocked
-work, or overdue unfinished work mean **Needs attention**. Otherwise an area
-with linked records is **On track**. Concerns linked to an area's projects also
-count. Overall health takes the most serious area condition; incomplete
-assessment shows **Not assessed** if no assessed area needs attention.
+An issue is a dated report, not a monitored sensor: I don't watch your
+thermostat or send you updates about an issue, and I don't book or call a pro —
+Find a pro asks me to look one up, and you make the call. If anyone is in
+danger, call 911 first; the form says so when you choose Emergency. Photos are
+stored with the issue; leave children out of them.
+
+The **Property health** card reflects active issues only: **Good** with none
+open, **Needs attention** when the worst is Low or Medium, **At risk** for High
+and **Emergency** for Emergency. Its note names the issue, or how many are open
+and the worst one. Concerns and key areas don't decide it — they describe
+standing problems and planned work, not what's wrong today.
+
+Key area conditions on the **Key areas** card are indicators from records, not
+inspections. Unresolved linked concerns of severity 4 or 5 mean **At risk**. An
+open High or Emergency issue whose place matches an area's name puts that area
+**At risk**; a Low or Medium one means **Needs attention**. Other unresolved
+concerns, blocked work, or overdue unfinished work mean **Needs attention**.
+Otherwise an area with linked records is **On track**. Concerns linked to an
+area's projects also count.
 
 Recent activity shows project updates, not a complete audit trail. Seasonal focus
-uses existing project seasonal months. I do not add asset inventories, recurring
+uses existing project seasonal months. The **Vehicles** tab keeps the cars at
+this property (see Vehicles). Otherwise I do not add asset inventories, recurring
 maintenance, documents or finances here.
 Weather is an hourly forecast, not a live thermometer. I use Google Maps to
 locate the saved address and the US National Weather Service to retrieve its
@@ -89,3 +123,9 @@ forecast; forecasts may be cached for up to 30 minutes.
 - API: `src/controllers/properties.js`, `src/routes/projects.js`; GET/PUT `/api/v1/projects/property`.
 - Schema: `db/migrations/0072_properties.up.sql`; UUID primary key and a unique profile index enforce one property today.
 - Images: resized JPEG data in the profile-scoped details record, not public URLs.
+- Issues UI: `../../../companion/src/components/PropertyIssues.tsx` (report/edit drawer, banner, list, details), `../../../companion/src/api/propertyIssues.ts`; mock in `../../../companion/mock/projects.ts`.
+- Issues API: `src/controllers/propertyIssues.js` — GET/POST `/api/v1/projects/property/issues`, PATCH/DELETE `/:uuid`, GET `/:uuid/photos`; adult-only, profile-scoped, every write returns the whole list. Tests: `src/controllers/propertyIssues.test.js`.
+- Issues schema: `db/migrations/0075_property_issues.up.sql` — `athena_property_issue` plus `athena_property_issue_photo` (JPEG data URLs, at most four, kept apart so listing never carries image bytes).
+- Issue notes: POST `/api/v1/projects/property/issues/:uuid/notes`, DELETE `/:uuid/notes/:noteUuid`; returned on each issue as `log`. Schema `db/migrations/0077_property_issue_notes.up.sql`; before it is installed issues list without notes.
+- Issues in her prompt: `src/services/projects/prompt.js` reads open issues through `openIssues()`; read-only, never throws.
+- Not built: the mockup's "Notify me about updates" — Athena speaking first is the protected initiative service (`src/services/initiative/`), and a new trigger is the owner's decision.

@@ -14,7 +14,7 @@ triggers: [connect, connected, connection, link, linked, unlink, disconnect, int
 I can link to accounts you already have and read from them during our
 conversation — so "what's on tomorrow?" gets a real answer instead of a guess.
 Right now that's **Google** (Gmail, Calendar and Contacts),
-**Whoop**, **Jira** and **Slack**. Family Chores links differently (from the
+**Google Nest** (thermostats), **Whoop**, **Jira** and **Slack**. Family Chores links differently (from the
 Family Chores side).
 
 Signing in with Google also asks, on one Google screen, for Gmail, Calendar

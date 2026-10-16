@@ -40,6 +40,7 @@
 const { createHash } = require("crypto");
 const googleCalendar = require("../connectors/googleCalendar");
 const whoop = require("../connectors/whoop");
+const nest = require("../connectors/nest");
 const familyHealth = require("../familyHealth");
 const dreamQuestions = require("../dreams/questions");
 
@@ -279,6 +280,52 @@ const TRIGGERS = [
 		brief(f) {
 			const who = f.people.map((p) => `${p.personName} (${p.symptom}, every ${p.everyHours}h)`).join(" and ");
 			return `It's time for the update they asked to log on ${who}. Ask how it's going — you can log what they tell you.`;
+		},
+	},
+
+	{
+		id: "nest_offline",
+		label: "A thermostat went offline",
+		// Added on the owner's instruction (2026-10-16): "alert me next time
+		// [the downstairs Nest] is offline". The source is the person's own
+		// Nest link, so it is only evaluated once they have connected it;
+		// opt-in, mutes and quiet hours apply exactly as for every trigger.
+		// The Pub/Sub push (controllers/nestWebhook.js) runs this person's pass
+		// the moment a device reports offline; the scheduled pass is the
+		// backstop, and re-reads Google at most hourly.
+		sources: ["nest"],
+		urgency: "high",
+		ttlMs: 6 * 60 * MINUTE,
+		describe: "Tell me when a Nest thermostat loses its connection.",
+
+		async evaluate(profileId, { now = new Date() } = {}) {
+			await nest.refreshIfStale(profileId, { now }).catch((err) =>
+				console.warn("[initiative] nest refresh failed:", err.message));
+			const offline = await nest.offlineDevices(profileId);
+			if (!offline.length) return null;
+			return {
+				// Each device and the instant it went offline: one nudge per
+				// outage, however long it lasts, and a second device dropping
+				// later is a new occurrence that names both.
+				dedupeKey: `nest:${createHash("sha1").update(offline.map((d) => `${d.name}@${d.offlineSince}`).sort().join("|")).digest("hex")}`,
+				facts: {
+					devices: offline.map((d) => ({
+						title: nest.deviceTitle(d),
+						room: d.room,
+						since: d.offlineSince,
+						at: nest.clockTime(d.offlineSince),
+						minutes: Math.max(0, Math.round((now.getTime() - Date.parse(d.offlineSince)) / MINUTE)),
+					})),
+				},
+			};
+		},
+
+		brief(f) {
+			const list = f.devices.map((d) => `the ${d.title} (offline since ${d.at})`).join(" and ");
+			return (
+				`Google reports ${list} as offline, so it can't be read or controlled right now. ` +
+				`Don't guess why — power, Wi-Fi or the thermostat itself are all possible.`
+			);
 		},
 	},
 

@@ -1,5 +1,15 @@
 # Capability ledger
 
+- 2026-10-16 — Property gains a Vehicles tab: the cars kept at the property with year/make/model, plate, VIN, odometer and a photo; registration, inspection, insurance and next-service dates (or mileage) shown as overdue / soon / later; a dated service history that updates the odometer; Ask Athena about it. Vehicles ride in her prompt; no dashboard card. Migration 0078 applied 2026-10-16 — `vehicles.md`, `property.md` (status: live)
+
+- 2026-10-16 — Property issue details gain a Notes log: dated notes per issue, with web addresses and phone numbers as tappable links; the latest three notes on each open issue ride in her prompt. Needs migration 0077 — `property.md` (status: live)
+
+- 2026-10-16 — Property health now follows active issues only (Good / Needs attention / At risk / Emergency, with the issue named in its note); concerns and key areas keep their conditions on the Key areas card instead of deciding the headline — `property.md` (status: live)
+
+- 2026-10-16 — Property gains Report an issue: where (key areas or house systems), what's happening, severity, when noticed, up to four photos and a note for Athena; the most serious open issue shows as a banner with View details, Troubleshoot with Athena and Find a pro, plus an Issues tab, an Active issues card, issue entries in Recent activity and issue-aware property health. Open issues ride in her prompt. Migration 0075 applied 2026-10-16 — `property.md` (status: live)
+
+- 2026-10-16 — Google Nest can be linked from Connected apps: I can say whether each shared thermostat is online, the temperature, humidity, mode and setting, and I alert you (through Initiative, as "A thermostat went offline") within moments of one losing its connection, via Google's Pub/Sub push with an hourly backstop. Read-only; thermostats only. Needs the Device Access project, Pub/Sub subscription and migration 0076 before it works — `nest.md`, `initiative.md`, `connected-apps.md` (status: partial)
+
 - 2026-10-15 — Conversation mode works in phone and tablet browsers, Safari and older Chrome too, turn by turn like the Android app (no cutting in; desktop Chrome/Edge 135+ keep barge-in) — `conversation-mode.md` (status: partial)
 
 - 2026-10-15 — Conversation mode works in the Android app: the phone's own recognizer listens whenever Athena isn't speaking (no barge-in on the phone yet); it was greyed out there before. Needs an APK rebuild — `conversation-mode.md` (status: partial)
@@ -549,3 +559,4 @@ See [`README.md`](README.md) for the full contract.
 - 2026-10-15 — The emergency alert's map zooms and pans: + and − buttons, pinch, scroll wheel or double-tap to zoom, drag to move, and Fit all to bring every call back into view; the same on the map inside an alert I bring up in conversation — `nearby-incidents.md` (status: live)
 - 2026-10-15 — Log food has a Tell Athena option: type what you ate ("Big Mac from McDonald's"), Athena looks up its published nutrition on the web and logs the calories and macros, opening the entry to check; tagged "Told Athena" — `training-and-nutrition.md` (status: partial)
 - 2026-10-15 — The heart trace on the Health page is now a moving monitor that beats at your average heart rate; while the Android app is reading your band it beats at your live heart rate and the label reads Live Heart Rate — `heart-rate.md` (status: live)
+- 2026-10-16 — In the food log, New record is now a menu like Log food's — Tell Athena, Take a picture or Manual entry — and whatever it logs goes to the day being looked at — `training-and-nutrition.md` (status: partial)

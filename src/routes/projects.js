@@ -14,6 +14,25 @@ router.post('/', json, c.create);
 router.get('/property', require('../controllers/properties').list);
 router.get('/property/weather', require('../controllers/properties').weather);
 router.put('/property', express.json({ limit: '4mb' }), require('../controllers/properties').save);
+// Issue photos arrive as JPEG data URLs (up to four of 1.5 MB); server.js gives
+// /projects/property an 8 MB parser before the global one.
+const issues = require('../controllers/propertyIssues');
+router.get('/property/issues', issues.list);
+router.post('/property/issues', express.json({ limit: '8mb' }), issues.create);
+router.patch('/property/issues/:uuid', express.json({ limit: '8mb' }), issues.update);
+router.delete('/property/issues/:uuid', issues.remove);
+router.get('/property/issues/:uuid/photos', issues.photos);
+router.post('/property/issues/:uuid/notes', json, issues.addNote);
+router.delete('/property/issues/:uuid/notes/:noteUuid', issues.removeNote);
+// Vehicle photos are one 1.5 MB JPEG data URL; the same 8 MB parser covers them.
+const vehicles = require('../controllers/propertyVehicles');
+router.get('/property/vehicles', vehicles.list);
+router.post('/property/vehicles', express.json({ limit: '4mb' }), vehicles.create);
+router.patch('/property/vehicles/:uuid', express.json({ limit: '4mb' }), vehicles.update);
+router.delete('/property/vehicles/:uuid', vehicles.remove);
+router.get('/property/vehicles/:uuid/photo', vehicles.getPhoto);
+router.post('/property/vehicles/:uuid/service', json, vehicles.addService);
+router.delete('/property/vehicles/:uuid/service/:serviceUuid', vehicles.removeService);
 
 router.post('/concerns', json, c.createConcern);
 router.patch('/concerns/:uuid', json, c.updateConcern);

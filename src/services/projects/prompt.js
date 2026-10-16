@@ -10,13 +10,37 @@ const projects = require("./index");
 const { rank } = require("./rank");
 const { CLOSED } = require("./shape");
 const bindings = require("./bindings");
+const { openIssues } = require("../../controllers/propertyIssues");
+const { promptVehicles } = require("../../controllers/propertyVehicles");
 
 const MAX_LINES = 18;
 const AREA = { health: "Health", family: "Family", community: "Community", work: "Work", home: "Home" };
 
+/** One vehicle: what it is, its mileage, what comes due, and the latest work. */
+function vehicleLine(v) {
+	const car = [v.year, v.make, v.model].filter(Boolean).join(" ");
+	const due = [
+		["registration", v.registrationDue],
+		["inspection", v.inspectionDue],
+		["insurance renewal", v.insuranceDue],
+		["next service", v.serviceDue],
+	]
+		.filter(([, d]) => d)
+		.map(([what, d]) => `${what} ${d}`);
+	if (v.serviceDueMiles !== null) due.push(`next service at ${v.serviceDueMiles} mi`);
+	const bits = [
+		car && car !== v.name ? car : null,
+		v.color,
+		v.odometer !== null ? `${v.odometer} mi as of ${v.odometerOn}` : null,
+		due.length ? `due: ${due.join(", ")}` : null,
+		v.service.length ? `latest work: ${v.service.map((s) => `${s.doneOn} ${s.what.slice(0, 120)}${s.odometer !== null ? ` at ${s.odometer} mi` : ""}`).join("; ")}` : null,
+	].filter(Boolean);
+	return `- "${v.name}"${bits.length ? ` (${bits.join("; ")})` : ""}${v.notes ? ` Their note: ${v.notes.slice(0, 200)}` : ""}`;
+}
+
 async function promptBlock(profileId) {
-	const all = await projects.getAll(profileId);
-	if (!all.projects.length && !all.concerns.length) return null;
+	const [all, issues, vehicles] = await Promise.all([projects.getAll(profileId), openIssues(profileId), promptVehicles(profileId)]);
+	if (!all.projects.length && !all.concerns.length && !issues.length && !vehicles.length) return null;
 	const ranks = rank(all);
 	const byId = new Map(all.projects.map((p) => [p.uuid, p]));
 	const open = all.projects
@@ -70,6 +94,23 @@ async function promptBlock(profileId) {
 		...(open.length > MAX_LINES ? [`- …and ${open.length - MAX_LINES} more.`] : []),
 		...(progress.length ? ["", "Measured progress (arithmetic, from their scale and WHOOP):", ...progress] : []),
 		...(concerns.length ? ["", "Open concerns: " + concerns.slice(0, 6).map((c) => `"${c.title}"`).join(", ") + "."] : []),
+		...(issues.length
+			? [
+					"",
+					"Open property issues they reported (something wrong at the house now; help troubleshoot, or find a repair pro with a web search when asked):",
+					...issues.map(
+						(i) =>
+							`- ${i.location} (${i.severity}, noticed ${i.noticedOn}): ${i.description.slice(0, 300)}${i.notes ? ` Their note: ${i.notes.slice(0, 200)}` : ""}${i.log.length ? ` Latest updates: ${i.log.map((n) => `[${n.createdAt.slice(0, 16).replace("T", " ")} UTC] ${n.body.slice(0, 200)}`).join(" ")}` : ""}`,
+					),
+				]
+			: []),
+		...(vehicles.length
+			? [
+					"",
+					"Vehicles they keep at their property (they edit these on the Property page's Vehicles tab; you can't change them from chat):",
+					...vehicles.map(vehicleLine),
+				]
+			: []),
 		...(recentDone.length ? ["", `Finished in the last two weeks: ${recentDone.slice(0, 6).join(", ")}.`] : []),
 		"",
 		"Use these when they come up — what to do next, what's blocked, how you could help. " +
