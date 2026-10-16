@@ -139,3 +139,51 @@ describe("buildContext", () => {
 		expect(text).not.toContain("WHOOP");
 	});
 });
+
+describe("live relay", () => {
+	const on = [[{ enabled: 1, retention_days: 30 }]];
+
+	test("a page asking with sharing off wakes no phone", async () => {
+		pool.query.mockResolvedValueOnce([[]]);
+		const push = { requestHeartLive: jest.fn() };
+		expect(await heartRate.requestLive(11, { push })).toEqual({ sharing: false, asked: 0 });
+		expect(push.requestHeartLive).not.toHaveBeenCalled();
+	});
+
+	test("asks the phone for a window, then not again until the gap passes", async () => {
+		pool.query.mockResolvedValue(on);
+		const push = { requestHeartLive: jest.fn().mockResolvedValue({ asked: 1 }) };
+		const now = 1_000_000;
+		expect(await heartRate.requestLive(12, { now, push })).toEqual({ sharing: true, asked: 1 });
+		expect(push.requestHeartLive).toHaveBeenCalledWith(12, now + heartRate.LIVE_WINDOW_MS);
+		expect(await heartRate.requestLive(12, { now: now + 10_000, push })).toEqual({ sharing: true, asked: 0 });
+		await heartRate.requestLive(12, { now: now + 50_000, push });
+		expect(push.requestHeartLive).toHaveBeenCalledTimes(2);
+	});
+
+	test("relays a fresh reading to the account's sockets and stores nothing", async () => {
+		pool.query.mockResolvedValueOnce(on).mockResolvedValueOnce([[{ google_id: "g-1" }]]);
+		const broadcast = jest.fn();
+		const now = Date.now();
+		const res = await heartRate.relayLive({ profileId: 1, body: { bpm: 88, at: new Date(now - 1000).toISOString() }, now, broadcast });
+		expect(res).toEqual({ relayed: true });
+		expect(broadcast).toHaveBeenCalledWith("g-1", { rpc: "heartRateLive", bpm: 88, at: new Date(now - 1000).toISOString() });
+		expect(pool.query.mock.calls.some(([sql]) => /INSERT|UPDATE/i.test(sql))).toBe(false);
+	});
+
+	test("refuses readings when sharing is off", async () => {
+		pool.query.mockResolvedValueOnce([[]]);
+		await expect(heartRate.relayLive({ profileId: 1, body: { bpm: 80, at: new Date().toISOString() }, broadcast: jest.fn() }))
+			.rejects.toMatchObject({ status: 403 });
+	});
+
+	test("drops stale or implausible readings", async () => {
+		const broadcast = jest.fn();
+		const now = Date.now();
+		pool.query.mockResolvedValueOnce(on);
+		expect(await heartRate.relayLive({ profileId: 1, body: { bpm: 80, at: new Date(now - 60_000).toISOString() }, now, broadcast })).toEqual({ relayed: false });
+		pool.query.mockResolvedValueOnce(on);
+		expect(await heartRate.relayLive({ profileId: 1, body: { bpm: 0, at: new Date(now).toISOString() }, now, broadcast })).toEqual({ relayed: false });
+		expect(broadcast).not.toHaveBeenCalled();
+	});
+});

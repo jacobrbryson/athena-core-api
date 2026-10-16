@@ -232,12 +232,67 @@ async function buildContext(profileId, { message, audience, force = false } = {}
 	return lines.join("\n");
 }
 
+// ---------------------------------------------------------------------------
+// Live relay — the band's current number on an open Health page
+// ---------------------------------------------------------------------------
+//
+// Beats are relayed, never stored: the store above stays minute summaries.
+// The phone only streams while a page is watching — a browser asks
+// (requestLive), the phone gets a silent push and posts one reading every few
+// seconds for LIVE_WINDOW_MS, and each reading goes straight out over the
+// account's open sockets. Streaming all day would keep this service awake
+// for nobody. Sockets live per instance, so with more than one instance up a
+// reading can land where no tab is listening; the page then shows the
+// average until the next one arrives — a missed reading, never a wrong one.
+
+/** How long one ask keeps the phone streaming; the page re-asks well inside it. */
+const LIVE_WINDOW_MS = 90_000;
+/** Re-asks inside this gap are answered without waking the phone again. */
+const ASK_GAP_MS = 45_000;
+const lastAsked = new Map(); // profileId => ms
+
+function notEnabled() {
+	const err = new Error("Heart rate is not switched on");
+	err.status = 403;
+	err.code = "heart_rate_not_enabled";
+	return err;
+}
+
+/** A page wants live readings. Wakes their Android phones, at most once per ASK_GAP_MS. */
+async function requestLive(profileId, { now = Date.now(), push = require("./push") } = {}) {
+	const pref = await getPref(profileId);
+	if (!pref.enabled) return { sharing: false, asked: 0 };
+	const last = lastAsked.get(profileId) || 0;
+	if (now - last < ASK_GAP_MS) return { sharing: true, asked: 0 };
+	lastAsked.set(profileId, now);
+	const { asked = 0 } = await push.requestHeartLive(profileId, now + LIVE_WINDOW_MS);
+	return { sharing: true, asked };
+}
+
+/** One reading from the phone, sent on to the account's open pages. */
+async function relayLive({ profileId, body, now = Date.now(), broadcast = require("../websocket/wsServer").broadcastToUser }) {
+	const pref = await getPref(profileId);
+	if (!pref.enabled) throw notEnabled();
+	const value = bpm(body?.bpm);
+	const at = Date.parse(body?.at);
+	// A reading older than a few seconds is no longer "live"; drop it quietly.
+	if (value === null || !Number.isFinite(at) || Math.abs(now - at) > 15_000) return { relayed: false };
+	const [rows] = await pool.query("SELECT google_id FROM profile WHERE id = ? LIMIT 1", [profileId]);
+	const googleId = rows[0]?.google_id;
+	if (!googleId) return { relayed: false };
+	broadcast(googleId, { rpc: "heartRateLive", bpm: value, at: new Date(at).toISOString() });
+	return { relayed: true };
+}
+
 module.exports = {
 	DEFAULT_PREF,
+	LIVE_WINDOW_MS,
 	getPref,
 	setPref,
 	recordMinutes,
 	recent,
+	requestLive,
+	relayLive,
 	matches,
 	normalizeMinute,
 	buildContext,

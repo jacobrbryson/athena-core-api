@@ -35,4 +35,18 @@ async function recent(req, res) {
 	try { return res.json({ minutes: await heartRate.recent(id, { minutes: req.query.minutes }) }); } catch (err) { return fail(res, err); }
 }
 
-module.exports = { getPref, setPref, recordMinutes, recent };
+/** An open Health page asking for live readings; it re-asks while it stays open. */
+async function watchLive(req, res) {
+	if (req.user?.kind === "device") return res.status(403).json({ success: false, message: "Pages ask for live heart rate, phones send it" });
+	const id = await adult(req, res); if (!id) return;
+	try { return res.json(await heartRate.requestLive(id)); } catch (err) { return fail(res, err); }
+}
+
+/** One reading from the phone while a page is watching; relayed, never stored. */
+async function relayLive(req, res) {
+	if (req.user?.kind !== "device") return res.status(403).json({ success: false, message: "Device token required" });
+	const id = await adult(req, res); if (!id) return;
+	try { return res.json(await heartRate.relayLive({ profileId: id, body: req.body || {} })); } catch (err) { return fail(res, err); }
+}
+
+module.exports = { getPref, setPref, recordMinutes, recent, watchLive, relayLive };

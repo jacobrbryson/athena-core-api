@@ -34,8 +34,14 @@ voice says it instead — still offline.
 **On the Health page.** While the app is reading your band, the heart trace at
 the top of the Health page beats at your live heart rate and the number beside
 it switches from **Avg Heart Rate** (WHOOP's average for the day) to **Live
-Heart Rate**. Stop reading the band and it goes back to the day's average. This
-only reads the phone — nothing is sent for it.
+Heart Rate**. Stop reading the band and it goes back to the day's average. In
+the app this only reads the phone — nothing is sent for it.
+
+On the **website**, the Health page shows the same live number when sharing is
+on (below): while the page is open it asks your phone to stream, and the phone
+sends a reading every few seconds for as long as the page stays open, passed
+straight to the page and never stored. Close the page and the phone stops
+within a minute and a half. With sharing off, the website shows the average.
 
 **Sharing with me.** If you switch on sharing, the phone sends me a summary for
 each minute — low, average and high — and I can look at them when you ask, or
@@ -69,13 +75,19 @@ In the Android app: the **⋯ menu** → **Phone & car** → **Heart rate**.
   notification shows the limits.
 - **Alerts in a robotic voice.** They weren't saved in my voice yet — save your
   limits again while you have signal.
+- **The website shows Avg Heart Rate, not live.** Sharing has to be on, the
+  phone has to be reading the band, and it needs signal. It can take a few
+  seconds after the page opens for the first reading to arrive.
 - **I can't see your heart rate when you ask.** Sharing has to be on, and the
   phone has to have been connected to the band recently. Minutes recorded
   without signal are sent when the phone gets back online (up to a day later).
 
 ## Limits
 
-- Android app only — not the website, not iPhone.
+- Reading the band needs the Android app — not iPhone. The website can show
+  the live number, but only from an Android phone that's reading the band.
+- On the website a reading can now and then not get through, and the number
+  briefly falls back to the average — it's never a wrong number.
 - Not a medical device, and I don't diagnose anything from it.
 - I don't raise heart rate on my own — no alerts from me about spikes in a
   meeting or at night. The only spoken alerts are the limits you set, during a
@@ -101,13 +113,23 @@ In the Android app: the **⋯ menu** → **Phone & car** → **Heart rate**.
   WebView cookie) when limits are saved, cached in the no-backup files dir under athena-voice;
   missing clip → Android `TextToSpeech`. Every say() is queued, none dropped.
   `HandsFreeService.speak()` shares `AthenaVoice.play()`.
+- Live relay to the website: the page `POST /heart/live/watch`es every 60 s while visible
+  (`requestLive`, sharing on only, at most one wake per 45 s per profile) → silent FCM
+  `{kind: "heart_live", until}` (`push.requestHeartLive`) → `AthenaPushService` →
+  `HeartRateService.watchUntil` (capped at 2 min) → each 5 s tick POSTs `/heart/live`
+  `{bpm, at}` with the device token on its own executor → `relayLive` broadcasts
+  `{rpc: "heartRateLive"}` via `wsServer.broadcastToUser`; never stored. Sockets are
+  per Cloud Run instance, so with >1 instance a reading can miss the tab; the page
+  drops back to the average after 15 s without one. Re-broadcast in `useChat` as
+  `HEART_LIVE_EVENT`.
 - Bridge: `heartRateStatus/Start/Stop/Choose/Forget/Share/Session/Limits` in `DashboardActivity`.
 - Health hero: `useLiveHeartRate` + the animated `Ecg` in `../../../companion/src/components/Ecg.tsx`
-  (polls `heartRateStatus` every 2 s; live only when `running && state === 'connected'`).
+  (in the app: polls `heartRateStatus` every 2 s, live only when `running && state === 'connected'`;
+  in a browser: the relay above).
 - Panel: `../../../companion/src/components/HeartRate.tsx`, `../../../companion/src/native/heartRate.ts`,
   `heartApi` in `../../../companion/src/api/companion.ts`.
 - API: `src/routes/heartRate.js`, `src/controllers/heartRate.js` (every route `requireAdultActor`;
-  `PUT /pref` session-only, `POST /minutes` device-only), `src/services/heartRate.js`.
+  `PUT /pref` and `POST /live/watch` session-only, `POST /minutes` and `POST /live` device-only), `src/services/heartRate.js`.
 - Chat: `heartRate.buildContext` in `src/controllers/gemini.js`, keyword-gated, adults with
   sharing on only; adds WHOOP resting HR via `whoop.listRecovery` when linked.
 - Schema: `db/migrations/0048_heart_rate.up.sql` (`athena_heart_pref`, `athena_heart_minute`).

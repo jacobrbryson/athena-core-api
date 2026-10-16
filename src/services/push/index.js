@@ -530,6 +530,31 @@ async function requestLocation(profileId) {
 }
 
 /**
+ * Ask their Android phone to stream its band's heart rate until `untilMs`,
+ * because a Health page is open and watching. Same shape as requestLocation:
+ * silent, never drawn, and only when heart-rate sharing is on (the caller has
+ * checked; POST /heart/live refuses readings otherwise). A phone that isn't
+ * reading a band ignores it.
+ *
+ * Returns how many phones were asked. Never throws.
+ */
+async function requestHeartLive(profileId, untilMs) {
+	try {
+		const phones = (await reachableDevices(profileId)).filter((d) => d.platform === "android");
+		let asked = 0;
+		for (const phone of phones) {
+			const result = await fcm.send(phone.token, { silent: true, data: { kind: "heart_live", until: String(untilMs) } });
+			if (result.ok) asked += 1;
+			else if (result.dead) await dropDeadToken(phone.id, result.reason);
+		}
+		return { asked };
+	} catch (err) {
+		console.warn("[push] heart live request failed:", err.message);
+		return { asked: 0, skipped: err.message };
+	}
+}
+
+/**
  * Push one nudge, and record that we tried.
  *
  * `pushed_at` is set when a transport ACCEPTED the message, which is not the
@@ -674,6 +699,7 @@ module.exports = {
 	sendToProfile,
 	deliverNudge,
 	requestLocation,
+	requestHeartLive,
 	sendTest,
 	statusFor,
 };
