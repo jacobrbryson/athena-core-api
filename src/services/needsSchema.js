@@ -12,6 +12,9 @@ const RANGES = {
 	next_30_days: 30,
 };
 
+/** The most days one dated calendar read covers (googleCalendar's own ceiling). */
+const MAX_DATED_DAYS = 60;
+
 const NEEDS_SCHEMA = {
 	type: "array",
 	items: {
@@ -22,6 +25,8 @@ const NEEDS_SCHEMA = {
 			// nullable, and a nullable enum without null in it is a schema some
 			// of them refuse. needs.clean() checks the value against RANGES.
 			range: { type: "string" },
+			from: { type: "string" },
+			to: { type: "string" },
 			place: { type: "string" },
 			when: { type: "string" },
 			query: { type: "string" },
@@ -30,4 +35,4 @@ const NEEDS_SCHEMA = {
 	},
 };
 
-module.exports = { SOURCE_IDS, RANGES, NEEDS_SCHEMA };
+module.exports = { SOURCE_IDS, RANGES, MAX_DATED_DAYS, NEEDS_SCHEMA };

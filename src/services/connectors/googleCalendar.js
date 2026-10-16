@@ -44,8 +44,29 @@ const { startOfDayIn, addDaysIn } = require("../clock");
 
 const iso = (date) => new Date(date).toISOString();
 
+// A read can start on a later date ("June next year") so trips can be planned
+// against the real calendar, but not absurdly far either way.
+const MAX_BACK_DAYS = 366;
+const MAX_AHEAD_DAYS = 3 * 366;
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
 /**
- * Start of today through `days` later, as RFC3339 — the window Athena reads.
+ * A "YYYY-MM-DD" start date as an instant on that day, or null when it is
+ * missing, malformed or out of bounds — a bad date reads from today rather
+ * than failing the read. Noon UTC is the same calendar date in every zone
+ * the window is then snapped to.
+ */
+function startDate(from, now = new Date()) {
+	if (typeof from !== "string" || !DATE_ONLY.test(from)) return null;
+	const at = new Date(`${from}T12:00:00Z`);
+	if (!Number.isFinite(at.getTime()) || at.toISOString().slice(0, 10) !== from) return null;
+	const offset = (at - now) / 86_400_000;
+	return offset < -MAX_BACK_DAYS || offset > MAX_AHEAD_DAYS ? null : at;
+}
+
+/**
+ * Start of today (or of `from`, when it is a YYYY-MM-DD date) through `days`
+ * later, as RFC3339 — the window Athena reads.
  *
  * "Today" means the calendar's own timezone, not the server's. The server runs
  * UTC in production, so without `timeZone` a 9pm-Eastern "what's on today?"
@@ -55,7 +76,8 @@ const iso = (date) => new Date(date).toISOString();
  */
 function window(days = 7, from = new Date(), timeZone = null) {
 	const span = Math.max(1, Math.min(Number(days) || 7, 60));
-	const start = startOfDayIn(new Date(from), timeZone);
+	const day = typeof from === "string" ? startDate(from) || new Date() : new Date(from);
+	const start = startOfDayIn(day, timeZone);
 	return { timeMin: iso(start), timeMax: iso(addDaysIn(start, span, timeZone)) };
 }
 
@@ -145,9 +167,9 @@ const startMs = (event) => {
  * failing is not, and rethrows rather than passing an empty schedule off as
  * "nothing scheduled".
  */
-async function collectEvents(profileId, { days = 7, maxResults = MAX_EVENTS, cap = MAX_EVENTS } = {}) {
+async function collectEvents(profileId, { days = 7, from = null, maxResults = MAX_EVENTS, cap = MAX_EVENTS } = {}) {
 	const calendars = await calendarsOrPrimary(profileId);
-	const { timeMin, timeMax } = window(days, new Date(), displayTimeZone(calendars));
+	const { timeMin, timeMax } = window(days, from || new Date(), displayTimeZone(calendars));
 	// `cap` is the ceiling on how many events come back. The default keeps the
 	// chat prompt and the dashboard summary small; a caller that filters the
 	// list itself (the community calendar) asks for a wider read so a busy week
@@ -203,12 +225,15 @@ async function collectEvents(profileId, { days = 7, maxResults = MAX_EVENTS, cap
 	// are doing. Left in the list they would read as an all-morning meeting that
 	// overlaps everything else, to the dashboard, the chat prompt and the
 	// initiative triggers alike — so they are returned on their own.
-	const events = all.filter((e) => e.eventType !== "workingLocation").slice(0, limit);
+	const real = all.filter((e) => e.eventType !== "workingLocation");
+	const events = real.slice(0, limit);
 	const workingLocations = all
 		.filter((e) => e.eventType === "workingLocation")
 		.slice(0, MAX_WORKING_LOCATIONS);
 
-	return { events, calendars, workingLocations };
+	// `truncated` so a reader can say "that's only the first 25" instead of
+	// passing a cut-off list off as everything in the window.
+	return { events, calendars, workingLocations, truncated: real.length > limit, timeMin, timeMax };
 }
 
 /** Upcoming events across every readable calendar, oldest first. */
@@ -259,9 +284,9 @@ async function eventsInInterval(profileId, { start, end }) {
  * and the honest answer to "am I free" when a household shares a calendar.
  * Overlapping intervals from different calendars are merged into one.
  */
-async function freeBusy(profileId, { days = 7 } = {}) {
+async function freeBusy(profileId, { days = 7, from = null } = {}) {
 	const calendars = await calendarsOrPrimary(profileId);
-	const { timeMin, timeMax } = window(days, new Date(), displayTimeZone(calendars));
+	const { timeMin, timeMax } = window(days, from || new Date(), displayTimeZone(calendars));
 
 	const data = await providerRequest(profileId, PROVIDER, "/freeBusy", {
 		method: "POST",
@@ -403,23 +428,33 @@ function describeCalendars(calendars) {
  * nothing useful to say. Never throws: a calendar failure must not sink a
  * conversation.
  */
-async function buildContext(profileId, { days = 7 } = {}) {
-	const { events, calendars } = await collectEvents(profileId, { days });
+async function buildContext(profileId, { days = 7, from = null } = {}) {
+	const dated = startDate(from) ? from : null;
+	const { events, calendars, truncated, timeMin, timeMax } = await collectEvents(profileId, { days, from: dated });
 	const scope = describeCalendars(calendars);
+	const timeZone = displayTimeZone(calendars);
+	// A dated read names its own dates: "the next 30 days" would be a lie
+	// about a window that starts next June.
+	const day = (at) => formatInZone(at, timeZone).slice(0, 14);
+	const span = dated
+		? `${day(new Date(timeMin))} through ${day(new Date(new Date(timeMax).getTime() - 1))}`
+		: null;
+	const more = truncated
+		? [`(Only the first ${events.length} events in this window are shown; there are more after the last one. Look up a later, narrower range to see them.)`]
+		: [];
 	if (!events.length) {
-		const zone = displayTimeZone(calendars);
 		return (
-			`Google Calendar: nothing scheduled in the next ${days} days ` +
-			`(checked ${scope}, from ${formatInZone(new Date(), zone)} local time).`
+			`Google Calendar: nothing scheduled ${span ? `from ${span}` : `in the next ${days} days`} ` +
+			`(checked ${scope}, from ${formatInZone(new Date(), timeZone)} local time).`
 		);
 	}
-	const timeZone = displayTimeZone(calendars);
 	return [
-		`Google Calendar — next ${days} days across ${scope} ` +
+		`Google Calendar — ${span || `next ${days} days`} across ${scope} ` +
 			`(local time, ${timeZone}). Right now it is ` +
-			`${formatInZone(new Date(), timeZone)}, so the first entry below is the ` +
-			`next one still to come:`,
+			`${formatInZone(new Date(), timeZone)}` +
+			(span ? ":" : ", so the first entry below is the next one still to come:"),
 		...events.map((event) => formatEvent(event, timeZone)),
+		...more,
 	].join("\n");
 }
 
@@ -537,8 +572,15 @@ const FUNCTION_DECLARATIONS = [
 					type: "NUMBER",
 					description:
 						"How many days ahead to look, starting from the beginning of " +
-						"today. Use 1 for today, 2 for today and tomorrow, 7 for the " +
-						"week. Maximum 60.",
+						"today (or from `start_date`). Use 1 for today, 2 for today and " +
+						"tomorrow, 7 for the week. Maximum 60.",
+				},
+				start_date: {
+					type: "STRING",
+					description:
+						"Optional YYYY-MM-DD to start from instead of today, up to three " +
+						"years ahead — for planning trips or anything months out. Look " +
+						"up several windows to cover a longer stretch.",
 				},
 			},
 		},
@@ -556,7 +598,11 @@ const FUNCTION_DECLARATIONS = [
 			properties: {
 				days: {
 					type: "NUMBER",
-					description: "How many days ahead to check, from the start of today. Max 60.",
+					description: "How many days to check, from the start of today (or `start_date`). Max 60.",
+				},
+				start_date: {
+					type: "STRING",
+					description: "Optional YYYY-MM-DD to start from instead of today, up to three years ahead.",
 				},
 			},
 		},
@@ -565,17 +611,18 @@ const FUNCTION_DECLARATIONS = [
 
 async function executeTool(name, args = {}, { profileId }) {
 	if (name === "get_calendar_events") {
-		const { events, calendars } = await collectEvents(profileId, {
+		const { events, calendars, truncated } = await collectEvents(profileId, {
 			days: args.days,
+			from: args.start_date || null,
 		});
 		const zone = displayTimeZone(calendars);
 		// `now` so the model can tell "still to come" from "already happened"
 		// without guessing today's date.
-		return { events, time_zone: zone, now: formatInZone(new Date(), zone) };
+		return { events, truncated, time_zone: zone, now: formatInZone(new Date(), zone) };
 	}
 	if (name === "get_calendar_free_busy") {
 		const [busy, calendars] = await Promise.all([
-			freeBusy(profileId, { days: args.days }),
+			freeBusy(profileId, { days: args.days, from: args.start_date || null }),
 			calendarsOrPrimary(profileId),
 		]);
 		const zone = displayTimeZone(calendars);
@@ -606,4 +653,5 @@ module.exports = {
 	displayTimeZone,
 	formatEvent,
 	window,
+	startDate,
 };

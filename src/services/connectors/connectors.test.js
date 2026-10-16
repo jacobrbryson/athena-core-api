@@ -472,6 +472,17 @@ describe("google calendar", () => {
 		expect(timeMin).toBe("2026-09-16T04:00:00.000Z");
 	});
 
+	it("can start on a later date, but not one years away or one that isn't a date", () => {
+		const next = new Date(Date.now() + 200 * 86_400_000).toISOString().slice(0, 10);
+		const { timeMin } = googleCalendar.window(14, next, "America/New_York");
+		expect(timeMin.slice(0, 10)).toBe(next);
+		expect(googleCalendar.startDate(next)).not.toBeNull();
+		const far = new Date(Date.now() + 4 * 366 * 86_400_000).toISOString().slice(0, 10);
+		expect(googleCalendar.startDate(far)).toBeNull();
+		expect(googleCalendar.startDate("2027-02-30")).toBeNull();
+		expect(googleCalendar.startDate("next june")).toBeNull();
+	});
+
 	it("starts the window at midnight today, not right now", () => {
 		// "What's on today?" must still list an event from earlier this morning.
 		const { timeMin } = googleCalendar.window(1);

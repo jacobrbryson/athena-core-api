@@ -25,7 +25,10 @@ function encode(vector) {
 }
 
 function decodeNormalized(buf) {
-	const view = new Float32Array(buf.buffer, buf.byteOffset, Math.floor(buf.byteLength / 4));
+	// mysql2 hands back BLOBs as slices of a shared packet buffer, so the offset
+	// is often not 4-byte aligned — copy before viewing as Float32 in that case.
+	const src = buf.byteOffset % 4 === 0 ? buf : new Uint8Array(buf);
+	const view = new Float32Array(src.buffer, src.byteOffset, Math.floor(src.byteLength / 4));
 	const out = new Float32Array(view.length);
 	let norm = 0;
 	for (let i = 0; i < view.length; i++) norm += view[i] * view[i];

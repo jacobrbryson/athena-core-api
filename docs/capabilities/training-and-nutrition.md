@@ -6,7 +6,7 @@ where: Health page → Training Program card (Week N of N) and Nutrition card (T
 status: partial
 surfaces: [companion]
 audiences: [adult]
-triggers: [training program, program, workout plan, gym, leg day, hypertrophy, what am i doing today, tomorrow's workout, protein, calories, macros, carbs, nutrition, food log, what i ate, log food, barcode, scan food, food photo, tell athena, look up food, restaurant food, big mac, favorite foods, water, hydrate, target weight, today's plan]
+triggers: [training program, program, workout plan, gym, leg day, hypertrophy, what am i doing today, tomorrow's workout, protein, calories, macros, carbs, nutrition, food log, what i ate, log food, barcode, scan food, food photo, tell athena, look up food, restaurant food, big mac, favorite foods, water, hydrate, target weight]
 ---
 
 ## What I can do
@@ -33,9 +33,8 @@ estimate can be off. Star any food in today's list (or tick "Save to favorites"
 when typing one in) and it joins your favorites.
 
 The Health page puts it together: my take on today from your WHOOP recovery,
-today's plan (the session, or a lighter swap when your recovery is low, plus
-hydration, food and a sleep goal), the program's week, nutrition, progress
-(weight, body fat, strength and cardio minutes) and a wellness read. When you
+then nutrition, the program's week, progress (weight, body fat, strength and
+cardio minutes) and a wellness read, in that order. When you
 ask me about your workout or what you've eaten, I can read all of it.
 
 ## Where to find it

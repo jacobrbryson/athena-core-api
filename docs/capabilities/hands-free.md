@@ -96,7 +96,7 @@ same conversation.
   `AthenaVoice`'s text-keyed cache on its own thread while the reply is polled
   and voiced; an uncached line is fetched in the background (silent that
   once). The reply prompt gets `# Already said` so she doesn't repeat it.
-- Reply voice: the reply is split by `../../../native-runtime/AndroidCompanion~/AthenaDashboard.androidlib/java/com/orcwood/athena/dashboard/SpeechChunks.java` (a port of companion's `speechChunks.ts`), every part fetched from `/speech` at once (`voiceFetches`, 4 threads), and she starts on the first; `AthenaVoice.playParts` plays them as one AudioTrack stream under one audio-focus request, so music stays ducked between sentences. The first part failing fails the turn (NACK); a later part failing is skipped. Turn timing `voice` is the first part ready.
+- Reply voice: the reply is split by `../../../native-runtime/AndroidCompanion~/AthenaDashboard.androidlib/java/com/orcwood/athena/dashboard/SpeechChunks.java` (a port of companion's `speechChunks.ts`), the first part cut to its opening clause when the first sentence runs past 70 characters, every part fetched from `/speech` at once (`voiceFetches`, 4 threads), and she starts on the first; `AthenaVoice.playParts` plays them as one AudioTrack stream under one audio-focus request, so music stays ducked between sentences. The first part failing fails the turn (NACK); a later part failing is skipped. Turn timing `voice` is the first part ready.
 - Prompt: `companion.handsFree` in `parseMessageContext` (`src/controllers/message.js`)
   → the HANDS-FREE rule in `buildAdultCompanionPrompt()`.
 - Wake test (09-29, Windows SAPI voices, clean audio): 6/6 "Athena" phrases hit,

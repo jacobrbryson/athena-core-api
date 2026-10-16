@@ -98,6 +98,25 @@ describe("clean", () => {
 		expect(needs.clean([{ source: "calendar", range: "this_week" }], ALL, done)).toEqual([]);
 		expect(needs.clean("not a list", ALL)).toEqual([]);
 	});
+
+	test("a calendar lookup can name dates months out, at most 60 days at a time", () => {
+		expect(
+			needs.clean(
+				[
+					{ source: "calendar", from: "2027-06-01", to: "2027-06-14" },
+					{ source: "calendar", from: "2027-01-01", to: "2027-12-31" },
+					{ source: "calendar", from: "2027-03-01" },
+				],
+				ALL
+			)
+		).toEqual([
+			{ source: "calendar", from: "2027-06-01", days: 14 },
+			{ source: "calendar", from: "2027-01-01", days: 60 },
+			{ source: "calendar", from: "2027-03-01", days: 30 },
+		]);
+		// A date that isn't one falls back to a range rather than being trusted.
+		expect(needs.clean([{ source: "calendar", from: "2027-02-30" }], ALL)).toEqual([{ source: "calendar", range: "this_week" }]);
+	});
 });
 
 describe("fetch", () => {
@@ -109,6 +128,18 @@ describe("fetch", () => {
 			expect.objectContaining({ providers: ["google_calendar"], daysByProvider: { google_calendar: 1 }, message: "" })
 		);
 		expect(out.blocks[0]).toContain("Clague Park");
+	});
+
+	test("a dated calendar lookup reads from that date", async () => {
+		connectorContext.buildContext.mockResolvedValue("# Calendar");
+		await needs.fetch(PROFILE, [{ source: "calendar", from: "2027-06-01", days: 14 }], { audience: "adult" });
+		expect(connectorContext.buildContext).toHaveBeenCalledWith(
+			PROFILE,
+			expect.objectContaining({
+				daysByProvider: { google_calendar: 14 },
+				fromByProvider: { google_calendar: "2027-06-01" },
+			})
+		);
 	});
 
 	test("weather at an event's place and time, from NWS", async () => {

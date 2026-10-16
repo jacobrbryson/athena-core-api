@@ -226,9 +226,39 @@ async function webGroundingFor(message, audience, guessPromise) {
   }
 }
 
+/**
+ * Milliseconds since the turn started at each stage, logged once per reply as
+ * `[reply] timings` with the reply's uuid and no words, so a slow voice turn
+ * can be read stage by stage from Cloud Logging.
+ */
+function replyTimer() {
+  const started = Date.now();
+  const stages = {};
+  return {
+    mark: (stage) => {
+      stages[stage] = Date.now() - started;
+    },
+    log: (fields) =>
+      console.info(
+        "[reply] timings",
+        JSON.stringify({ ...fields, ...stages, total: Date.now() - started }),
+      ),
+  };
+}
+
+/** A prompt block that may fail: logs and becomes null instead of throwing. */
+function safeBlock(label, run) {
+  return Promise.resolve()
+    .then(run)
+    .catch((e) => {
+      console.warn(`[gemini] ${label} block failed:`, e.message);
+      return null;
+    });
+}
+
 async function processAiResponse(session, message, clients, ctx = {}) {
+  const timer = replyTimer();
   try {
-    const topics = await sessionTopicService.getSessionTopics(session.id);
 
     // If the user has linked an external app and is asking about it, fetch a
     // live snapshot to ground the reply. Family Chores is partner-linked;
@@ -250,9 +280,10 @@ async function processAiResponse(session, message, clients, ctx = {}) {
     // audienceForSession is cached per profile, so the second call is free.
     // A Guardian session is a child audience even though it grounds on the
     // parent's profile — the account is theirs, the conversation is not.
-    const groundingAudience = await audienceForSession(session, ctx).catch(
-      () => "child",
-    );
+    const [topics, groundingAudience] = await Promise.all([
+      sessionTopicService.getSessionTopics(session.id),
+      audienceForSession(session, ctx).catch(() => "child"),
+    ]);
 
     // The fast guess (Jev, ~0.2 s) at which sources this message needs, for
     // what the keyword gates below miss — "anything going on tonight?" names
@@ -301,111 +332,120 @@ async function processAiResponse(session, message, clients, ctx = {}) {
       selfServe ? null : guessPromise,
     );
 
-    let integrationContext = null;
-    if (groundingProfileId) {
-      const blocks = await Promise.all([
-        integrationService.messageNeedsFamilyChores(message)
-          ? integrationService
-              .buildFamilyChoresContext(groundingProfileId, { message })
-              .catch((e) => {
-                console.warn(
-                  "[gemini] Family Chores context failed:",
-                  e.message,
-                );
-                return null;
-              })
-          : null,
-        connectorContext.messageNeedsConnectors(message)
-          ? connectorContext
-              .buildContext(groundingProfileId, {
-                message,
+    // The keyword-gated grounding, history, participants and memory don't
+    // depend on each other, so they are read at the same time rather than one
+    // after another — each is a round trip, and a voice turn waits on all of
+    // them before the model starts.
+    const integrationPromise = groundingProfileId
+      ? Promise.all([
+          integrationService.messageNeedsFamilyChores(message)
+            ? integrationService
+                .buildFamilyChoresContext(groundingProfileId, { message })
+                .catch((e) => {
+                  console.warn(
+                    "[gemini] Family Chores context failed:",
+                    e.message,
+                  );
+                  return null;
+                })
+            : null,
+          connectorContext.messageNeedsConnectors(message)
+            ? connectorContext
+                .buildContext(groundingProfileId, {
+                  message,
+                  audience: groundingAudience,
+                  onRead,
+                })
+                .catch((e) => {
+                  console.warn("[gemini] connector context failed:", e.message);
+                  return null;
+                })
+            : null,
+          // Live heart rate from the phone's Bluetooth band: adults only, and
+          // only when they switched it on (buildContext checks both).
+          heartRate.matches(message)
+            ? heartRate
+                .buildContext(groundingProfileId, {
+                  message,
+                  audience: groundingAudience,
+                })
+                .catch((e) => {
+                  console.warn("[gemini] heart rate context failed:", e.message);
+                  return null;
+                })
+            : null,
+          // Their training program and food log (Health page): adults only,
+          // and only when the message is about training or eating.
+          healthPlan.matches(message)
+            ? healthPlan
+                .buildContext(groundingProfileId, {
+                  message,
+                  audience: groundingAudience,
+                })
+                .catch((e) => {
+                  console.warn("[gemini] health plan context failed:", e.message);
+                  return null;
+                })
+            : null,
+          // "How far is the soccer complex?" — a real drive from home or from
+          // where their phone is now, and the answer to her "from home or from
+          // here?" follow-up. Adults only (buildContext checks); never throws.
+          travel.matches(message) ||
+          travel.followUpChoice(groundingProfileId, message)
+            ? travel.buildContext(groundingProfileId, message, {
                 audience: groundingAudience,
-                onRead,
               })
-              .catch((e) => {
-                console.warn("[gemini] connector context failed:", e.message);
-                return null;
-              })
-          : null,
-        // Live heart rate from the phone's Bluetooth band: adults only, and
-        // only when they switched it on (buildContext checks both).
-        heartRate.matches(message)
-          ? heartRate
-              .buildContext(groundingProfileId, {
-                message,
-                audience: groundingAudience,
-              })
-              .catch((e) => {
-                console.warn("[gemini] heart rate context failed:", e.message);
-                return null;
-              })
-          : null,
-        // Their training program and food log (Health page): adults only,
-        // and only when the message is about training or eating.
-        healthPlan.matches(message)
-          ? healthPlan
-              .buildContext(groundingProfileId, {
-                message,
-                audience: groundingAudience,
-              })
-              .catch((e) => {
-                console.warn("[gemini] health plan context failed:", e.message);
-                return null;
-              })
-          : null,
-        // "How far is the soccer complex?" — a real drive from home or from
-        // where their phone is now, and the answer to her "from home or from
-        // here?" follow-up. Adults only (buildContext checks); never throws.
-        travel.matches(message) ||
-        travel.followUpChoice(groundingProfileId, message)
-          ? travel.buildContext(groundingProfileId, message, {
-              audience: groundingAudience,
-            })
-          : null,
-      ]);
-      integrationContext = blocks.filter(Boolean).join("\n\n") || null;
-    }
+            : null,
+        ]).then((blocks) => blocks.filter(Boolean).join("\n\n") || null)
+      : Promise.resolve(null);
 
     // Conversation history for continuity. getMessages returns the transcript
     // oldest→newest including the message just saved (the current turn), so we
     // drop that trailing entry and keep the most recent MAX_HISTORY before it.
-    let history = [];
-    try {
-      const all = await messageService.getMessages(
+    const historyPromise = messageService
+      .getMessages(
         session.id,
         session.profile_id != null
           ? (ctx.speakerProfileId ?? session.profile_id)
           : null,
-      );
-      history = all.slice(0, -1).slice(-MAX_HISTORY);
-    } catch (e) {
-      console.warn("[gemini] history fetch failed:", e.message);
-    }
+      )
+      .then((all) => all.slice(0, -1).slice(-MAX_HISTORY))
+      .catch((e) => {
+        console.warn("[gemini] history fetch failed:", e.message);
+        return [];
+      });
 
     // Who is in the room. Read from the participant rows rather than inferred
     // from the transcript, because the turn that matters most is the FIRST one
     // after a guardian switches accounts — they have no earlier turns to take
     // a name from, and that is exactly when Athena needs to know the person in
     // front of her has changed.
-    const participants =
+    const participantsPromise =
       session.profile_id != null
-        ? await sessionParticipants
-            .presentParticipants(session.id)
-            .catch((e) => {
-              console.warn("[gemini] participants unavailable:", e.message);
-              return [];
-            })
-        : [];
+        ? sessionParticipants.presentParticipants(session.id).catch((e) => {
+            console.warn("[gemini] participants unavailable:", e.message);
+            return [];
+          })
+        : Promise.resolve([]);
 
     // Long-term memory for this turn (audience, recall block). Time-boxed and
     // never throws, so memory can't stall or break a reply.
-    const memoryCtx = await memoryStore
+    const memoryPromise = memoryStore
       .buildMemoryContext(session, message, ctx)
       .catch(() => ({
         audience: "child",
         memoryEnabled: false,
         promptBlock: null,
       }));
+
+    let [integrationContext, history, participants, memoryCtx] =
+      await Promise.all([
+        integrationPromise,
+        historyPromise,
+        participantsPromise,
+        memoryPromise,
+      ]);
+    timer.mark("context");
 
     // What Athena can actually do, scoped to this app and this person, read
     // from docs/capabilities. Cheap (parsed files, cached) and never throws —
@@ -426,6 +466,14 @@ async function processAiResponse(session, message, clients, ctx = {}) {
       console.warn("[gemini] capability block failed:", e.message);
     }
 
+    const mayPropose =
+      !!session.profile_id && memoryCtx.audience === "adult" && !ctx.guardian;
+    const profileId = session.profile_id;
+
+    // Everything below is a separate read of this person's own rows and none
+    // depends on another, so they all go at once; the blocks are joined in the
+    // same order as before, so the prompt reads the same.
+    //
     // What Athena can DO this turn, as opposed to describe. Scoped to the
     // providers this person has linked and the consent their family gave, and
     // null for everyone else — a null block is how she stays read-only
@@ -433,203 +481,104 @@ async function processAiResponse(session, message, clients, ctx = {}) {
     //
     // Adult sessions only. A child or Guardian session never proposes
     // actions: the account is the parent’s and the conversation is not.
-    let actionBlock = null;
-    const mayPropose =
-      !!session.profile_id && memoryCtx.audience === "adult" && !ctx.guardian;
-    if (mayPropose) {
-      try {
-        const [available, pending, recent, authorities] = await Promise.all([
-          actions.availableFor(session.profile_id),
-          actions.listPending(session.profile_id).catch(() => []),
-          actions.listRecent(session.profile_id, 20).catch(() => []),
-          actions.listAuthorities(session.profile_id).catch(() => []),
-        ]);
-        // The cards still waiting on them, so "make it 2:00" replaces one
-        // instead of stacking a second beside it, and what she has already
-        // done, so "yes please" after a standing execution isn't a second
-        // event (2026-10-11). Only with the action block: no actions this
-        // turn means nothing to repeat.
-        const block = actions.promptBlock(available, {
-          standing: authorities.map((a) => a.action_id),
-        });
-        actionBlock = block
-          ? [block, actions.pendingBlock(pending), actions.recentBlock(recent)]
-              .filter(Boolean)
-              .join("\n\n")
-          : null;
-      } catch (e) {
-        console.warn("[gemini] action block failed:", e.message);
-      }
-    }
+    const actionBlockPromise = mayPropose ? safeBlock("action", async () => {
+      const [available, pending, recent, authorities] = await Promise.all([
+        actions.availableFor(profileId),
+        actions.listPending(profileId).catch(() => []),
+        actions.listRecent(profileId, 20).catch(() => []),
+        actions.listAuthorities(profileId).catch(() => []),
+      ]);
+      // The cards still waiting on them, so "make it 2:00" replaces one
+      // instead of stacking a second beside it, and what she has already
+      // done, so "yes please" after a standing execution isn't a second
+      // event (2026-10-11). Only with the action block: no actions this
+      // turn means nothing to repeat.
+      const block = actions.promptBlock(available, {
+        standing: authorities.map((a) => a.action_id),
+      });
+      return block
+        ? [block, actions.pendingBlock(pending), actions.recentBlock(recent)]
+            .filter(Boolean)
+            .join("\n\n")
+        : null;
+    }) : Promise.resolve(null);
 
-    // Anything she raised unprompted in the last few hours, so a reply to one
-    // of them is a continuation rather than a non sequitur. Adult sessions
-    // only, same as the actions block, and never fatal.
-    let initiativeBlock = null;
-    if (mayPropose) {
-      try {
-        initiativeBlock = await initiative.promptBlock(session.profile_id);
-      } catch (e) {
-        console.warn("[gemini] initiative block failed:", e.message);
-      }
-    }
-
-    // Emergencies near their saved places, as the stored situation the
-    // athena-incidents job assessed (one DB read, no fetch). When it is urgent
-    // the block instructs her to lead with it — the owner asked for exactly
-    // that. Never fatal.
-    if (mayPropose) {
-      try {
-        const nearbyBlock = await nearbyIncidents.promptBlock(session.profile_id);
-        if (nearbyBlock)
-          initiativeBlock = initiativeBlock
-            ? [initiativeBlock, nearbyBlock].join("\n\n")
-            : nearbyBlock;
-      } catch (e) {
-        console.warn("[gemini] nearby incidents block failed:", e.message);
-      }
-    }
-
-    // Anyone in the family currently reported under the weather. Same rule as
-    // the blocks above: adult, non-guardian sessions only — the account this
-    // is reported against is the parent's, not a child's or a guest world.
-    if (mayPropose) {
-      try {
-        const healthBlock = await familyHealth.promptBlock(session.profile_id);
-        if (healthBlock)
-          initiativeBlock = initiativeBlock
-            ? [initiativeBlock, healthBlock].join("\n\n")
-            : healthBlock;
-      } catch (e) {
-        console.warn("[gemini] family health block failed:", e.message);
-      }
-    }
-
-    // Their community: points of interest, neighbours and local events from
-    // the Community page. The owner asked for her to always know these, so
-    // the block rides along every adult turn (capped in the service). Never
-    // fatal.
-    if (mayPropose) {
-      try {
-        const communityBlock = await community.promptBlock(session.profile_id);
-        if (communityBlock)
-          initiativeBlock = initiativeBlock
-            ? [initiativeBlock, communityBlock].join("\n\n")
-            : communityBlock;
-      } catch (e) {
-        console.warn("[gemini] community block failed:", e.message);
-      }
-    }
-
-    // Their projects (services/projects): the open ones in their own order,
-    // so "how's the porch going" and "I finished the gutters" land on the
-    // right one. Read-only; changes go through add_project/update_project.
-    if (mayPropose) {
-      try {
-        const projectBlock = await require("../services/projects/prompt").promptBlock(session.profile_id);
-        if (projectBlock)
-          initiativeBlock = initiativeBlock
-            ? [initiativeBlock, projectBlock].join("\n\n")
-            : projectBlock;
-      } catch (e) {
-        console.warn("[gemini] projects block failed:", e.message);
-      }
-    }
-
-    // Where they work: the workplaces listed on the Work page, so "my work"
-    // means the right company. A few lines; never fatal.
-    if (mayPropose) {
-      try {
-        const workBlock = await workplaces.promptBlock(session.profile_id);
-        if (workBlock)
-          initiativeBlock = initiativeBlock
-            ? [initiativeBlock, workBlock].join("\n\n")
-            : workBlock;
-      } catch (e) {
-        console.warn("[gemini] workplaces block failed:", e.message);
-      }
-    }
-
-    // Their websites: the stored Search Console / Analytics numbers, only on
-    // a turn that is about their sites (or names one). Reads the database,
-    // never Google, and never fatal.
-    if (mayPropose) {
-      try {
-        const websitesBlock = await websites.promptBlock(session.profile_id, message);
-        if (websitesBlock)
-          initiativeBlock = initiativeBlock
-            ? [initiativeBlock, websitesBlock].join("\n\n")
-            : websitesBlock;
-      } catch (e) {
-        console.warn("[gemini] websites block failed:", e.message);
-      }
-    }
-
-    // Place reminders she has set ("next time I'm at Missy's..."), and whether
-    // location sharing is on so she never promises one that cannot fire.
-    if (mayPropose) {
-      try {
-        const reminderBlock = [
-          await placeReminders.promptBlock(session.profile_id),
-          await timeReminders
-            .promptBlock(session.profile_id)
-            .catch(() => null),
-        ]
-          .filter(Boolean)
-          .join("\n\n");
-        if (reminderBlock)
-          initiativeBlock = initiativeBlock
-            ? [initiativeBlock, reminderBlock].join("\n\n")
-            : reminderBlock;
-      } catch (e) {
-        console.warn("[gemini] place reminder block failed:", e.message);
-      }
-    }
-
-    // What she organized while dreaming (her own tables, this person's rows
-    // only) and any question she wants to ask them. Adult sessions only: a
-    // child's memories never reach athena_mind. Time-boxed and never fatal.
-    if (mayPropose) {
-      try {
-        const mindBlock = await dreams.promptBlock(session.profile_id, message, {
-          sessionId: session.id,
-        });
-        if (mindBlock)
-          initiativeBlock = initiativeBlock
-            ? [initiativeBlock, mindBlock].join("\n\n")
-            : mindBlock;
-      } catch (e) {
-        console.warn("[gemini] dreams block failed:", e.message);
-      }
-      // What the coding agents found in an investigation she started — when
-      // asked about it, or once when a finding first arrives. Owner-listed
-      // accounts only (codeAgents.mayUse); null otherwise; never throws.
-      const codeBlock = await codeAgents.promptBlock(session.profile_id, message);
-      if (codeBlock)
-        initiativeBlock = initiativeBlock
-          ? [initiativeBlock, codeBlock].join("\n\n")
-          : codeBlock;
-    }
-
-    const guessedBlock = await guessedGrounding;
-    if (guessedBlock)
-      integrationContext = [integrationContext, guessedBlock]
-        .filter(Boolean)
-        .join("\n\n");
-    const web = await webGrounding;
-    if (web)
-      integrationContext = [integrationContext, web.block]
-        .filter(Boolean)
-        .join("\n\n");
+    const contextBlocks = mayPropose
+      ? Promise.all([
+          // Anything she raised unprompted in the last few hours, so a reply
+          // to one of them is a continuation rather than a non sequitur.
+          safeBlock("initiative", () => initiative.promptBlock(profileId)),
+          // Emergencies near their saved places, as the stored situation the
+          // athena-incidents job assessed (one DB read, no fetch). When it is
+          // urgent the block instructs her to lead with it — the owner asked
+          // for exactly that.
+          safeBlock("nearby incidents", () =>
+            nearbyIncidents.promptBlock(profileId),
+          ),
+          // Anyone in the family currently reported under the weather.
+          safeBlock("family health", () => familyHealth.promptBlock(profileId)),
+          // Their community: points of interest, neighbours and local events
+          // from the Community page. The owner asked for her to always know
+          // these, so the block rides along every adult turn (capped in the
+          // service).
+          safeBlock("community", () => community.promptBlock(profileId)),
+          // Their projects (services/projects): the open ones in their own
+          // order, so "how's the porch going" and "I finished the gutters"
+          // land on the right one. Read-only; changes go through
+          // add_project/update_project.
+          safeBlock("projects", () =>
+            require("../services/projects/prompt").promptBlock(profileId),
+          ),
+          // Where they work: the workplaces listed on the Work page, so "my
+          // work" means the right company.
+          safeBlock("workplaces", () => workplaces.promptBlock(profileId)),
+          // Their websites: the stored Search Console / Analytics numbers,
+          // only on a turn that is about their sites (or names one). Reads the
+          // database, never Google.
+          safeBlock("websites", () => websites.promptBlock(profileId, message)),
+          // Place reminders she has set ("next time I'm at Missy's..."), and
+          // whether location sharing is on so she never promises one that
+          // cannot fire.
+          safeBlock("place reminder", () => placeReminders.promptBlock(profileId)),
+          timeReminders.promptBlock(profileId).catch(() => null),
+          // What she organized while dreaming (her own tables, this person's
+          // rows only) and any question she wants to ask them. A child's
+          // memories never reach athena_mind. Time-boxed.
+          safeBlock("dreams", () =>
+            dreams.promptBlock(profileId, message, { sessionId: session.id }),
+          ),
+          // What the coding agents found in an investigation she started —
+          // when asked about it, or once when a finding first arrives.
+          // Owner-listed accounts only (codeAgents.mayUse); null otherwise;
+          // never throws.
+          codeAgents.promptBlock(profileId, message),
+        ])
+      : Promise.resolve([]);
 
     // What she may ask to have read before she answers (services/needs).
     // Same audience as actions: adults with a profile, never a Guardian
     // session. Empty means the old "no lookups mid-reply" rule stands.
-    const needIds = mayPropose
-      ? await needs
-          .available(session.profile_id, { audience: memoryCtx.audience })
-          .catch(() => [])
-      : [];
+    const needIdsPromise = mayPropose
+      ? needs.available(profileId, { audience: memoryCtx.audience }).catch(() => [])
+      : Promise.resolve([]);
+
+    const [actionBlock, blocks, guessedBlock, web, needIds] = await Promise.all([
+      actionBlockPromise,
+      contextBlocks,
+      guessedGrounding,
+      webGrounding,
+      needIdsPromise,
+    ]);
+    const initiativeBlock = blocks.filter(Boolean).join("\n\n") || null;
+    if (guessedBlock)
+      integrationContext = [integrationContext, guessedBlock]
+        .filter(Boolean)
+        .join("\n\n");
+    if (web)
+      integrationContext = [integrationContext, web.block]
+        .filter(Boolean)
+        .join("\n\n");
+    timer.mark("blocks");
 
     const promptOptions = {
       capabilityBlock,
@@ -708,6 +657,7 @@ async function processAiResponse(session, message, clients, ctx = {}) {
     // A reply resting on search results goes to the frontier first: a small
     // local model is likeliest to embellish what it was handed.
     let drafted = await writeReply({ prefer: web ? "frontier" : undefined });
+    timer.mark("draft");
 
     // Lookups she asked for (services/needs). A draft with `needs` is not
     // sent: what she asked for is read, added to the context everything after
@@ -764,6 +714,7 @@ async function processAiResponse(session, message, clients, ctx = {}) {
     }
     lookupsOpen = false;
     if (drafted?.reply) delete drafted.reply.needs;
+    timer.mark("needs");
 
     let parsedResponse = drafted?.reply;
     let fellBack = false;
@@ -791,6 +742,7 @@ async function processAiResponse(session, message, clients, ctx = {}) {
       });
       parsedResponse = reflected.reply;
       if (reflected.web) webUsed = reflected.web;
+      timer.mark("monologue");
     }
 
     if (!parsedResponse) {
@@ -902,6 +854,7 @@ async function processAiResponse(session, message, clients, ctx = {}) {
         ? parsedResponse.lyrics.trim()
         : "";
     const sources = !fellBack && webUsed?.sources?.length ? webUsed.sources : null;
+    timer.mark("actions");
     const aiChatUuid = await messageService.addMessage(
       session.id,
       false,
@@ -1050,6 +1003,8 @@ async function processAiResponse(session, message, clients, ctx = {}) {
         ...(proposal ? { action_uuid: proposal.uuid, action: proposal } : {}),
       },
     });
+
+    timer.log({ message: aiChatUuid, endpoint: drafted?.endpointId || null });
 
     // After the message on purpose: the card is the follow-up to what she
     // just said, and a card that arrives first reads as Athena acting

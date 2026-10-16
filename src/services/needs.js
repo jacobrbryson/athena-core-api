@@ -33,7 +33,7 @@ const weather = require("./weather");
 const travel = require("./travel");
 const family = require("./family");
 
-const { RANGES, NEEDS_SCHEMA, SOURCE_IDS } = require("./needsSchema");
+const { RANGES, MAX_DATED_DAYS, NEEDS_SCHEMA, SOURCE_IDS } = require("./needsSchema");
 
 /** The most needs read in one round; anything past it is dropped. */
 const MAX_PER_ROUND = 3;
@@ -46,7 +46,7 @@ const SOURCES = [
 	{
 		id: "calendar",
 		provider: "google_calendar",
-		doc: '`{ "source": "calendar", "range": "today" | "tomorrow" | "this_week" | "next_30_days" }` — their own calendar. Ask when they mention "the game", "practice", "tonight", "my meeting" or anything that could be on it.',
+		doc: '`{ "source": "calendar", "range": "today" | "tomorrow" | "this_week" | "next_30_days" }` — their own calendar. Ask when they mention "the game", "practice", "tonight", "my meeting" or anything that could be on it. For anything further out — a trip next summer, "what\'s happening in March" — give dates instead of a range: `{ "source": "calendar", "from": "2027-06-01", "to": "2027-07-15" }` (YYYY-MM-DD, up to three years ahead, at most 60 days per lookup; ask for several to cover a longer stretch).',
 	},
 	{
 		id: "email",
@@ -124,7 +124,16 @@ function clean(raw, ids, done = new Set()) {
 	for (const need of raw) {
 		if (!need || typeof need !== "object" || !ids.includes(need.source)) continue;
 		const n = { source: need.source };
-		if (need.source === "calendar") n.range = RANGES[need.range] ? need.range : "this_week";
+		if (need.source === "calendar") {
+			const from = isoDay(need.from);
+			if (from) {
+				const to = isoDay(need.to);
+				n.from = from;
+				n.days = to && to >= from ? Math.min((Date.parse(to) - Date.parse(from)) / 86_400_000 + 1, MAX_DATED_DAYS) : 30;
+			} else {
+				n.range = RANGES[need.range] ? need.range : "this_week";
+			}
+		}
 		if (need.source === "weather") {
 			n.place = typeof need.place === "string" && need.place.trim() ? need.place.trim().slice(0, 200) : "home";
 			n.when = typeof need.when === "string" ? need.when.trim().slice(0, 40) : null;
@@ -142,7 +151,15 @@ function clean(raw, ids, done = new Set()) {
 }
 
 function keyOf(n) {
-	return [n.source, n.range, n.place, n.when, n.query].filter(Boolean).join("|").toLowerCase();
+	return [n.source, n.range, n.from, n.days, n.place, n.when, n.query].filter(Boolean).join("|").toLowerCase();
+}
+
+/** A real "YYYY-MM-DD", or null. How far out it may be is the calendar's call. */
+function isoDay(value) {
+	if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value.trim())) return null;
+	const day = value.trim();
+	const at = new Date(`${day}T00:00:00Z`);
+	return Number.isFinite(at.getTime()) && at.toISOString().slice(0, 10) === day ? day : null;
 }
 
 const HOME = /^(home|my house|our house|the house|at home)$/i;
@@ -243,7 +260,8 @@ async function fetch(profileId, needs, { audience, timeZone, onRead } = {}) {
 							block: await connectorContext.buildContext(profileId, {
 								message: "",
 								providers: ["google_calendar"],
-								daysByProvider: { google_calendar: RANGES[need.range] },
+								daysByProvider: { google_calendar: need.from ? need.days : RANGES[need.range] },
+								...(need.from ? { fromByProvider: { google_calendar: need.from } } : {}),
 								audience,
 								onRead,
 							}),

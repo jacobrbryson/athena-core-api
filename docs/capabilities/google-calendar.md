@@ -20,6 +20,12 @@ I only look when what you said is plausibly about your schedule. You don't have
 to say "calendar" — "anything going on tonight?" or "what am I doing tomorrow?"
 is enough, and "tonight" means today's calendar, not tomorrow's.
 
+I'm not limited to the next month. For planning something further off — a
+vacation next summer, "is anything on the second week of March?" — I look up
+those specific dates, up to three years ahead, about two months at a time; for
+a longer stretch I look up a few windows in turn. That's how I can help find
+open weeks for a trip without you reading your calendar out to me.
+
 I also notice the Working location you set in Google Calendar ("Home", "Office",
 or a place you named). I keep it apart from your schedule — it says where you
 are, not that you're in a meeting — so it never shows up as an appointment and
@@ -66,7 +72,10 @@ is told to revoke its approval once no other Google service is on (or use
   linked your calendar before that existed, I can read it but not add to it
   until you reconnect it.
 - I can only add to your primary calendar, and I can't invite anyone.
-- Upcoming events and free/busy — not your calendar's full history.
+- Upcoming events and free/busy — not your calendar's full history. Further
+  out, I read about 60 days per lookup and up to three years ahead, and I show
+  at most 25 events per lookup; when there were more I say so and look up a
+  narrower range.
 - One Google account.
 - I don't watch your calendar in the background. I look when you ask, so I
   can't warn you unprompted that a meeting starts in ten minutes.
@@ -86,6 +95,11 @@ is told to revoke its approval once no other Google service is on (or use
   its window (`daysByProvider`, "tonight" → 1 day). Wired in
   `src/controllers/gemini.js` (`groundedFromGuess`), awaited just before the
   prompt. Key: `JEV_API_KEY` via `services/secrets`; no key → no guess.
+- Dated reads: a `needs` calendar lookup may carry `from`/`to` (YYYY-MM-DD)
+  instead of a `range`; `needs.clean()` turns that into `from` + `days` (≤ 60),
+  passed through `fromByProvider` to `googleCalendar.buildContext`. The tools
+  take `start_date`. `startDate()` bounds it to a year back / three years
+  ahead; out of bounds reads from today.
 - Diagnostic: `diagnose-calendar.js` at the `core_api` root — read-only, run
   with `node diagnose-calendar.js`.
 - Writes: `createEvent` / `deleteEvent` in the same connector, called only

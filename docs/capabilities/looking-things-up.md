@@ -17,7 +17,9 @@ answer about your game, not someone else's.
 
 What I can look up mid-answer:
 
-- **Your calendar** — today, tomorrow, this week or the next month.
+- **Your calendar** — today, tomorrow, this week or the next month, or
+  specific dates up to three years ahead (about two months per lookup) for
+  planning a trip or anything further off.
 - **Your email, WHOOP and live heart rate**, if you've connected them.
 - **The weather at a place and time**, up to about a week out: your home, or
   wherever an event is. It comes from the US National Weather Service.
