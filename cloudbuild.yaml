@@ -137,7 +137,7 @@ substitutions:
   # Pub/Sub subscription's OIDC audience names it; and the service account
   # that subscription signs as. Any of the three empty leaves Nest events off
   # (the webhook answers 503) and a Nest connect fails at Google's screen.
-  _NEST_DEVICE_ACCESS_PROJECT_ID: ""
+  _NEST_DEVICE_ACCESS_PROJECT_ID: "6a9f25ad-7303-4f2f-a542-a36a1aca0ad7"
   _NEST_PUBSUB_AUDIENCE: "https://athena-proxy-api-12367074465.us-central1.run.app/api/v1/webhooks/nest"
   _NEST_PUBSUB_SERVICE_ACCOUNT: "nest-pubsub-push@athena-476423.iam.gserviceaccount.com"
   _INTEGRATION_REDIRECT_ALLOWLIST: "https://athena-companion-mlkumvppsa-uc.a.run.app,https://athena-companion-12367074465.us-central1.run.app"
