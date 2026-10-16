@@ -79,21 +79,36 @@ async function lookupBarcode(code) {
 	};
 }
 
+const MACROS = ["calories", "protein_g", "carbs_g", "fat_g"];
+
+/**
+ * Every field is required: under a response schema Gemini treats an
+ * unrequired field as optional and drops the numbers (see DESCRIBE_SCHEMA).
+ * A barcode or "none" reply fills the rest with 0 and "", which is ignored.
+ */
 const SCAN_SCHEMA = {
 	type: "object",
 	properties: {
 		kind: { type: "string", enum: ["barcode", "food", "none"] },
 		barcode: { type: "string" },
 		label: { type: "string" },
-		serving: { type: "string" },
 		calories: { type: "number" },
 		protein_g: { type: "number" },
 		carbs_g: { type: "number" },
 		fat_g: { type: "number" },
+		serving: { type: "string" },
 		note: { type: "string" },
 	},
-	required: ["kind"],
+	required: ["kind", "barcode", "label", ...MACROS, "serving"],
 };
+
+/** A food reply must carry at least one number; one without is a miss, not a food. */
+const withoutNumbers = (d) => d.kind === "food" && MACROS.every((f) => clamp(f, d[f]) == null);
+
+function checkScanned(d) {
+	if (!["barcode", "food", "none"].includes(d?.kind)) return "missing kind";
+	return withoutNumbers(d) ? "food without numbers" : null;
+}
 
 /** Ask the vision model what is in the photo: a barcode's digits, or an estimate of the food. */
 async function readPhoto({ imageBase64, mimeType, hint }) {
@@ -101,10 +116,11 @@ async function readPhoto({ imageBase64, mimeType, hint }) {
 - If a product barcode is the main subject and its printed digits are legible, return kind "barcode" and the digits only in "barcode".
 - Otherwise, if there is food or drink, return kind "food" with:
   label: a short name (2-6 words), e.g. "Chicken rice bowl";
-  serving: the portion you see, e.g. "1 bowl (~450 g)";
-  calories, protein_g, carbs_g, fat_g: your best estimate for the whole portion shown. If a nutrition facts label is visible, use its per-serving numbers instead and say so in note.
+  calories, protein_g, carbs_g, fat_g: numbers, your best estimate for the whole portion shown — always give all four. If a nutrition facts label is visible, use its per-serving numbers instead and say so in note;
+  serving: the portion you see, short, e.g. "1 bowl (~450 g)";
   note: one short sentence on what you assumed.
 - If there is no food, drink or barcode, return kind "none".
+Fields that don't apply to the kind you return get 0 for numbers and "" for text.
 ${hint ? `The person said: "${String(hint).slice(0, 200)}"` : ""}
 Return ONLY JSON matching: ${JSON.stringify(SCAN_SCHEMA)}`;
 	const { data } = await llm.generateJson({
@@ -112,7 +128,7 @@ Return ONLY JSON matching: ${JSON.stringify(SCAN_SCHEMA)}`;
 		audience: "adult",
 		schema: SCAN_SCHEMA,
 		contents: [{ role: "user", parts: [{ text: prompt }, { inlineData: { mimeType, data: imageBase64 } }] }],
-		check: (d) => (["barcode", "food", "none"].includes(d?.kind) ? null : "missing kind"),
+		check: checkScanned,
 	});
 	return data;
 }
@@ -160,6 +176,32 @@ async function scan(profileId, body = {}) {
 
 const SEARCH_TIMEOUT_MS = 12000;
 
+/**
+ * The numbers are required here: under a response schema Gemini treats an
+ * unrequired field as optional and was returning a label and a serving with no
+ * numbers at all ("6oz of New York Strip Steak", 2026-10-16). The numbers come
+ * before the serving, which it otherwise filled with a paragraph.
+ */
+const DESCRIBE_SCHEMA = {
+	type: "object",
+	properties: {
+		kind: { type: "string", enum: ["food", "none"] },
+		label: { type: "string" },
+		calories: { type: "number" },
+		protein_g: { type: "number" },
+		carbs_g: { type: "number" },
+		fat_g: { type: "number" },
+		serving: { type: "string" },
+		note: { type: "string" },
+	},
+	required: ["kind", "label", ...MACROS, "serving"],
+};
+
+function checkDescribed(d) {
+	if (!["food", "none"].includes(d?.kind)) return "kind must be food or none";
+	return withoutNumbers(d) ? "food without numbers" : null;
+}
+
 /** A Google-grounded search for the food's published nutrition; null when it fails or runs long. */
 async function searchNutrition(text) {
 	let timer;
@@ -197,17 +239,17 @@ ${found}
 Use those published figures where they match what was eaten; scale them if the person gave a different amount (e.g. "two", "large").` : "No web search result is available; estimate from typical values."}
 If it names food or drink, return kind "food" with:
   label: a short name (2-6 words), with the restaurant or brand when given, e.g. "McDonald's Big Mac";
-  serving: the amount eaten, e.g. "1 sandwich (219 g)";
-  calories, protein_g, carbs_g, fat_g: for the whole amount eaten;
+  calories, protein_g, carbs_g, fat_g: numbers for the whole amount eaten — always give all four, estimating from typical values if nothing published matches;
+  serving: the amount eaten, short, e.g. "1 sandwich (219 g)";
   note: one short sentence on where the numbers came from (e.g. "McDonald's published nutrition") or what you assumed.
-If it isn't food or drink, return kind "none".
-Return ONLY JSON matching: ${JSON.stringify(SCAN_SCHEMA)}`;
+If it isn't food or drink, return kind "none" (with 0 for the numbers and "" for the text).
+Return ONLY JSON matching: ${JSON.stringify(DESCRIBE_SCHEMA)}`;
 	const { data: read } = await llm.generateJson({
 		task: "json",
 		audience: "adult",
-		schema: SCAN_SCHEMA,
+		schema: DESCRIBE_SCHEMA,
 		contents: [{ role: "user", parts: [{ text: prompt }] }],
-		check: (d) => (["food", "none"].includes(d?.kind) ? null : "kind must be food or none"),
+		check: checkDescribed,
 	});
 	if (read?.kind !== "food") throw badRequest("Athena couldn't tell what food that was. Try naming it another way, or enter it by hand.", 422);
 	const food = {

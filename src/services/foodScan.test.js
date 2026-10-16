@@ -85,3 +85,26 @@ test('a failed search still logs an estimate; nonsense and empty text log nothin
   await expect(foodScan.describe(42, { text: ' ' })).rejects.toMatchObject({ status: 400 });
   expect(healthPlan.addEntry).toHaveBeenCalledTimes(1);
 });
+
+test('a described food must come back with numbers: the schema requires them and a reply without is a miss', async () => {
+  // Gemini under a response schema dropped every unrequired number (2026-10-16).
+  llm.search.mockResolvedValue({ text: 'Strip steak, 6 oz cooked: 406 Cal, 46.1 g protein, 0 g carbs, 23.8 g fat.' });
+  llm.generateJson.mockResolvedValue({ data: { kind: 'food', label: 'New York Strip Steak', serving: '6 oz (170 g)', calories: 406, protein_g: 46.1, carbs_g: 0, fat_g: 23.8 } });
+  await foodScan.describe(42, { text: '6oz of New York Strip Steak' });
+  const { schema, check } = llm.generateJson.mock.calls[0][0];
+  expect(schema.required).toEqual(expect.arrayContaining(['kind', 'calories', 'protein_g', 'carbs_g', 'fat_g']));
+  expect(check({ kind: 'food', label: 'New York Strip Steak', serving: '6 oz' })).toBe('food without numbers');
+  expect(check({ kind: 'food', label: 'Steak', calories: '406', protein_g: null })).toBeNull();
+  expect(check({ kind: 'none' })).toBeNull();
+});
+
+test('a photo read must come back with numbers too; barcode and none replies need none', async () => {
+  llm.generateJson.mockResolvedValue({ data: { kind: 'food', label: 'Steak and broccoli', serving: '1 plate', calories: 480, protein_g: 52, carbs_g: 12, fat_g: 26 } });
+  await foodScan.scan(42, IMAGE);
+  const { schema, check } = llm.generateJson.mock.calls[0][0];
+  expect(schema.required).toEqual(expect.arrayContaining(['kind', 'calories', 'protein_g', 'carbs_g', 'fat_g']));
+  expect(check({ kind: 'food', label: 'Steak and broccoli', serving: '1 plate with about 250 g steak…' })).toBe('food without numbers');
+  expect(check({ kind: 'barcode', barcode: '5000159484695', calories: 0 })).toBeNull();
+  expect(check({ kind: 'none' })).toBeNull();
+  expect(check({})).toBe('missing kind');
+});
