@@ -1,7 +1,7 @@
 jest.mock('../../helpers/db', () => ({ query: jest.fn() }));
-jest.mock('./http', () => ({ providerGet: jest.fn() }));
+jest.mock('./http', () => ({ providerGet: jest.fn(), providerRequest: jest.fn() }));
 const pool = require('../../helpers/db');
-const { providerGet } = require('./http');
+const { providerGet, providerRequest } = require('./http');
 const nest = require('./nest');
 
 const P = 'proj-123';
@@ -65,7 +65,7 @@ test('an offline event moves stored rows and reports who to evaluate', async () 
   const [sql, params] = pool.query.mock.calls[1];
   expect(sql).toMatch(/UPDATE athena_nest_device/);
   expect(params[0]).toBe('OFFLINE');
-  expect(JSON.parse(params[3])).toEqual({ temperatureC: 20 }); // earlier readings kept
+  expect(JSON.parse(params[3])).toMatchObject({ temperatureC: 20, google: 'OFFLINE', notReporting: false }); // earlier readings kept
 });
 
 test('an event older than the stored state is ignored, so redelivery cannot rewind', async () => {
@@ -120,4 +120,79 @@ test('refreshIfStale reads Google only when the rows are an hour old or missing'
 test('a missing project id fails loudly rather than reading another project', () => {
   delete process.env.NEST_DEVICE_ACCESS_PROJECT_ID;
   expect(() => nest.projectId()).toThrow(/NEST_DEVICE_ACCESS_PROJECT_ID/);
+});
+
+test('0 °C with 0 % humidity is not reporting: offline by our reading, Google\'s flag kept beside it', () => {
+  const silent = nest.assess({ temperatureC: 0, humidityPercent: 0, coolC: 25 }, 'ONLINE');
+  expect(silent.status).toBe('OFFLINE');
+  expect(silent.readings).toMatchObject({ google: 'ONLINE', notReporting: true, coolC: 25 });
+  // Either zero alone is a reading, not a placeholder.
+  expect(nest.assess({ temperatureC: 0, humidityPercent: 40 }, 'ONLINE').status).toBe('ONLINE');
+  expect(nest.assess({ temperatureC: 21, humidityPercent: 0 }, 'ONLINE').status).toBe('ONLINE');
+  // Reporting again, with no connectivity trait in the event: back to what Google last said.
+  const back = nest.assess({ temperatureC: 20.5, humidityPercent: 44 }, null, { google: 'ONLINE', notReporting: true });
+  expect(back).toMatchObject({ status: 'ONLINE', readings: { google: 'ONLINE', notReporting: false } });
+  // No flag from Google at all, but it was only "offline" because it was silent: online.
+  expect(nest.assess({ temperatureC: 20 , humidityPercent: 44 }, null, { notReporting: true }).status).toBe('ONLINE');
+  // A real Google OFFLINE stays offline whatever the readings.
+  expect(nest.assess({ temperatureC: 20, humidityPercent: 44 }, 'OFFLINE').status).toBe('OFFLINE');
+});
+
+test('a silent thermostat listed online is stored offline from the sync that sees it', async () => {
+  providerGet.mockResolvedValue({ devices: [{ name: NAME, type: 'sdm.devices.types.THERMOSTAT', traits: {
+    'sdm.devices.traits.Connectivity': { status: 'ONLINE' },
+    'sdm.devices.traits.Temperature': { ambientTemperatureCelsius: 0 },
+    'sdm.devices.traits.Humidity': { ambientHumidityPercent: 0 },
+  } }] });
+  pool.query.mockResolvedValueOnce([[{ device_name: NAME, connectivity: 'ONLINE', offline_since: null, online_since: at('2026-10-16T19:16:14Z'), readings: '{}' }]])
+    .mockResolvedValue([{ affectedRows: 1 }]);
+  const now = at('2026-10-16T20:00:00Z');
+  await nest.sync(7, { now });
+  const insert = pool.query.mock.calls[1][1];
+  expect(insert[5]).toBe('OFFLINE');
+  expect(insert[6]).toBe(now);
+  expect(JSON.parse(insert[8])).toMatchObject({ google: 'ONLINE', notReporting: true });
+});
+
+test('a reading arriving for a silent thermostat brings it back online', async () => {
+  pool.query
+    .mockResolvedValueOnce([[{ id: 1, profile_id: 7, connectivity: 'OFFLINE', offline_since: at('2026-10-16T20:00:00Z'), online_since: null,
+      readings: { temperatureC: 0, humidityPercent: 0, google: 'ONLINE', notReporting: true }, event_at: at('2026-10-16T20:00:00Z') }]])
+    .mockResolvedValueOnce([{ affectedRows: 1 }]);
+  const out = await nest.recordEvent({ timestamp: '2026-10-16T21:00:00Z', resourceUpdate: { name: NAME, traits: {
+    'sdm.devices.traits.Temperature': { ambientTemperatureCelsius: 19.5 },
+    'sdm.devices.traits.Humidity': { ambientHumidityPercent: 47 },
+  } } }, { project: P });
+  expect(out.wentOffline).toEqual([]);
+  const params = pool.query.mock.calls[1][1];
+  expect(params[0]).toBe('ONLINE');
+  expect(params[1]).toBeNull();
+});
+
+test('a not-reporting device never shows its placeholder numbers', () => {
+  const line = nest.formatDevice({ displayName: null, room: 'Den', type: 'thermostat', connectivity: 'OFFLINE', notReporting: true,
+    offlineSince: '2026-10-16T20:00:00Z', readings: { mode: 'COOL', coolC: 25, scale: 'FAHRENHEIT' } });
+  expect(line).toMatch(/NOT REPORTING since/);
+  expect(line).not.toMatch(/32°F|humidity 0%/);
+  expect(line).toMatch(/set to 77°F/);
+});
+
+test('commands go only to the person\'s own stored device, only from the allowlist, in order', async () => {
+  const cmd = { command: 'sdm.devices.commands.ThermostatTemperatureSetpoint.SetCool', params: { coolCelsius: 23.3 } };
+  // Not theirs: nothing is sent.
+  pool.query.mockResolvedValueOnce([[]]);
+  await expect(nest.executeCommands(7, NAME, [cmd])).rejects.toThrow(/no longer shared/);
+  expect(providerRequest).not.toHaveBeenCalled();
+  // Foreign project or unlisted command: refused before any call.
+  await expect(nest.executeCommands(7, 'enterprises/other/devices/x', [cmd])).rejects.toThrow(/Not a Nest device/);
+  pool.query.mockResolvedValueOnce([[{ 1: 1 }]]);
+  await expect(nest.executeCommands(7, NAME, [{ command: 'sdm.devices.commands.CameraLiveStream.GenerateRtspStream' }])).rejects.toThrow(/Unsupported/);
+  expect(providerRequest).not.toHaveBeenCalled();
+  // Theirs: posted to the device's executeCommand, then re-read.
+  providerRequest.mockResolvedValue({});
+  providerGet.mockResolvedValue({ devices: [] });
+  pool.query.mockResolvedValueOnce([[{ 1: 1 }]]).mockResolvedValue([[]]);
+  await nest.executeCommands(7, NAME, [cmd]);
+  expect(providerRequest).toHaveBeenCalledWith(7, 'nest', `/${NAME}:executeCommand`, expect.objectContaining({ method: 'POST', body: cmd, invalidateOnAuthFailure: false }));
+  expect(providerGet).toHaveBeenCalled();
 });

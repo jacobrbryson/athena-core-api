@@ -314,6 +314,7 @@ const TRIGGERS = [
 						room: d.room,
 						since: d.offlineSince,
 						at: nest.clockTime(d.offlineSince),
+						notReporting: d.notReporting === true,
 						minutes: Math.max(0, Math.round((now.getTime() - Date.parse(d.offlineSince)) / MINUTE)),
 					})),
 				},
@@ -321,9 +322,11 @@ const TRIGGERS = [
 		},
 
 		brief(f) {
-			const list = f.devices.map((d) => `the ${d.title} (offline since ${d.at})`).join(" and ");
+			const list = f.devices.map((d) => d.notReporting
+				? `the ${d.title} (not reporting since ${d.at} — Google still lists it as online, but it is sending no readings)`
+				: `the ${d.title} (offline since ${d.at})`).join(" and ");
 			return (
-				`Google reports ${list} as offline, so it can't be read or controlled right now. ` +
+				`${list.charAt(0).toUpperCase()}${list.slice(1)}, so it can't be read or controlled right now. ` +
 				`Don't guess why — power, Wi-Fi or the thermostat itself are all possible.`
 			);
 		},

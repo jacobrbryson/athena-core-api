@@ -22,8 +22,14 @@ Below **Ask Athena**, I show the hourly weather forecast for your saved property
 address, with highs and lows for the next
 24 hours. It refreshes every 15 minutes while the Property page is open.
 Link each area to your existing home projects and concerns to calculate its condition.
-I show your ranked projects, concerns, charter, recent project updates and projects
-whose seasonal months include the current month.
+I show your ranked projects, concerns, recent project updates and projects
+whose seasonal months include the current month. Your home charter — the
+vision and weights you decide by — lives at the bottom of the **Edit property**
+drawer, with **Read & edit** to change it.
+On the overview, **Key areas** and **Issues** share a height, as do **Recent
+activity** and **Seasonal focus**; a long list scrolls inside its card.
+The **Utilities** tab holds the Google Nest **Thermostats** panel; electricity
+and water aren't there yet.
 The overview's **Up next** card shows the three highest-ranked open projects.
 It matches the height of **Property at a glance** when they sit side by side.
 At its bottom, **See all projects** is a text link to the Projects tab, while

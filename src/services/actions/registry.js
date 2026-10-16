@@ -223,6 +223,16 @@ async function afterCondition(raw, ctx) {
 	};
 }
 
+/**
+ * Thermostat bounds, in °C (Nest's own unit). Heat 50–80 °F: below 50 risks
+ * frozen pipes, above 80 is never what anyone meant. Cool 62–88 °F: below 62
+ * strains the system for nothing, above 88 is "off" said badly. Heat-cool
+ * keeps 3 °F between its ends; Nest refuses narrower ranges anyway.
+ */
+const THERMOSTAT_MODES = new Set(["HEAT", "COOL", "HEATCOOL", "OFF"]);
+const THERMOSTAT_BOUNDS = { heat: [10, 26.67], cool: [16.67, 31.11] };
+const THERMOSTAT_GAP_C = 1.66;
+
 const MAX_EVENT_DAYS = 365;
 const MAX_EVENT_HOURS = 24 * 14;
 
@@ -349,6 +359,145 @@ const ACTIONS = [
 		async execute(profileId, params) {
 			const { ref, html_link } = await googleCalendar.createEvent(profileId, params);
 			return { ref, detail: { html_link } };
+		},
+	},
+
+	{
+		id: "set_thermostat",
+		label: "Change a thermostat",
+		// Added on the owner's instruction (2026-10-16): mode, temperature and
+		// eco on their own Google Nest thermostats, every change on a card they
+		// confirm. Never standing: a thermostat is shared by the whole house.
+		provider: "nest",
+		consentType: "action_authority",
+		// They can change it straight back, here or on the thermostat.
+		reversible: true,
+		standing: false,
+		describe:
+			"Change one of the person's own Google Nest thermostats: its mode (heat, cool, " +
+			"heat-cool, off), the temperature it heats or cools to, or eco on/off. Propose this " +
+			"when they ask to turn the heat or AC up, down, on or off, or set a temperature. " +
+			"One thermostat per proposal. Do not propose it to answer what a thermostat is set " +
+			"to (reading needs no approval), and not for one that is offline or not reporting.",
+		alternatives:
+			"If the thermostat is offline or not reporting, say so instead: Google cannot reach " +
+			"it, so a change would not arrive.",
+		params: {
+			thermostat: 'Which thermostat, by its room or name as you see it ("Den", "Upstairs"). Required.',
+			mode: "HEAT, COOL, HEATCOOL or OFF. Only when they ask to change the mode.",
+			heat_to: "Temperature to heat to, in unit. With mode HEAT or HEATCOOL.",
+			cool_to: "Temperature to cool to, in unit. With mode COOL or HEATCOOL.",
+			unit: "F or C: the unit heat_to/cool_to are in. Required with a temperature.",
+			eco: "on or off. Eco on cannot be combined with a mode or temperature.",
+		},
+
+		async normalize(raw = {}, ctx = {}) {
+			const nest = require("../connectors/nest");
+			const wanted = str(raw.thermostat, 120);
+			if (!wanted) throw invalid("Say which thermostat");
+			// Only the person's own stored thermostats: a model-written device
+			// name could otherwise point at anything in the Device Access project.
+			const devices = await nest.storedDevices(ctx.profileId);
+			const key = (s) => String(s || "").toLowerCase().replace(/\bthermostat\b/g, "").replace(/[^a-z0-9]+/g, " ").trim();
+			const want = key(wanted);
+			const matches = devices.filter((d) => [d.displayName, d.room, nest.deviceTitle(d)].some((n) => n && key(n) === want));
+			if (!matches.length) throw invalid(`There is no thermostat called "${wanted}" shared with Athena`);
+			if (matches.length > 1) throw invalid(`More than one thermostat matches "${wanted}"; name it more exactly`);
+			const t = matches[0];
+			if (t.connectivity !== "ONLINE") {
+				throw invalid(`The ${nest.deviceTitle(t)} is ${t.notReporting ? "not reporting" : "offline"}, so a change would not reach it`);
+			}
+
+			const r = t.readings || {};
+			const given = (v) => v !== undefined && v !== null && v !== "";
+			const mode = given(raw.mode) ? String(raw.mode).toUpperCase() : null;
+			if (mode && !THERMOSTAT_MODES.has(mode)) throw invalid("Mode must be HEAT, COOL, HEATCOOL or OFF");
+			const eco = given(raw.eco) ? String(raw.eco).toLowerCase() : null;
+			if (eco && eco !== "on" && eco !== "off") throw invalid('Eco must be "on" or "off"');
+			const hasHeat = given(raw.heat_to);
+			const hasCool = given(raw.cool_to);
+			if (!mode && !eco && !hasHeat && !hasCool) throw invalid("Nothing to change");
+			if (eco === "on" && (mode || hasHeat || hasCool)) throw invalid("Eco on cannot be combined with a mode or temperature");
+
+			// A temperature always carries its unit. Guessing F vs C turns 22 into
+			// 22 °F (off, near enough) or 22 °C (warm) — refused, never guessed.
+			const unit = hasHeat || hasCool ? String(raw.unit || "").toUpperCase() : null;
+			if (unit !== null && unit !== "F" && unit !== "C") throw invalid("Give the unit for the temperature: F or C");
+			const toC = (v, which) => {
+				const n = Number(v);
+				if (!Number.isFinite(n)) throw invalid(`The ${which} temperature must be a number`);
+				return unit === "F" ? ((n - 32) * 5) / 9 : n;
+			};
+			const ecoOn = !!r.eco && r.eco !== "OFF";
+			if ((hasHeat || hasCool || mode) && ecoOn && eco !== "off") {
+				throw invalid("Eco is on; include eco off to change the mode or temperature");
+			}
+			const target = mode || r.mode || null;
+			if ((hasHeat || hasCool) && (!target || target === "OFF")) throw invalid("A temperature needs the thermostat in heat, cool or heat-cool");
+			if (hasHeat && target === "COOL") throw invalid("heat_to does not apply in COOL mode");
+			if (hasCool && target === "HEAT") throw invalid("cool_to does not apply in HEAT mode");
+
+			let heatC = hasHeat ? toC(raw.heat_to, "heat") : null;
+			let coolC = hasCool ? toC(raw.cool_to, "cool") : null;
+			// Heat-cool sets both ends at once; a missing end keeps what it is now.
+			if (target === "HEATCOOL" && (hasHeat || hasCool)) {
+				if (heatC === null) heatC = Number.isFinite(r.heatC) ? r.heatC : null;
+				if (coolC === null) coolC = Number.isFinite(r.coolC) ? r.coolC : null;
+				if (heatC === null || coolC === null) throw invalid("Heat-cool needs both a heat and a cool temperature");
+				if (coolC - heatC < THERMOSTAT_GAP_C) throw invalid("Keep at least 3 °F (1.7 °C) between heat and cool");
+			}
+			const within = (c, [lo, hi]) => c >= lo - 0.01 && c <= hi + 0.01;
+			if (heatC !== null && !within(heatC, THERMOSTAT_BOUNDS.heat)) throw invalid("Heat must be between 50 °F and 80 °F (10–26.5 °C)");
+			if (coolC !== null && !within(coolC, THERMOSTAT_BOUNDS.cool)) throw invalid("Cool must be between 62 °F and 88 °F (16.5–31 °C)");
+
+			const round = (c) => Math.round(c * 10) / 10;
+			const p = {
+				device_name: t.name,
+				thermostat: nest.deviceTitle(t),
+				...(eco === "on" || (eco === "off" && ecoOn) ? { eco } : {}),
+				...(mode && mode !== r.mode ? { mode } : {}),
+				...(heatC !== null ? { heat_c: round(heatC) } : {}),
+				...(coolC !== null ? { cool_c: round(coolC) } : {}),
+				// How the card shows temperatures: as asked, else as the thermostat does.
+				unit: unit || (r.scale === "CELSIUS" ? "C" : "F"),
+			};
+			if (!p.eco && !p.mode && p.heat_c === undefined && p.cool_c === undefined) {
+				throw invalid(`The ${p.thermostat} is already set that way`);
+			}
+			return p;
+		},
+
+		summarize(p) {
+			const deg = (c) => (p.unit === "C" ? `${c}°C` : `${Math.round((c * 9) / 5 + 32)}°F`);
+			const bits = [];
+			if (p.eco === "on") bits.push("turn eco on");
+			if (p.eco === "off") bits.push("turn eco off");
+			if (p.mode === "OFF") bits.push("turn it off");
+			else if (p.mode) bits.push(`switch to ${p.mode === "HEATCOOL" ? "heat-cool" : p.mode.toLowerCase()}`);
+			if (p.heat_c !== undefined && p.cool_c !== undefined) bits.push(`keep it between ${deg(p.heat_c)} and ${deg(p.cool_c)}`);
+			else if (p.heat_c !== undefined) bits.push(`heat to ${deg(p.heat_c)}`);
+			else if (p.cool_c !== undefined) bits.push(`cool to ${deg(p.cool_c)}`);
+			return `Set the ${p.thermostat}: ${bits.join(", then ")}`.slice(0, 500);
+		},
+
+		async execute(profileId, p) {
+			const nest = require("../connectors/nest");
+			const C = "sdm.devices.commands.";
+			// Eco off first and mode before setpoint: Nest refuses a setpoint
+			// while eco is on, or one that does not belong to the current mode.
+			const commands = [];
+			if (p.eco === "off") commands.push({ command: `${C}ThermostatEco.SetMode`, params: { mode: "OFF" } });
+			if (p.mode) commands.push({ command: `${C}ThermostatMode.SetMode`, params: { mode: p.mode } });
+			if (p.heat_c !== undefined && p.cool_c !== undefined) {
+				commands.push({ command: `${C}ThermostatTemperatureSetpoint.SetRange`, params: { heatCelsius: p.heat_c, coolCelsius: p.cool_c } });
+			} else if (p.heat_c !== undefined) {
+				commands.push({ command: `${C}ThermostatTemperatureSetpoint.SetHeat`, params: { heatCelsius: p.heat_c } });
+			} else if (p.cool_c !== undefined) {
+				commands.push({ command: `${C}ThermostatTemperatureSetpoint.SetCool`, params: { coolCelsius: p.cool_c } });
+			}
+			if (p.eco === "on") commands.push({ command: `${C}ThermostatEco.SetMode`, params: { mode: "MANUAL_ECO" } });
+			await nest.executeCommands(profileId, p.device_name, commands);
+			return { ref: p.device_name, detail: null };
 		},
 	},
 
@@ -1735,6 +1884,11 @@ const PARAM_TYPES = {
 	repo: { type: "string", enum: Object.keys(codeAgents.REPOS) },
 	agent: { type: "string", enum: ["claude", "codex"] },
 	within_hours: { type: "number" },
+	heat_to: { type: "number" },
+	cool_to: { type: "number" },
+	mode: { type: "string", enum: ["HEAT", "COOL", "HEATCOOL", "OFF"] },
+	unit: { type: "string", enum: ["F", "C"] },
+	eco: { type: "string", enum: ["on", "off"] },
 	check_in_hours: { type: "number" },
 	project_priority: { type: "number" },
 	feeling_better: { type: "boolean" },

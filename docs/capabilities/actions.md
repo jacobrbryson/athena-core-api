@@ -33,6 +33,12 @@ Two things I can propose today:
   talking about. See [camera.md](camera.md) — this is the one action I can do
   repeatedly on my own once you allow it, and the only one that opens something
   on your device.
+- **Change a thermostat** — on your Google Nest thermostats: switch the mode
+  (heat, cool, heat-cool, off), set the temperature, or turn eco on or off.
+  One thermostat per card, and I ask every time, because the whole house
+  lives with it. Heat stays between 50 °F and 80 °F and cooling between
+  62 °F and 88 °F. I won't try one that's offline or not reporting. See
+  [nest.md](nest.md).
 - **Save a fact** to my long-term memory, when you ask me to remember
   something specific.
 - **Log a family health update** — start a health watch ("Thomas has a

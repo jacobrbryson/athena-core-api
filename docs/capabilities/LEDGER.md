@@ -1,5 +1,13 @@
 # Capability ledger
 
+- 2026-10-16 — Athena can change a Google Nest thermostat — mode, temperature or eco — through an approval card every time (set_thermostat; never standing). Heat 50–80 °F, cool 62–88 °F, heat-cool 3 °F apart; refused for an offline or not-reporting thermostat — `nest.md`, `actions.md` (status: partial)
+
+- 2026-10-16 — A Nest thermostat Google lists as online but that sends exactly 0° and 0% humidity now counts as not reporting: a red Not reporting since … tag (no fake 32°F) on the Thermostats panel, the same in chat, and the same alert as offline, worded as not reporting — `nest.md` (status: partial)
+
+- 2026-10-16 — Property gains a Utilities tab, and the Thermostats panel moves there from Overview; the home charter moves from Overview and Concerns into the Edit property drawer; Key areas/Issues and Recent activity/Seasonal focus are paired at equal heights, scrolling past a cap — `property.md`, `nest.md` (status: live)
+
+- 2026-10-16 — The Property page's Overview has a Thermostats panel: each shared Google Nest thermostat with its temperature, humidity, setting, heating/cooling now and an Online or Offline since … tag; a Connect Google Nest button when Nest isn't linked. Read-only — `nest.md` (status: partial)
+
 - 2026-10-16 — Property gains a Vehicles tab: the cars kept at the property with year/make/model, plate, VIN, odometer and a photo; registration, inspection, insurance and next-service dates (or mileage) shown as overdue / soon / later; a dated service history that updates the odometer; Ask Athena about it. Vehicles ride in her prompt; no dashboard card. Migration 0078 applied 2026-10-16 — `vehicles.md`, `property.md` (status: live)
 
 - 2026-10-16 — Property issue details gain a Notes log: dated notes per issue, with web addresses and phone numbers as tappable links; the latest three notes on each open issue ride in her prompt. Needs migration 0077 — `property.md` (status: live)

@@ -1,11 +1,12 @@
 const pool = require("../../helpers/db");
-const { providerGet } = require("./http");
+const { providerGet, providerRequest } = require("./http");
 const { DEFAULT_TZ } = require("../clock");
 
 /**
  * Google Nest — the devices a person shared through Device Access, read
- * through the Smart Device Management API. Read-only: nothing here sets a
- * temperature or changes a mode, and there is no action that would.
+ * through the Smart Device Management API. Reads are free; the one write,
+ * executeCommands(), is reachable only from the set_thermostat action after
+ * a person approved its card (services/actions/registry.js).
  *
  * What makes this more than a live read is connectivity. "The downstairs
  * thermostat went offline at 2:14" is a transition, and a transition needs a
@@ -111,6 +112,28 @@ function normalizeDevice(d) {
 }
 
 /**
+ * Is it actually reporting? Google can go on listing a thermostat as ONLINE
+ * after it has stopped sending anything, and what it hands back then is
+ * exactly 0 °C and exactly 0 % humidity (seen on the owner's Den thermostat,
+ * 2026-10-16). Together those are a placeholder, not a measurement: no room a
+ * thermostat sits in is at freezing with bone-dry air. So, on the owner's
+ * instruction, that pair counts as offline — shown as "not reporting" rather
+ * than as Google's word "offline", because Google said the opposite.
+ *
+ * Returns the status to feed transition() and the readings to store, which
+ * keep Google's own flag (`google`) beside the `notReporting` marker. A device
+ * that starts reporting again goes back to whatever Google last said.
+ */
+function assess(readings, googleStatus, prevReadings = {}) {
+	const r = { ...readings };
+	if (googleStatus) r.google = googleStatus;
+	else if (prevReadings.google && !r.google) r.google = prevReadings.google;
+	r.notReporting = r.temperatureC === 0 && r.humidityPercent === 0;
+	if (r.notReporting) return { status: "OFFLINE", readings: r };
+	return { status: r.google || (prevReadings.notReporting ? "ONLINE" : null), readings: r };
+}
+
+/**
  * The single place connectivity moves.
  *
  * `offline_since` is set on the way INTO offline and kept while it stays
@@ -164,12 +187,14 @@ async function listDevices(profileId) {
 async function sync(profileId, { now = new Date() } = {}) {
 	const devices = await listDevices(profileId);
 	const [rows] = await pool.query(
-		"SELECT device_name, connectivity, offline_since, online_since FROM athena_nest_device WHERE profile_id = ?",
+		"SELECT device_name, connectivity, offline_since, online_since, readings FROM athena_nest_device WHERE profile_id = ?",
 		[profileId]
 	);
 	const byName = new Map(rows.map((r) => [r.device_name, r]));
 	for (const d of devices) {
-		const next = transition(byName.get(d.name), d.connectivity === "UNKNOWN" ? null : d.connectivity, now);
+		const prev = byName.get(d.name);
+		const seen = assess(d.readings, d.connectivity === "UNKNOWN" ? null : d.connectivity, parseJson(prev?.readings));
+		const next = transition(prev, seen.status, now);
 		await pool.query(
 			`INSERT INTO athena_nest_device
 				(profile_id, device_name, display_name, room, device_type, connectivity, offline_since, online_since, readings, event_at, synced_at)
@@ -180,7 +205,7 @@ async function sync(profileId, { now = new Date() } = {}) {
 				readings = VALUES(readings), event_at = GREATEST(COALESCE(event_at, VALUES(event_at)), VALUES(event_at)),
 				synced_at = VALUES(synced_at)`,
 			[profileId, d.name, d.displayName, d.room, d.type, next.connectivity, next.offline_since, next.online_since,
-				JSON.stringify(d.readings), now, now]
+				JSON.stringify(seen.readings), now, now]
 		);
 	}
 	const keep = devices.map((d) => d.name);
@@ -203,6 +228,50 @@ async function refreshIfStale(profileId, { now = new Date(), maxAgeMs = STALE_MS
 	if (rows[0]?.n && now.getTime() - oldest < maxAgeMs) return false;
 	await sync(profileId, { now });
 	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Writing — only ever from the action layer
+// ---------------------------------------------------------------------------
+
+/**
+ * The SDM commands this module will send, and nothing else. The only caller
+ * is the set_thermostat action's execute(), after a person approved the card;
+ * its normalize() is what decided the values. Kept as an allowlist here too so
+ * this function cannot be pointed at a command nobody vouched for.
+ */
+const COMMANDS = new Set([
+	"sdm.devices.commands.ThermostatEco.SetMode",
+	"sdm.devices.commands.ThermostatMode.SetMode",
+	"sdm.devices.commands.ThermostatTemperatureSetpoint.SetHeat",
+	"sdm.devices.commands.ThermostatTemperatureSetpoint.SetCool",
+	"sdm.devices.commands.ThermostatTemperatureSetpoint.SetRange",
+]);
+
+/**
+ * Send commands to one of this person's own thermostats, in order, stopping
+ * at the first refusal. Order matters: eco must be off before a setpoint will
+ * take, and the mode must be set before the setpoint that belongs to it.
+ * Afterwards the stored state is re-read so the panel and chat show the result.
+ */
+async function executeCommands(profileId, deviceName, commands) {
+	if (!isDeviceName(deviceName)) throw failure("Not a Nest device in this project", 400, "bad_device");
+	const [own] = await pool.query(
+		"SELECT 1 FROM athena_nest_device WHERE profile_id = ? AND device_name = ? LIMIT 1",
+		[profileId, deviceName]
+	);
+	if (!own.length) throw failure("That thermostat is no longer shared with Athena", 404, "not_shared");
+	for (const c of commands) {
+		if (!COMMANDS.has(c?.command)) throw failure("Unsupported Nest command", 400, "bad_command");
+		await providerRequest(profileId, PROVIDER, `/${deviceName}:executeCommand`, {
+			method: "POST",
+			body: { command: c.command, params: c.params || {} },
+			// A refused command is about the device or the values, not the grant.
+			invalidateOnAuthFailure: false,
+		});
+	}
+	await sync(profileId).catch((err) => console.warn("[nest] re-read after command failed:", err.message));
+	return commands.length;
 }
 
 // ---------------------------------------------------------------------------
@@ -245,7 +314,7 @@ async function recordEvent(event, { project = projectId() } = {}) {
 	);
 	if (!rows.length) return { applied: 0, wentOffline: [], resync: await linkedProfiles() };
 
-	const status = connectivityOf(traits);
+	const googleStatus = connectivityOf(traits);
 	const fresh = readingsOf(traits);
 	const wentOffline = [];
 	let applied = 0;
@@ -253,12 +322,14 @@ async function recordEvent(event, { project = projectId() } = {}) {
 		// Pub/Sub may redeliver or reorder. An event older than what this row
 		// already reflects is dropped, so a device never moves backwards.
 		if (row.event_at && new Date(row.event_at).getTime() > at.getTime()) continue;
-		const next = transition(row, status, at);
+		const before = parseJson(row.readings);
+		const seen = assess({ ...before, ...fresh }, googleStatus, before);
+		const next = transition(row, seen.status, at);
 		const [result] = await pool.query(
 			`UPDATE athena_nest_device SET connectivity = ?, offline_since = ?, online_since = ?, readings = ?, event_at = ?
 			 WHERE id = ? AND (event_at IS NULL OR event_at <= ?)`,
 			[next.connectivity, next.offline_since, next.online_since,
-				JSON.stringify({ ...parseJson(row.readings), ...fresh }), at, row.id, at]
+				JSON.stringify(seen.readings), at, row.id, at]
 		);
 		if (!result.affectedRows) continue;
 		applied += 1;
@@ -272,6 +343,15 @@ async function recordEvent(event, { project = projectId() } = {}) {
 // ---------------------------------------------------------------------------
 
 function publicRow(r) {
+	const readings = parseJson(r.readings);
+	// Offline by our reading, not Google's: it is listed online but sends
+	// nothing (see assess). Said as "not reporting", never as "offline", and its
+	// placeholder 0 °C / 0 % never leave here, so nothing can quote them.
+	const notReporting = r.connectivity === "OFFLINE" && readings.notReporting === true && readings.google !== "OFFLINE";
+	if (notReporting) {
+		delete readings.temperatureC;
+		delete readings.humidityPercent;
+	}
 	return {
 		name: r.device_name,
 		displayName: r.display_name || null,
@@ -280,7 +360,8 @@ function publicRow(r) {
 		connectivity: r.connectivity,
 		offlineSince: r.offline_since ? new Date(r.offline_since).toISOString() : null,
 		onlineSince: r.online_since ? new Date(r.online_since).toISOString() : null,
-		readings: parseJson(r.readings),
+		readings,
+		notReporting,
 	};
 }
 
@@ -321,11 +402,12 @@ function temp(celsius, scale) {
 function formatDevice(d) {
 	const r = d.readings || {};
 	const bits = [];
-	if (d.connectivity === "OFFLINE") bits.push(`OFFLINE since ${clockTime(d.offlineSince)} (readings are from before that)`);
+	if (d.notReporting) bits.push(`NOT REPORTING since ${clockTime(d.offlineSince)} — Google lists it as online, but it is sending no readings (its 0° and 0% humidity are placeholders, not measurements; never quote them as the temperature)`);
+	else if (d.connectivity === "OFFLINE") bits.push(`OFFLINE since ${clockTime(d.offlineSince)} (readings are from before that)`);
 	else bits.push(d.connectivity === "ONLINE" ? "online" : "status unknown");
-	const t = temp(r.temperatureC, r.scale);
+	const t = d.notReporting ? null : temp(r.temperatureC, r.scale);
 	if (t) bits.push(`${t} inside`);
-	if (Number.isFinite(r.humidityPercent)) bits.push(`humidity ${r.humidityPercent}%`);
+	if (!d.notReporting && Number.isFinite(r.humidityPercent)) bits.push(`humidity ${r.humidityPercent}%`);
 	if (r.eco && r.eco !== "OFF") bits.push("eco mode");
 	else if (r.mode) {
 		const target = r.mode === "HEAT" ? temp(r.heatC, r.scale) : r.mode === "COOL" ? temp(r.coolC, r.scale)
@@ -365,7 +447,7 @@ const FUNCTION_DECLARATIONS = [
 			"The person's Google Nest thermostats: whether each is online or offline (and since when), " +
 			"indoor temperature, humidity, mode, set temperature and whether it is heating or cooling now. " +
 			'Use for "is the downstairs thermostat online", "what temperature is it upstairs", or "is the heat on". ' +
-			"Read-only — Athena cannot change a thermostat.",
+			"Reading only; to change a thermostat, propose the set_thermostat action.",
 		parameters: { type: "OBJECT", properties: {} },
 	},
 ];
@@ -391,10 +473,13 @@ module.exports = {
 	normalizeDevice,
 	readingsOf,
 	transition,
+	assess,
 	listDevices,
 	sync,
 	refreshIfStale,
 	recordEvent,
+	executeCommands,
+	COMMANDS,
 	storedDevices,
 	offlineDevices,
 	deviceTitle,

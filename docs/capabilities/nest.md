@@ -2,7 +2,7 @@
 id: nest
 title: Google Nest thermostats
 summary: With Google Nest linked, I can see whether each thermostat is online, the temperature inside and what it's set to — and tell you when one goes offline.
-where: the ⋯ menu (top right) → Connected apps → Google Nest; the alert itself through Initiative
+where: Property → Utilities → Thermostats (or ⋯ menu → Connected apps → Google Nest); the alert itself through Initiative
 status: partial
 surfaces: [companion]
 audiences: [adult]
@@ -22,6 +22,11 @@ me. For each one I know:
 Ask "is the downstairs thermostat online?" or "what's it set to upstairs?" and
 I'll read it live.
 
+**I can change one, too — with your OK each time.** Ask me to turn the heat up,
+cool the den to 74, switch upstairs to heat-cool, or put a thermostat in eco,
+and I'll put a card in our conversation saying exactly what I'll do ("Set the
+Den Thermostat: cool to 74°F"). Nothing changes until you tap **Approve**.
+
 **I tell you when a thermostat goes offline.** Google lets me know within
 moments of a thermostat losing its connection, and I send you an alert naming
 which one and when it dropped. You get one alert per outage. If a second
@@ -29,12 +34,30 @@ thermostat drops later, the new alert names both. I say it's offline, not why,
 because from where I sit a power cut, a Wi-Fi problem and a fault in the
 thermostat all look the same.
 
+**I also catch one Google misses.** Sometimes Google keeps listing a
+thermostat as online after it has stopped sending anything, and all it hands
+me is exactly 0° and 0% humidity. No room is really freezing and bone-dry at
+once, so I treat that as **not reporting**: you get the same alert as for
+offline, worded as "not reporting" because Google says otherwise, and I never
+quote that 0° as the temperature. As soon as it sends a real reading again,
+it's back to normal.
+
 ## Where to find it
 
 The **⋯ menu in the top right** → **Connected apps** → **Google Nest** →
 **Connect**. Google then shows its own Nest screen, where you pick which home
 and which thermostats to share with me. Only what you tick there is visible to
-me.
+me. The same **Connect Google Nest** button is on the **Thermostats** panel on
+the **Property** page's **Utilities** tab.
+
+Once linked, that **Thermostats** panel shows a card for each thermostat: the
+temperature inside, humidity, what it's set to, whether it's heating or cooling
+now, and a green **Online** or red **Offline since …** tag — or **Not
+reporting since …** for one Google lists as online but that's sending nothing,
+which shows a dash instead of a temperature. An offline card's temperature is
+its last reading before it dropped. **Refresh** at the bottom
+reads Google again. The panel itself has no controls — to change a
+thermostat, ask me and approve the card.
 
 The offline alert is one of the things I can say first, so it needs
 **Initiative** turned on (⋯ menu → **Initiative**). It's listed there as
@@ -55,14 +78,20 @@ During your quiet hours the alert is held and comes through when they end.
 
 ## Limits
 
-- **I can only look.** I can't change the temperature, the mode or anything
-  else on a thermostat.
+- **Every change is a card you approve.** I can't change a thermostat on my
+  own, there's no "don't ask me again" for it, and I won't send a change to
+  one that's offline or not reporting — Google couldn't deliver it.
+- **Mode, temperature and eco only.** Not the fan, schedules, or Nest's
+  own settings. Heat can be set from 50 °F to 80 °F and cooling from 62 °F
+  to 88 °F; heat-cool keeps at least 3 °F between its two ends.
 - Thermostats only for now. Nest cameras, doorbells and smoke alarms aren't
   read, even if they're shared.
 - I don't send a separate "it's back online" alert. Ask me and I'll tell you
   it's back and since when.
 - Google decides when a thermostat counts as offline, so a very short blip
-  might never be reported to me.
+  might never be reported to me. The one exception I add myself is "not
+  reporting" (0° with 0% humidity); any other kind of stuck reading I can't
+  tell from a real one.
 - Only the person who linked Nest gets the alerts. Anyone else in the family
   who wants them links Nest on their own account.
 
@@ -81,10 +110,27 @@ During your quiet hours the alert is held and comes through when they end.
   `NEST_PUBSUB_AUDIENCE` and `NEST_PUBSUB_SERVICE_ACCOUNT`, stores the event,
   then runs `initiative.evaluateProfile` for any profile whose device just went
   offline, under that profile's own access identity.
+- Not reporting: `assess()` in `nest.js` stores 0 °C + 0 % as `OFFLINE` with
+  `readings.notReporting` and Google's own flag in `readings.google`;
+  `publicRow()` sets `notReporting` and drops the placeholder numbers. Owner's
+  call, 2026-10-16, after the Den thermostat showed 32°F/0% while "ONLINE".
+- Control: action `set_thermostat` in `src/services/actions/registry.js`
+  (owner's instruction 2026-10-16; never standing). `normalize()` resolves the
+  thermostat only among the person's own stored rows, refuses offline/not
+  reporting, requires a unit with any temperature, and bounds heat 10–26.67 °C
+  / cool 16.67–31.11 °C / heat-cool gap 1.66 °C. `execute()` sends eco off →
+  mode → setpoint → eco on through `executeCommands()` in `nest.js`, which
+  allowlists the five SDM commands and re-reads after. Tests:
+  `src/services/actions/setThermostat.test.js`.
 - Trigger: `nest_offline` in `src/services/initiative/triggers.js`. Reads only
   stored rows; dedupe key is each offline device plus its `offline_since`.
+- Property panel: `GET /projects/property/thermostats` →
+  `src/controllers/propertyThermostats.js` (adult-only; no devices without an
+  active link; re-reads Google only when rows are 5+ minutes old). UI is
+  `../../../companion/src/components/PropertyThermostats.tsx`, loaded only while
+  Property → Utilities is on screen; mock in `../../../companion/mock/projects.ts`.
 - Migration: `db/migrations/0076_nest_devices.up.sql`.
-- Tests: `src/services/connectors/nest.test.js`,
+- Tests: `src/services/connectors/nest.test.js`, `src/controllers/propertyThermostats.test.js`,
   `src/controllers/nestWebhook.test.js`.
 - Rows stay after a disconnect but are never read without an active link;
   re-linking re-syncs and drops devices no longer shared.
