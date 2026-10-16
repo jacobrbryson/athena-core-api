@@ -45,12 +45,12 @@ steps:
       # The runtime SA needs roles/secretmanager.secretAccessor on it; see
       # deploy/scripts/setup-key-rotation.sh.
 
-      # --- Non-secret runtime config (use a custom ^@^ delimiter so values can contain commas) ---
+      # --- Non-secret runtime config (use a custom ^|^ delimiter so values can contain commas and the @ in an email) ---
       # --set-env-vars REPLACES the whole set, so every runtime var the service
       # needs must be listed here. Anything set out-of-band with `gcloud run
       # services update` is wiped by the next deploy — which is exactly how the
       # OAuth connector callback broke once already.
-      - "--set-env-vars=^@^GCP_PROJECT_ID=$PROJECT_ID@DB_HOST=$_DB_HOST@DB_USER=$_DB_USER@DB_NAME=$_DB_NAME@RECAPTCHA_PROJECT_ID=$_RECAPTCHA_PROJECT_ID@RECAPTCHA_SITE_KEY=$_RECAPTCHA_SITE_KEY@FAMILY_CHORES_ADMIN_ROLES=$_FAMILY_CHORES_ADMIN_ROLES@PUBLIC_API_BASE_URL=$_PUBLIC_API_BASE_URL@OAUTH_GOOGLE_CALLBACK_URL=$_OAUTH_GOOGLE_CALLBACK_URL@INTEGRATION_REDIRECT_ALLOWLIST=$_INTEGRATION_REDIRECT_ALLOWLIST@FAMILY_CHORES_PARTNER_GOOGLE_ID=$_FAMILY_CHORES_PARTNER_GOOGLE_ID@NEST_DEVICE_ACCESS_PROJECT_ID=$_NEST_DEVICE_ACCESS_PROJECT_ID@NEST_PUBSUB_AUDIENCE=$_NEST_PUBSUB_AUDIENCE@NEST_PUBSUB_SERVICE_ACCOUNT=$_NEST_PUBSUB_SERVICE_ACCOUNT"
+      - "--set-env-vars=^|^GCP_PROJECT_ID=$PROJECT_ID|DB_HOST=$_DB_HOST|DB_USER=$_DB_USER|DB_NAME=$_DB_NAME|RECAPTCHA_PROJECT_ID=$_RECAPTCHA_PROJECT_ID|RECAPTCHA_SITE_KEY=$_RECAPTCHA_SITE_KEY|FAMILY_CHORES_ADMIN_ROLES=$_FAMILY_CHORES_ADMIN_ROLES|PUBLIC_API_BASE_URL=$_PUBLIC_API_BASE_URL|OAUTH_GOOGLE_CALLBACK_URL=$_OAUTH_GOOGLE_CALLBACK_URL|INTEGRATION_REDIRECT_ALLOWLIST=$_INTEGRATION_REDIRECT_ALLOWLIST|FAMILY_CHORES_PARTNER_GOOGLE_ID=$_FAMILY_CHORES_PARTNER_GOOGLE_ID|NEST_DEVICE_ACCESS_PROJECT_ID=$_NEST_DEVICE_ACCESS_PROJECT_ID|NEST_PUBSUB_AUDIENCE=$_NEST_PUBSUB_AUDIENCE|NEST_PUBSUB_SERVICE_ACCOUNT=$_NEST_PUBSUB_SERVICE_ACCOUNT"
 
   # 4. Move the Cloud Run JOBS onto the image this build just deployed.
   #
