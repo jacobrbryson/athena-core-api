@@ -158,4 +158,68 @@ async function scan(profileId, body = {}) {
 	return { ...(await log(food, "photo")), note: read.note ? `Estimated from your photo: ${String(read.note).slice(0, 200)}` : "Estimated from your photo — check the numbers." };
 }
 
-module.exports = { scan, lookupBarcode, validBarcode, _test: { clamp, readPhoto } };
+const SEARCH_TIMEOUT_MS = 12000;
+
+/** A Google-grounded search for the food's published nutrition; null when it fails or runs long. */
+async function searchNutrition(text) {
+	let timer;
+	try {
+		const out = await Promise.race([
+			llm.search(`Nutrition facts for one serving of: ${text}. Give calories, protein, carbohydrates and fat in grams, the serving size, and whose figures they are (the restaurant or brand's own published nutrition if it exists).`, { audience: "adult" }),
+			new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("timed out")), SEARCH_TIMEOUT_MS); }),
+		]);
+		return out?.text ? String(out.text).slice(0, 4000) : null;
+	} catch (err) {
+		console.warn("[foodScan] nutrition search failed:", err.message);
+		return null;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+/**
+ * Log a food from a few words ("Big Mac from McDonald's"). body: { text, eaten_on? }
+ *
+ * The published numbers are looked up on the web first, so a restaurant or
+ * branded item gets its real figures; a model then reads one serving's
+ * macros out of that (or, with no search result, estimates them and says so).
+ * Logged straight away like a scan, marked "described", for the person to check.
+ */
+async function describe(profileId, body = {}) {
+	const text = typeof body.text === "string" ? body.text.replace(/\s+/g, " ").trim().slice(0, 200) : "";
+	if (text.length < 2) throw badRequest("Tell Athena what you ate.");
+	const found = await searchNutrition(text);
+	const prompt = `A person is logging food in a nutrition diary. They said they ate: "${text}"
+${found ? `A web search for its nutrition returned:
+"""
+${found}
+"""
+Use those published figures where they match what was eaten; scale them if the person gave a different amount (e.g. "two", "large").` : "No web search result is available; estimate from typical values."}
+If it names food or drink, return kind "food" with:
+  label: a short name (2-6 words), with the restaurant or brand when given, e.g. "McDonald's Big Mac";
+  serving: the amount eaten, e.g. "1 sandwich (219 g)";
+  calories, protein_g, carbs_g, fat_g: for the whole amount eaten;
+  note: one short sentence on where the numbers came from (e.g. "McDonald's published nutrition") or what you assumed.
+If it isn't food or drink, return kind "none".
+Return ONLY JSON matching: ${JSON.stringify(SCAN_SCHEMA)}`;
+	const { data: read } = await llm.generateJson({
+		task: "json",
+		audience: "adult",
+		schema: SCAN_SCHEMA,
+		contents: [{ role: "user", parts: [{ text: prompt }] }],
+		check: (d) => (["food", "none"].includes(d?.kind) ? null : "kind must be food or none"),
+	});
+	if (read?.kind !== "food") throw badRequest("Athena couldn't tell what food that was. Try naming it another way, or enter it by hand.", 422);
+	const food = {
+		label: String(read.label || "").trim().slice(0, 120) || text.slice(0, 120),
+		serving: typeof read.serving === "string" ? read.serving.slice(0, 60) : null,
+		calories: clamp("calories", read.calories) == null ? null : Math.round(clamp("calories", read.calories)),
+		protein_g: clamp("protein_g", read.protein_g), carbs_g: clamp("carbs_g", read.carbs_g), fat_g: clamp("fat_g", read.fat_g),
+	};
+	if (["calories", "protein_g", "carbs_g", "fat_g"].every((f) => food[f] == null)) throw badRequest("Athena couldn't find numbers for that one. Enter it by hand.", 422);
+	const entry = await healthPlan.addEntry(profileId, { ...food, eaten_on: body.eaten_on, source: "described" });
+	const why = read.note ? String(read.note).slice(0, 200) : found ? "Looked up on the web." : "Estimated — no published numbers found.";
+	return { entry, how: "described", note: `Logged ${food.label}${food.serving ? ` (${food.serving})` : ""}. ${why}` };
+}
+
+module.exports = { scan, describe, lookupBarcode, validBarcode, _test: { clamp, readPhoto } };

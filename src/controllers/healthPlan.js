@@ -59,6 +59,10 @@ module.exports = {
 		const { entry, how, note } = await foodScan.scan(profileId, req.body || {});
 		return res.status(201).json({ entry, how, note, nutrition: await healthPlan.nutrition(profileId, { today: req.body?.today || req.body?.eaten_on }) });
 	}),
+	describe: handler("look that up", async (profileId, req, res) => {
+		const { entry, how, note } = await foodScan.describe(profileId, req.body || {});
+		return res.status(201).json({ entry, how, note, nutrition: await healthPlan.nutrition(profileId, { today: req.body?.today || req.body?.eaten_on }) });
+	}),
 	saveFavorite: handler("star that", async (profileId, req, res) => {
 		await healthPlan.saveFavorite(profileId, req.body || {});
 		return res.status(201).json({ nutrition: await healthPlan.nutrition(profileId, { today: req.body?.today }) });

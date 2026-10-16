@@ -1,8 +1,8 @@
 ---
 id: conversation-mode
 title: Conversation mode
-summary: In the chat on a computer you can leave the mic on and just talk with me, and cut in while I'm talking.
-where: Chat → … input menu → Conversation mode (web browser, not the Android app)
+summary: In the chat you can leave the mic on and just talk with me; in desktop Chrome or Edge you can also cut in while I'm talking.
+where: Chat → … input menu → Conversation mode (any browser with speech recognition, and the Android app)
 status: partial
 surfaces: [companion]
 audiences: [adult]
@@ -36,6 +36,13 @@ Click to talk, an eye for Let her see, and a picture for Show a photo.
 The first time, the browser asks to use your microphone. Hover over Input
 for a tooltip describing the voice, camera and photo options.
 
+In the Android app, phone and tablet browsers, Safari, and older Chrome it's
+the same menu item, without cutting in. The first time, Android or the browser
+asks to use the microphone. There I listen whenever I'm not talking: I stop listening
+the moment I start answering and start again once I've finished, so you can't
+cut in — wait for me to finish. The phone may play its own short tone each
+time it starts listening.
+
 For a single turn, choose **Input → Click to talk**. It turns conversation
 mode off, stops my current spoken reply as it starts listening, and closes
 after your utterance before I answer. A small **Listening** indicator lets
@@ -50,16 +57,27 @@ you stop it early.
   own voice can reach the microphone. I use the browser's echo cancellation
   and keep listening for your interruptions, but loud speakers or a reflective
   room can still cause mistakes. Lower the speaker volume or try headphones.
-- **It asks for desktop Chrome or Edge.** Conversation mode needs a browser
-  that can send the same echo-controlled audio to speech recognition. Update
-  Chrome or Edge; you can still type or use **Input → Click to talk** elsewhere.
+- **I can't cut in.** Only desktop Chrome or Edge 135 or newer can send
+  echo-controlled audio to speech recognition, which interrupting needs.
+  Elsewhere conversation mode works turn by turn: wait for me to finish.
+- **Safari stops listening after the first turn.** Safari can be strict about
+  starting speech recognition without a tap. Turn conversation mode off and on,
+  or use Chrome.
 - **"Couldn't reach speech recognition."** The browser's speech recognizer
   needs an internet connection. Typing still works.
+- **"Hands-free is listening already."** (Android) Hands-free and conversation
+  mode both need the microphone. Turn hands-free off in Phone & car first.
+- **On the phone I didn't answer something you said while I was talking.** The
+  phone stops listening while I speak, so it never heard it. Say it again
+  after I finish.
 
 ## Limits
 
-- Desktop Chrome or Edge 135 or newer. Not the Android app; on the phone, hands-free is the way
-  to talk to me without touching anything. Firefox has no speech recognizer,
+- Talking over me: desktop Chrome or Edge 135 or newer only. Turn by turn:
+  the Android app (this version or newer; older installs show the option
+  greyed out) and any other browser with speech recognition. On the phone
+  with Athena closed, hands-free is the way to
+  talk to me without touching anything. Firefox has no speech recognizer,
   so the voice options are disabled there. Other browsers with speech recognition
   may show the option but cannot start this mode with echo control.
 - Turning your voice into words is done by the browser. In Chrome that means
@@ -68,6 +86,12 @@ you stop it early.
   stream; while I'm speaking, sound judged to be only my echo is silenced on
   that stream. This detector can make mistakes, so background sound can still
   reach recognition. The sound itself never comes to me, only the words.
+- Turn-by-turn in a browser, the browser's recognizer hears the plain
+  microphone, only while I'm quiet.
+- In the Android app the phone's own recognizer does it — on the phone itself
+  when it has the language pack, otherwise Android's speech service (Google's,
+  the same one Click to talk uses). No barge-in there, and it stops when you
+  leave the app.
 - If you start talking again while I'm still working out an answer, both of
   your messages go through, and you may hear my answer to the first after
   you've moved on.
@@ -138,6 +162,20 @@ you stop it early.
 - Tests: `../../../companion/scripts/conversation.test.mjs`,
   `../../../companion/scripts/conversationRuntime.test.mjs` and `echoGate.test.mjs` (`npm run test:speech`),
   `src/controllers/messageFiller.test.js`, `src/controllers/prompt.test.js`.
-- Not yet: Guardians, the Android WebView (no `SpeechRecognition`), knowing
+- Turn by turn: `useConversation.ts` `startTurns(listener)` when
+  `supportsRecognitionTrack` is false or in the Android app. Listeners are in
+  `../../../companion/src/athena/turnListener.ts`: `browserTurnListener` (one
+  non-continuous `SpeechRecognition` per utterance, no track) and
+  `androidTurnListener`. Android: the WebView has no `SpeechRecognition`, so it
+  calls the bridge `conversationListen` once per turn
+  (`native-runtime/AndroidCompanion~/AthenaDashboard.androidlib/.../ConversationListener.java`:
+  an in-app `SpeechRecognizer`, on-device on API 31+ when available, else the
+  system one; partial words come back as `athena-conversation-partial` events).
+  Every 150 ms the page checks `speech.now()`: while she plays it cancels the
+  listener (`conversationCancel` / `abort()`); it listens again 600 ms (`ECHO_TAIL_MS`) after she
+  stops. Results still pass `ConversationEcho`. Refused while hands-free runs
+  (one microphone). Stops on `athena-native-pause` (the activity also cancels
+  in `onPause`), hidden, or 120 s of quiet. Needs an APK rebuild to ship.
+- Not yet: Guardians, barge-in outside desktop Chromium, knowing
   whether headphones are in, or superseding a reply still being written when
   they talk again.

@@ -48,7 +48,7 @@ const ENTRY = {
 	water_oz: [0, 200],
 };
 /** Where an entry came from: typed, estimated from a photo, a barcode lookup, a starred favorite. */
-const SOURCES = new Set(["manual", "photo", "barcode", "favorite"]);
+const SOURCES = new Set(["manual", "photo", "barcode", "favorite", "described"]);
 
 function badRequest(message) {
 	return Object.assign(new Error(message), { status: 400 });
@@ -353,7 +353,7 @@ async function nutrition(profileId, { today } = {}) {
 }
 
 /**
- * Log a food. `source` says how it arrived (manual, photo, barcode, favorite);
+ * Log a food. `source` says how it arrived (manual, photo, barcode, favorite, described);
  * `favorite: true` also stars it, which is the manual form's checkbox.
  */
 async function addEntry(profileId, body = {}) {

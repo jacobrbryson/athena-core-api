@@ -1,4 +1,4 @@
-jest.mock('./llm', () => ({ generateJson: jest.fn() }));
+jest.mock('./llm', () => ({ generateJson: jest.fn(), search: jest.fn() }));
 jest.mock('./healthPlan', () => ({
   ENTRY: { calories: [0, 6000], protein_g: [0, 500], carbs_g: [0, 1000], fat_g: [0, 400], water_oz: [0, 200] },
   addEntry: jest.fn(async (profileId, body) => ({ uuid: 'new', ...body })),
@@ -61,4 +61,27 @@ test('nothing recognisable logs nothing', async () => {
   await expect(foodScan.scan(42, IMAGE)).rejects.toMatchObject({ status: 422 });
   expect(healthPlan.addEntry).not.toHaveBeenCalled();
   await expect(foodScan.scan(42, {})).rejects.toMatchObject({ status: 400 });
+});
+
+test('a described food is looked up on the web, then its published numbers are logged', async () => {
+  llm.search.mockResolvedValue({ text: "McDonald's Big Mac: 590 Cal, 25 g protein, 46 g carbs, 34 g fat per sandwich (219 g)." });
+  llm.generateJson.mockResolvedValue({ data: { kind: 'food', label: "McDonald's Big Mac", serving: '1 sandwich (219 g)', calories: 590, protein_g: 25, carbs_g: 46, fat_g: 34, note: "McDonald's published nutrition." } });
+  const r = await foodScan.describe(42, { text: '  Big Mac from   McDonalds ', eaten_on: '2026-10-15' });
+  expect(llm.search.mock.calls[0][0]).toContain('Big Mac from McDonalds');
+  expect(llm.generateJson.mock.calls[0][0].contents[0].parts[0].text).toContain('590 Cal');
+  expect(r.how).toBe('described');
+  expect(r.note).toContain("McDonald's published nutrition");
+  expect(healthPlan.addEntry).toHaveBeenCalledWith(42, expect.objectContaining({ label: "McDonald's Big Mac", calories: 590, fat_g: 34, source: 'described', eaten_on: '2026-10-15' }));
+});
+
+test('a failed search still logs an estimate; nonsense and empty text log nothing', async () => {
+  llm.search.mockRejectedValue(new Error('quota'));
+  llm.generateJson.mockResolvedValueOnce({ data: { kind: 'food', label: 'Banana', calories: 105, protein_g: 1.3, carbs_g: 27, fat_g: 0.4 } });
+  const r = await foodScan.describe(42, { text: 'a banana' });
+  expect(llm.generateJson.mock.calls[0][0].contents[0].parts[0].text).toContain('No web search result');
+  expect(r.note).toContain('Estimated');
+  llm.generateJson.mockResolvedValueOnce({ data: { kind: 'none' } });
+  await expect(foodScan.describe(42, { text: 'my car keys' })).rejects.toMatchObject({ status: 422 });
+  await expect(foodScan.describe(42, { text: ' ' })).rejects.toMatchObject({ status: 400 });
+  expect(healthPlan.addEntry).toHaveBeenCalledTimes(1);
 });

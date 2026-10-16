@@ -190,7 +190,10 @@ Changes announced by the server clear the previous view and request new data.
 
 After signing in to Companion, I open Dashboard. On desktop, the left sidebar
 contains Dashboard, topic navigation and Talk to Athena. On mobile, the bottom bar
-has Dashboard, Chat, the central Athena button, Alerts (notifications), and More. Your
+has Dashboards, Chat, the central Athena button, Alerts (notifications), and More.
+Dashboards opens a menu of every page the desktop sidebar lists — Dashboard,
+Calendar, Health, Family, Community, Property, Mail, Work, Projects, News, Dreams
+and System — with the page you're on highlighted. Your
 name at the bottom of the sidebar — or More on mobile — opens one menu holding
 every setting and panel: memories, photos, brain, phone and car, local server,
 actions, initiative, connected apps, voice, and sign out. In Chat, Daily

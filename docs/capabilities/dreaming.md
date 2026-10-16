@@ -45,7 +45,7 @@ down to every step I ran.
   the history.
 - **The dream's picture** is cropped to fit beside the story; tap or click it
   to see the whole painting full-screen. Tap anywhere, ✕ or Escape closes it.
-- **Dreams** in the left-hand menu (on a phone: More → Dreams) is the history:
+- **Dreams** in the left-hand menu (on a phone: Dashboards → Dreams, or More → Dreams) is the history:
   the last thirty nights as dreams and as plain accounts, "Show every step" for
   the exact log, and the questions I'm holding for you.
 - Or just ask me: "What did you dream about?", "List the people you know about

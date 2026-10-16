@@ -1,5 +1,9 @@
 # Capability ledger
 
+- 2026-10-15 — Conversation mode works in phone and tablet browsers, Safari and older Chrome too, turn by turn like the Android app (no cutting in; desktop Chrome/Edge 135+ keep barge-in) — `conversation-mode.md` (status: partial)
+
+- 2026-10-15 — Conversation mode works in the Android app: the phone's own recognizer listens whenever Athena isn't speaking (no barge-in on the phone yet); it was greyed out there before. Needs an APK rebuild — `conversation-mode.md` (status: partial)
+
 - 2026-10-15 — Connecting Athena from Family Chores works again, and so do Family Chores' chore suggestions: since 2026-09-11 the access gate refused every partner call before the partner secret was checked. Connect, disconnect and the two suggestion endpoints now pass on the partner secret alone (which now fails closed); remember and child linking are still refused — `family-chores.md` (status: live)
 
 - 2026-10-14 — Chores can be ticked done on the Family page: the tap marks it done in Family Chores (the click is the approval, recorded in the action layer as complete_chore), a snackbar offers Undo for a few seconds (undo_complete_chore), then the chore leaves the list; a read-only link shows a reconnect prompt instead of checkboxes. Needs Family Chores' new write:chores scope — `family-chores.md`, `companion-dashboard.md` (status: live)
@@ -540,4 +544,8 @@ See [`README.md`](README.md) for the full contract.
 - 2026-10-14 — The Family page's chore list scrolls inside its panel and has a View all link to Family Chores; due dates no longer show a day early — `companion-dashboard.md` (status: live)
 - 2026-10-15 — The Health page's Training Program card has a View all activities link to a new Workouts page (the full workout history); the Heart, Workouts, Body composition and Projects panels below Wellness are gone, and with them the lab-calibration button — `whoop.md`, `training-and-nutrition.md`, `smart-scale.md` (status: live)
 - 2026-10-15 — The Nutrition card's Log food is now a menu: favorites, Take a picture (a plate is estimated by Athena, a barcode is looked up and one serving logged, both open ready to correct) or Manual entry with Save to favorites; Today's list can star, edit and remove entries; the +16 oz water button is gone and Targets sits on the right — `training-and-nutrition.md` (status: partial)
+- 2026-10-15 — On a phone, the bottom bar's Dashboard button is now Dashboards: it opens a menu of every page in the desktop left nav (Calendar, Health, Family, Community, Property, Mail, Work, Projects, News, Dreams, System), so those pages no longer depend on tapping a Dashboard card — `companion-dashboard.md` (status: live)
 - 2026-10-15 — Today's food has a date bar with arrows to page back through past days (not into the future) and fix, remove or add entries there; the manual form is folded behind a New record button — `training-and-nutrition.md` (status: partial)
+- 2026-10-15 — The emergency alert's map zooms and pans: + and − buttons, pinch, scroll wheel or double-tap to zoom, drag to move, and Fit all to bring every call back into view; the same on the map inside an alert I bring up in conversation — `nearby-incidents.md` (status: live)
+- 2026-10-15 — Log food has a Tell Athena option: type what you ate ("Big Mac from McDonald's"), Athena looks up its published nutrition on the web and logs the calories and macros, opening the entry to check; tagged "Told Athena" — `training-and-nutrition.md` (status: partial)
+- 2026-10-15 — The heart trace on the Health page is now a moving monitor that beats at your average heart rate; while the Android app is reading your band it beats at your live heart rate and the label reads Live Heart Rate — `heart-rate.md` (status: live)

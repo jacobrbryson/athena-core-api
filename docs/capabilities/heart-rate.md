@@ -31,6 +31,12 @@ The alerts are in my own voice when they were saved on the phone while it had
 signal (saving your limits does that). If one wasn't, the phone's built-in
 voice says it instead — still offline.
 
+**On the Health page.** While the app is reading your band, the heart trace at
+the top of the Health page beats at your live heart rate and the number beside
+it switches from **Avg Heart Rate** (WHOOP's average for the day) to **Live
+Heart Rate**. Stop reading the band and it goes back to the day's average. This
+only reads the phone — nothing is sent for it.
+
 **Sharing with me.** If you switch on sharing, the phone sends me a summary for
 each minute — low, average and high — and I can look at them when you ask, or
 when your heart rate is relevant to something else we're talking about. I
@@ -96,6 +102,8 @@ In the Android app: the **⋯ menu** → **Phone & car** → **Heart rate**.
   missing clip → Android `TextToSpeech`. Every say() is queued, none dropped.
   `HandsFreeService.speak()` shares `AthenaVoice.play()`.
 - Bridge: `heartRateStatus/Start/Stop/Choose/Forget/Share/Session/Limits` in `DashboardActivity`.
+- Health hero: `useLiveHeartRate` + the animated `Ecg` in `../../../companion/src/components/Ecg.tsx`
+  (polls `heartRateStatus` every 2 s; live only when `running && state === 'connected'`).
 - Panel: `../../../companion/src/components/HeartRate.tsx`, `../../../companion/src/native/heartRate.ts`,
   `heartApi` in `../../../companion/src/api/companion.ts`.
 - API: `src/routes/heartRate.js`, `src/controllers/heartRate.js` (every route `requireAdultActor`;

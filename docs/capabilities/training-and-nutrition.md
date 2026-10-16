@@ -6,7 +6,7 @@ where: Health page → Training Program card (Week N of N) and Nutrition card (T
 status: partial
 surfaces: [companion]
 audiences: [adult]
-triggers: [training program, program, workout plan, gym, leg day, hypertrophy, what am i doing today, tomorrow's workout, protein, calories, macros, carbs, nutrition, food log, what i ate, log food, barcode, scan food, food photo, favorite foods, water, hydrate, target weight, today's plan]
+triggers: [training program, program, workout plan, gym, leg day, hypertrophy, what am i doing today, tomorrow's workout, protein, calories, macros, carbs, nutrition, food log, what i ate, log food, barcode, scan food, food photo, tell athena, look up food, restaurant food, big mac, favorite foods, water, hydrate, target weight, today's plan]
 ---
 
 ## What I can do
@@ -21,12 +21,15 @@ I also keep your daily targets (calories, protein, carbs, fat, water, sleep
 and a target weight range) and what you log eating and drinking, and show
 today's totals against them as rings.
 
-You can log food three ways: tap a starred favorite to log it again, take a
-picture, or type it in. A picture of a plate gets my estimate of the food and
+You can log food four ways: tap a starred favorite to log it again, tell me
+in a few words what you ate ("Big Mac from McDonald's"), take a picture, or
+type it in. When you tell me, I look the food up on the web — a restaurant's
+or brand's own published nutrition where there is one — and log the calories
+and macros for the amount you said. A picture of a plate gets my estimate of the food and
 its calories and macros; a picture of a barcode is looked up in the Open Food
-Facts database and one serving is logged. Either way it's logged straight
-away and opens ready for you to correct or remove, because an estimate from a
-photo can be off. Star any food in today's list (or tick "Save to favorites"
+Facts database and one serving is logged. Every way but a favorite logs it straight
+away and opens it ready for you to correct or remove, because a lookup or an
+estimate can be off. Star any food in today's list (or tick "Save to favorites"
 when typing one in) and it joins your favorites.
 
 The Health page puts it together: my take on today from your WHOOP recovery,
@@ -37,7 +40,7 @@ ask me about your workout or what you've eaten, I can read all of it.
 
 ## Where to find it
 
-Open the Health page from the sidebar (or the bottom bar on a phone).
+Open the Health page from the sidebar (or Dashboards in the bottom bar on a phone).
 
 - **Program:** the Training Program card → "Set up a program", or "Week N of
   N" to edit it. Each weekday gets a kind (gym, run, ride, sport, recovery,
@@ -46,13 +49,15 @@ Open the Health page from the sidebar (or the bottom bar on a phone).
   **View all activities** at the bottom of the card opens the Workouts page —
   every Whoop workout I've kept.
 - **Food and water:** the Nutrition card → **Log food** opens a menu: your
-  favorites (tap one to log a serving), **Take a picture** (the food or its
+  favorites (tap one to log a serving), **Tell Athena** (type what you ate,
+  then Log it), **Take a picture** (the food or its
   barcode) or **Manual entry** (name, serving, calories, macros, water, and a
   "Save to favorites" box). "Today" lists what's logged: the star adds or
   removes a favorite, the pencil corrects an entry, ✕ removes it. The arrows
   beside the date page back through past days (never ahead of today) to fix,
   remove or add to them; **New record** opens the form for the day shown. Entries from
-  a photo are tagged "Photo estimate", lookups "Barcode".
+  a photo are tagged "Photo estimate", barcode lookups "Barcode", and what you
+  told me "Told Athena".
 - **Targets:** the Nutrition card → "Targets" (or "Set a target" under
   Progress).
 
@@ -68,6 +73,8 @@ Open the Health page from the sidebar (or the bottom bar on a phone).
   food app.
 - **"Couldn't make out a food or a barcode"** — retake it closer and in better
   light, or use Manual entry.
+- **"Athena couldn't tell what food that was"** — name it another way (the
+  dish and where it's from works best), or use Manual entry.
 - **A barcode logged the wrong thing, or isn't found** — the product database
   is crowd-sourced and has gaps. If it isn't found I estimate from the photo
   instead; correct the entry with the pencil.
@@ -78,8 +85,9 @@ Open the Health page from the sidebar (or the bottom bar on a phone).
   them from chat yet — logging food or editing the program happens on the
   Health page.
 - I don't connect to MyFitnessPal, Cronometer or any food app. Nutrition is
-  looked up only for a barcode (Open Food Facts); a plate is my estimate from
-  the photo, not a weighed measurement.
+  looked up for a barcode (Open Food Facts) and for what you tell me (a web
+  search); when the search finds nothing I estimate typical values and say so.
+  A plate is my estimate from the photo, not a weighed measurement.
 - A barcode logs exactly one serving as the package defines it; change the
   numbers if you ate more.
 - The photo isn't kept — only the entry it produced.
@@ -103,6 +111,7 @@ Open the Health page from the sidebar (or the bottom bar on a phone).
 - Chat: `src/controllers/gemini.js` adds the `healthPlan.buildContext` block when `healthPlan.matches(message)`; adults only
 - Frontend: `../../../companion/src/components/HealthPage.tsx` (+ `health.css`), `../../../companion/src/api/healthPlan.ts`; `Dashboard.tsx` HealthPage passes WHOOP/scale data through `SectionPage`'s `hero`
 - Food by camera: `src/services/foodScan.js` — barcode read on the phone (`BarcodeDetector`, EAN/UPC) or by the "vision" task from the photo, check digit validated, looked up at `world.openfoodfacts.org/api/v2/product/:code`; otherwise the vision task estimates the plate. Values clamped to the entry bounds; the photo is never stored. `POST /dashboard/health/nutrition/scan` (8 MB body, listed in `server.js`)
+- Tell Athena: `foodScan.describe` — `llm.search` (Google-grounded, frontier, 12 s cap; a failure falls back to an estimate) for the published nutrition, then the "json" task reads one entry's macros out of it; clamped like a scan, `source: "described"` (no migration: `source` is VARCHAR(16)). `POST /dashboard/health/nutrition/describe` (2 KB body, `{ text, eaten_on, today }`). Adults only via `requireAdultActor`.
 - Favorites + corrections (migration `0074_nutrition_favorites`: `nutrition_favorite`, `nutrition_entry.source/serving/barcode`): `GET /dashboard/health/nutrition?date=&today=` (a past day's log), `PATCH /dashboard/health/nutrition/:uuid`, `POST /dashboard/health/favorites`, `DELETE /dashboard/health/favorites/:uuid`, `POST /dashboard/health/favorites/:uuid/log`. An entry is starred when a favorite has its label; correcting a starred entry updates the favorite.
 - Tests: `src/services/healthPlan.test.js`, `src/services/foodScan.test.js`
 - Notes: "done" from WHOOP is computed on read from `athena_workout` (via `workoutHistory.list`), never stored, so a deleted workout can't leave a stale tick. The client sends its local date (`today=`) because the server can't know the person's day. Hero image: `companion/public/assets/heart.png`.

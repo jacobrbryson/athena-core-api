@@ -144,6 +144,8 @@ router.delete('/dashboard/health/nutrition/:uuid', requireAuth, healthPlan.remov
 // base64 JSON; server.js gives this path an 8 MB parser, as for memory photos.
 router.get('/dashboard/health/nutrition', requireAuth, healthPlan.day);
 router.post('/dashboard/health/nutrition/scan', requireAuth, express.json({ limit: '8mb' }), healthPlan.scan);
+// "Tell Athena": a few words ("Big Mac from McDonald's"), looked up and logged.
+router.post('/dashboard/health/nutrition/describe', requireAuth, express.json({ limit: '2kb' }), healthPlan.describe);
 router.patch('/dashboard/health/nutrition/:uuid', requireAuth, express.json({ limit: '2kb' }), healthPlan.updateEntry);
 router.post('/dashboard/health/favorites', requireAuth, express.json({ limit: '2kb' }), healthPlan.saveFavorite);
 router.delete('/dashboard/health/favorites/:uuid', requireAuth, healthPlan.removeFavorite);

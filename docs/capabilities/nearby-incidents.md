@@ -47,7 +47,9 @@ it. A single routine call waits for morning. When an urgent situation ends, I
 say it's all clear.
 
 On screen, the alert banner across the top shows every call with its distance
-and a small map. "Got it" buries every call on it for good, on every device: I
+and a small map you can zoom and pan (the + and − buttons, pinch, scroll or
+double-tap, drag to move; "Fit all" puts every call back in view) — the same
+map is on an alert I raise in our conversation. "Got it" buries every call on it for good, on every device: I
 won't show it again, bring it up in conversation, or mention it inside a later
 alert. A new call opens the banner with just that call.
 
