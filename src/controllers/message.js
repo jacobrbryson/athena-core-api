@@ -201,8 +201,9 @@ async function getMessage(req, res) {
 
     // Scoped to what this caller was present for — but only on a
     // profile-bound session, which is the only kind that has participants.
-    // An anonymous or Guardians session carries no spans, and filtering by
-    // spans that do not exist would hand back an empty transcript.
+    // An anonymous session (or a legacy Guardians one not yet bound on
+    // resume) carries no spans, and filtering by spans that do not exist
+    // would hand back an empty transcript.
     await chatThreads.syncReminderUpdates(session.id, callerProfileId);
     await chatThreads.syncCodeUpdates(session.id, callerProfileId);
     const before = typeof req.query.before === 'string' ? req.query.before : null;
@@ -292,8 +293,8 @@ async function addMessage(req, res, clients) {
     ctx.guardianAuth = decodeGuardianFromRequest(req);
 
     // Which Athena profile this guardian is, resolved from the verified
-    // token rather than the body. Guardians sessions are never bound to a
-    // profile (the app has no profile_uuid to send), so without this the
+    // token rather than the body. Older Guardians sessions were never bound
+    // to a profile (the app has no profile_uuid to send), so without this the
     // guardian's own memories and connected accounts — calendar included —
     // are invisible to Athena in the Guardians console.
     if (ctx.guardianAuth?.guardian_id) {

@@ -6,7 +6,7 @@
  * a profile-bound session is authorized by a PROVEN profile, and only a truly
  * anonymous session still falls back to the IP check.
  */
-jest.mock("../helpers/db", () => ({ query: jest.fn() }));
+jest.mock("../helpers/db", () => ({ query: jest.fn(), getConnection: jest.fn() }));
 jest.mock("./sessionParticipant", () => ({
   isParticipant: jest.fn(),
   mayJoin: jest.fn(),
@@ -246,5 +246,93 @@ describe("admitToSession", () => {
     expect(await sessions.admitToSession("sess-abc", 99)).toMatchObject({
       id: 7,
     });
+  });
+});
+
+describe("resumeForProfile — one conversation across devices", () => {
+  const conn = {
+    beginTransaction: jest.fn(),
+    query: jest.fn(),
+    commit: jest.fn(),
+    rollback: jest.fn().mockResolvedValue(),
+    release: jest.fn(),
+  };
+  beforeEach(() => {
+    Object.values(conn).forEach((fn) => fn.mockClear());
+    conn.query.mockResolvedValue([{}]);
+    pool.getConnection.mockReset().mockResolvedValue(conn);
+  });
+
+  const phone = row({ id: 7, uuid: "phone", profile_id: 42, created_at: "2026-10-01 08:00:00" });
+  const laptop = row({ id: 9, uuid: "laptop", profile_id: 42, created_at: "2026-10-05 08:00:00" });
+
+  test("a device with nothing remembered picks up the latest conversation", async () => {
+    pool.query.mockResolvedValueOnce([[{ ...laptop, last_active_at: "2026-10-16" }]]);
+    const s = await sessions.resumeForProfile(42, "companion", null);
+    expect(s).toMatchObject({ uuid: "laptop" });
+    expect(s).not.toHaveProperty("last_active_at");
+  });
+
+  test("an older device conversation is merged into the latest one", async () => {
+    pool.query
+      .mockResolvedValueOnce([[{ ...laptop, last_active_at: "2026-10-16" }]])
+      .mockResolvedValueOnce([[{ n: 0 }]]) // nobody else in either session
+      .mockResolvedValueOnce([[]]) // no extraction cursors
+      .mockResolvedValueOnce([[{ first_at: "2026-10-01 08:01:00" }]]);
+    const s = await sessions.resumeForProfile(42, "companion", phone);
+    expect(s).toMatchObject({ uuid: "laptop" });
+    const sql = conn.query.mock.calls.map(([q, params]) => [q, params]);
+    expect(sql[0]).toEqual(["UPDATE message SET session_id = ? WHERE session_id = ?;", [9, 7]]);
+    expect(sql[1][0]).toContain("UPDATE athena_action");
+    expect(sql[2][0]).toContain("LEAST(joined_at");
+    expect(sql[2][1]).toEqual(["2026-10-01 08:00:00", 9, 42]);
+    expect(conn.commit).toHaveBeenCalled();
+  });
+
+  test("a conversation someone else has joined is never merged", async () => {
+    pool.query
+      .mockResolvedValueOnce([[{ ...laptop, last_active_at: "2026-10-16" }]])
+      .mockResolvedValueOnce([[{ n: 1 }]]);
+    const s = await sessions.resumeForProfile(42, "companion", phone);
+    expect(s).toMatchObject({ uuid: "phone" });
+    expect(pool.getConnection).not.toHaveBeenCalled();
+  });
+
+  test("a session in another mode is left for the mode switch", async () => {
+    pool.query.mockResolvedValueOnce([[{ ...laptop, last_active_at: "2026-10-16" }]]);
+    const s = await sessions.resumeForProfile(42, "companion", { ...phone, mode: "teach" });
+    expect(s).toMatchObject({ uuid: "phone" });
+    expect(pool.getConnection).not.toHaveBeenCalled();
+  });
+
+  test("someone else's session is never merged", async () => {
+    pool.query.mockResolvedValueOnce([[{ ...laptop, last_active_at: "2026-10-16" }]]);
+    const shared = { ...phone, profile_id: 77 };
+    expect(await sessions.resumeForProfile(42, "companion", shared)).toBe(shared);
+    expect(pool.getConnection).not.toHaveBeenCalled();
+  });
+
+  test("a failed merge rolls back and keeps this device's conversation", async () => {
+    pool.query
+      .mockResolvedValueOnce([[{ ...laptop, last_active_at: "2026-10-16" }]])
+      .mockResolvedValueOnce([[{ n: 0 }]])
+      .mockResolvedValueOnce([[]])
+      .mockResolvedValueOnce([[{ first_at: null }]]);
+    conn.query.mockRejectedValueOnce(new Error("lock wait"));
+    const s = await sessions.resumeForProfile(42, "companion", phone);
+    expect(s).toMatchObject({ uuid: "phone" });
+    expect(conn.rollback).toHaveBeenCalled();
+    expect(conn.release).toHaveBeenCalled();
+  });
+
+  test("unread messages from the other device pull the extraction cursor back", async () => {
+    pool.query
+      .mockResolvedValueOnce([[{ ...laptop, last_active_at: "2026-10-16" }]])
+      .mockResolvedValueOnce([[{ n: 0 }]])
+      .mockResolvedValueOnce([[{ session_id: 9, last_created_at: "2026-10-16 00:00:00" }]])
+      .mockResolvedValueOnce([[{ first_at: "2026-10-02T00:00:00Z" }]]);
+    await sessions.resumeForProfile(42, "companion", phone);
+    const cursor = conn.query.mock.calls.find(([q]) => q.startsWith("UPDATE memory_extraction_cursor"));
+    expect(cursor[1]).toEqual([new Date("2026-10-01T23:59:59Z"), 9]);
   });
 });

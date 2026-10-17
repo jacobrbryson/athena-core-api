@@ -68,18 +68,45 @@ async function getOrCreateSession(req, res) {
         // forever and profile-scoped features (e.g. Connected App grounding)
         // never run for it. Binding also promotes the session off IP checks
         // and onto identity, so it survives a network change from then on.
-        if (profileUuid && !session.profile_id) {
+        // The proven identity wins over the client's profile_uuid. The
+        // Guardians app never sends one, so its sessions used to stay
+        // anonymous and IP-pinned for good: no long-term memory, and nothing
+        // another device or network could pick up.
+        if (!session.profile_id && (callerProfileId != null || profileUuid)) {
           const { profileId, familyId } =
-            await sessionService.resolveProfileBinding(profileUuid);
+            callerProfileId != null
+              ? await sessionService.resolveProfileIdBinding(callerProfileId)
+              : await sessionService.resolveProfileBinding(profileUuid);
           if (profileId) {
+            // The span opens at the start: an anonymous session was already
+            // readable by whoever held it, and the transcript filter would
+            // otherwise hide everything said before this moment.
             await sessionService.bindSessionProfile(
               session.id,
               profileId,
               familyId,
+              { joinedAt: session.created_at || null },
             );
             session.profile_id = profileId;
             session.family_id = familyId || null;
           }
+        }
+
+        // Another device may have carried this conversation on since. Fold
+        // this device's copy into the most recent one so both see one thread.
+        if (
+          callerProfileId != null &&
+          Number(session.profile_id) === Number(callerProfileId)
+        ) {
+          const mode =
+            req.query.mode || req.body?.mode
+              ? await gateMode(requestedMode, session.profile_id)
+              : session.mode;
+          session = await sessionService.resumeForProfile(
+            callerProfileId,
+            mode,
+            session,
+          );
         }
 
         // Allow switching the conversation mode on an existing session,
@@ -115,11 +142,34 @@ async function getOrCreateSession(req, res) {
     }
 
     const { profileId, familyId } =
-      await sessionService.resolveProfileBinding(profileUuid);
+      callerProfileId != null
+        ? await sessionService.resolveProfileIdBinding(callerProfileId)
+        : await sessionService.resolveProfileBinding(profileUuid);
 
     // Gate the requested mode against this child's parent-set permissions
     // before persisting the session (companion mode is default-deny).
     const allowedMode = await gateMode(requestedMode, profileId);
+
+    // A device with nothing remembered — a new phone, a cleared browser, a
+    // stale uuid — picks up this person's conversation rather than starting a
+    // blank one.
+    if (callerProfileId != null) {
+      const existing = await sessionService.latestForProfile(
+        callerProfileId,
+        allowedMode,
+      );
+      if (existing) {
+        res.json({
+          success: true,
+          session: buildSessionPayload(existing, {
+            mode_denied: allowedMode !== requestedMode,
+            allowed_modes: await getAllowedModes(existing.profile_id),
+            participants: await presentParticipants(existing.id).catch(() => []),
+          }),
+        });
+        return;
+      }
+    }
 
     const newSessionId = await sessionService.addSession(ipAddress, {
       mode: allowedMode,

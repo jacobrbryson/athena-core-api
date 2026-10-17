@@ -11,6 +11,12 @@ triggers: [dashboard, briefing, today, home screen, navigation, order, community
 
 ## What I can do
 
+My Right Now suggestion appears as a compact metric. Click it to open a side
+drawer with the reasoning, evidence and existing Talk it through and Places &
+projects options. It still appears only when there is a timely suggestion or
+an ongoing or imminent event, outside working hours. Close the drawer with
+Escape, the close button or the backdrop.
+
 I populate the cards from connected sources: Google Calendar events for the next
 seven days; dated WHOOP recovery, sleep and strain;
 the linked Family Chores player's chores for today — everything still open and due today or earlier, overdue ones included, plus what was finished today, with a View all link to Family Chores; saved family and work
@@ -92,23 +98,39 @@ page is mine to work out, not yours to set; news watching has its own
 description. A page I could not read last time says so on the card. The
 dashboard reads data; it never connects accounts or approves actions by itself.
 
-The Dashboard opens on "Your day at a glance": a header with your greeting and
-a line saying whether anything could use you (an alert near your places,
-someone unwell, an open property issue, an approval waiting) or that it's a
-calm morning, afternoon or evening. Around me in the header sit your areas of
+The Dashboard opens on "Your day at a glance": a header with your greeting.
+I don't call a day calm just because some sources are missing.
+Around me in the header sit your areas of
 life — Health (GO, REST or WARNING and recovery), Family (anyone unwell, a
 birthday, or how many people I know), Work (open Jira issues), Property (open
 issues or concerns), Dreams (nights I've dreamt in the last 30 days) and
 Community (an alert, calls nearby, or what's coming up) — each coloured by how
-it stands and each opening its page. When I've written a line for this moment
-(my Right Now headline) it sits in the header as a quote; the Right Now card
-below then leads with the suggestion itself. Under the header, a strip of six
+it stands and each opening its page. My Right Now metric appears in the stat
+strip when timely and when the Work banner is not showing.
+
+Latest changes shows the most recent dated records from WHOOP,
+Jira and my dream journal. Recovery compares two distinct scored dates and names
+both; it doesn't assume the previous reading was yesterday. Jira shows the latest
+updated open issue and its actual status. Dreams shows the most recently finished
+successful or partial dream. These are dated source records, not a complete
+activity history or a comparison with your last visit. Each opens its area page.
+
+Under the header, a strip of
 tiles: Recovery, today's Gym session from your training plan (or Rest day, or
-No plan), your Next event, Mail to review and still sorting, Open tasks (Jira),
+No plan), your Next event, Open tasks (Jira),
 and the weather at your home point of interest from the National Weather
-Service. Then the cards: Today's schedule (the next three days that have
-events), Work (your Jira issues with a tab per Jira site and their status),
-Projects (non-work projects with a tab per area and a bar for steps done),
+Service. Recovery shows its reading date, Calendar and Jira their check times,
+and weather its forecast check time. Next event has a countdown that moves as
+the clock advances. Then the cards: Your day (the next three days that have
+events in a compact scrollable preview, expandable all-day entries, a Now marker and muted ended calendar events;
+an ended event does not mean you attended), Work (your Jira issues with a tab
+per Jira site and their status), Projects (non-work projects with a tab per area
+and a bar for steps done, or No steps set). Your day, Work and Projects match
+heights when side by side; the schedule preview keeps its scrollable height limit.
+The Work card's header has a single View all link to the full Work page.
+Health & Performance, Family, Property and Dreams share a 400-pixel card height;
+longer content scrolls inside each card while its header stays visible.
+Below them are
 Health & Performance (the recovery ring, the verdict and its reason, and
 resting heart rate, HRV, sleep and weight with two weeks of bars under each),
 Family, Property (the property's header picture, open issues and concerns),
@@ -260,9 +282,12 @@ must be configured by the server owner and then authorized by the user. Provider
 results are bounded previews, not complete exports. Dated health metrics may be
 from earlier days; a missing score is displayed as unknown, never zero.
 
-The header's wave art and the background landscape are decorative; the
-weather tile is the only weather, read from the National Weather Service at
-your home point of interest (no home place, no weather). The Dashboard no
+The header's wave art, landscape and my breathing halo are decorative. Weather
+comes from the National Weather Service at your home point of interest (no home
+place, no weather). The event-preparation Current Focus card is not available;
+the owner deferred it. Jira's open
+issue preview cannot establish completed work; I never label disappearing issues
+as completed. I don't save a personal visit history in the browser. The Dashboard no
 longer has a News or Community card — News is under System → News, and
 Community's details are on its page — and the Gym tile only knows the training
 plan you set on Health. I never present sample personal
@@ -314,6 +339,11 @@ in memory and are cleared on sign-in, sign-out, access errors, and updates.
   are in `../../../companion/src/components/DashboardHome.tsx` + `home.css`; the
   header art is `../../../companion/public/assets/header.jpg`. The compact drawer
   still renders the `card()` set.
+- Living briefing derivations: `../../../companion/src/components/livingHome.ts`;
+  checks: `../../../companion/scripts/livingHome.test.mjs` (Node strip-types test runner).
+  Extras re-read on dashboard updates, return to a visible tab and every five
+  minutes while visible. Failed reads clear the affected data; old in-flight
+  responses cannot overwrite a newer refresh. All movement respects reduced motion.
 - Shell and preserved chat: `../../../companion/src/pages/CompanionConsole.tsx`
 - Styling: `../../../companion/src/dashboard.css`
 - Sidebar profile avatar: `../../../companion/src/components/ProfileAvatar.tsx`.

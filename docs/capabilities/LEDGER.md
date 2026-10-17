@@ -1,5 +1,21 @@
 # Capability ledger
 
+- 2026-10-17 — One conversation on every device: signed-in sessions bind to the proven identity (Guardians sessions were left anonymous and IP-pinned), a new device resumes the latest conversation, and a device's older one is merged in unless someone else took part — `conversation-across-devices.md` (status: live)
+
+- 2026-10-17 — Bottom dashboard cards share a bounded 400-pixel height, with scrollable content and visible headers — `companion-dashboard.md` (status: partial)
+
+- 2026-10-17 — Removed the duplicate Work card footer link; View all remains in its header — `companion-dashboard.md` (status: partial)
+
+- 2026-10-17 — Your day, Work and Projects again share a height when side by side, retaining the schedule preview's height limit — `companion-dashboard.md` (status: partial)
+
+- 2026-10-17 — Removed the Mail metric, tightened metric spacing, and bounded the scrollable schedule preview; dashboard cards fit their content instead of stretching to the schedule — `companion-dashboard.md` (status: partial)
+
+- 2026-10-17 — Right Now moved into a compact dashboard metric; clicking opens the existing details and actions in a side drawer — `companion-dashboard.md` (status: partial)
+
+- 2026-10-17 — Owner retained Latest changes and removed Connecting your day and the duplicate What changed panel. Current Focus event preparation was deferred; its unfinished UI and backend were removed — `companion-dashboard.md` (status: partial)
+
+- 2026-10-17 — Living Dashboard: a calendar-led hero, home forecast matched to the next event's actual hour, dated WHOOP/Jira/dream updates, reading and check timestamps, a moving schedule marker and countdown, honest project progress, subtle halo and accessible interaction feedback. Updates are source records, not inferred completions or stored visit history. Training, weather and dreams refresh on push/visibility and a five-minute fallback — `companion-dashboard.md` (status: partial)
+
 - 2026-10-17 — Dashboard redesigned to the owner's prototype: a "Your day at a glance" header (header.jpg) with Health, Family, Work, Property, Dreams and Community around Athena and her Right Now line as a quote; a stat strip (Recovery, Gym from the training plan, Next event, Mail, Open tasks, NWS weather); then Today's schedule, Work (tab per Jira site), Projects (tab per area, steps bar), Health & Performance (with two-week bars), Family, Property and Dreams cards. All real data; News and Community cards leave the full Dashboard; the Chat drawer keeps the old cards — `companion-dashboard.md` (status: partial)
 
 - 2026-10-16 — System page redesigned to the owner's concept: an Overview (network art, connected services and health checks, tiles for Calendar/Mail/Projects/News, a Dreams panel with the latest dream, System Health, this month's Service Costs, Quick Actions) and tabs for Calendar, Mail, Projects, News, Dreams and Finance. Those five pages left the left menu; the old System figures (time saved, spend, OpenAI, Google Cloud, Twilio) are the Finance tab — `system.md`, `companion-dashboard.md`, `dreaming.md`, `gmail.md`, `projects.md`, `news.md`, `websites.md` (status: live)

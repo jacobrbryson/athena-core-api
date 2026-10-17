@@ -100,6 +100,21 @@ async function resolveProfileBinding(profileUuid) {
   return { profileId: rows[0].profile_id, familyId: rows[0].family_id || null };
 }
 
+/** The same binding, for a profile id the caller has already proven. */
+async function resolveProfileIdBinding(profileId) {
+  const id = Number(profileId);
+  if (!Number.isFinite(id) || id <= 0) return {};
+  const [rows] = await pool.query(
+    `SELECT p.id AS profile_id, cp.family_id
+     FROM profile p
+     LEFT JOIN child_profiles cp ON cp.profile_id = p.id
+     WHERE p.id = ? LIMIT 1;`,
+    [id],
+  );
+  if (!rows.length) return {};
+  return { profileId: rows[0].profile_id, familyId: rows[0].family_id || null };
+}
+
 /**
  * Retrieves a session record by UUID alone. Authorization is the caller's job —
  * use `getAuthorizedSession`, which is what every controller should call.
@@ -264,7 +279,7 @@ async function updateSession(sessionId, updates) {
  * resolved). The `profile_id IS NULL` guard means an already-bound session is
  * never silently reassigned.
  */
-async function bindSessionProfile(sessionId, profileId, familyId = null) {
+async function bindSessionProfile(sessionId, profileId, familyId = null, { joinedAt = null } = {}) {
   if (!Number.isFinite(Number(profileId))) return { affectedRows: 0 };
   const [result] = await pool.query(
     `UPDATE session SET profile_id = ?, family_id = ?
@@ -277,19 +292,152 @@ async function bindSessionProfile(sessionId, profileId, familyId = null) {
   );
   if ((result?.affectedRows ?? 0) > 0) {
     await participants
-      .joinSession(sessionId, profileId, { via: "owner" })
+      .joinSession(sessionId, profileId, { via: "owner", joinedAt })
       .catch((e) => console.warn("[session] bind participant:", e.message));
   }
   return result;
 }
 
+const SESSION_COLUMNS = `s.id, s.ip_address, s.uuid, s.created_at, s.age, s.is_busy,
+  s.wisdom_points, s.mode, s.profile_id, s.family_id`;
+
+/**
+ * This person's conversation in a mode — the one they spoke in most recently.
+ *
+ * The clients used to key a conversation by a uuid saved in that browser, so a
+ * second device (or a cleared cache) started a blank one and Athena lost the
+ * thread. One person has one conversation per mode; whichever device they pick
+ * up continues it.
+ */
+async function latestForProfile(profileId, mode) {
+  const id = Number(profileId);
+  if (!Number.isFinite(id) || id <= 0) return null;
+  const [rows] = await pool.query(
+    `SELECT ${SESSION_COLUMNS},
+            COALESCE((SELECT MAX(m.created_at) FROM message m WHERE m.session_id = s.id),
+                     s.created_at) AS last_active_at
+     FROM session s
+     WHERE s.profile_id = ? AND s.mode = ?
+     ORDER BY last_active_at DESC, s.id DESC LIMIT 1;`,
+    [id, mode],
+  );
+  if (!rows[0]) return null;
+  const { last_active_at, ...session } = rows[0];
+  return session;
+}
+
+/**
+ * Fold one of a person's conversations into another so nothing said on the
+ * other device disappears from view.
+ *
+ * Only ever between two sessions that person owns alone. Presence is the
+ * disclosure boundary (message.js), and a span on the target is a time range:
+ * moving messages into a session somebody else has joined would show them a
+ * conversation they were never in. So a session anyone else has been part of
+ * is left exactly where it is, and false is returned.
+ */
+async function mergeSessionInto(target, source, profileId) {
+  const pid = Number(profileId);
+  if (!target || !source || target.id === source.id) return false;
+  if (Number(target.profile_id) !== pid || Number(source.profile_id) !== pid) return false;
+
+  const [[others]] = await pool.query(
+    `SELECT COUNT(*) AS n FROM session_participant
+     WHERE session_id IN (?, ?) AND profile_id <> ?;`,
+    [target.id, source.id, pid],
+  );
+  if (Number(others?.n) > 0) return false;
+
+  const [cursors] = await pool.query(
+    `SELECT session_id, last_created_at FROM memory_extraction_cursor
+     WHERE session_id IN (?, ?);`,
+    [target.id, source.id],
+  );
+  const cursorOf = (sid) =>
+    cursors.find((c) => Number(c.session_id) === Number(sid))?.last_created_at || null;
+  const [[pending]] = await pool.query(
+    `SELECT MIN(m.created_at) AS first_at FROM message m
+     WHERE m.session_id = ?${cursorOf(source.id) ? " AND m.created_at > ?" : ""};`,
+    cursorOf(source.id) ? [source.id, cursorOf(source.id)] : [source.id],
+  );
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    await conn.query("UPDATE message SET session_id = ? WHERE session_id = ?;", [
+      target.id,
+      source.id,
+    ]);
+    // Reminder and code-fix updates thread onto their origin message by
+    // (action, session), so the action has to move with its message.
+    await conn.query(
+      "UPDATE athena_action SET session_id = ? WHERE session_id = ? AND profile_id = ?;",
+      [target.id, source.id, pid],
+    );
+    // They were present for everything they said on the other device; the
+    // owner span must cover it or the fail-closed filter hides it.
+    await conn.query(
+      `UPDATE session_participant SET joined_at = LEAST(joined_at, ?)
+       WHERE session_id = ? AND profile_id = ?;`,
+      [source.created_at || new Date(0), target.id, pid],
+    );
+    // Anything the other device said that memory extraction has not read yet
+    // must still be read — pull the target's cursor back to before it.
+    if (pending?.first_at) {
+      const before = new Date(new Date(pending.first_at).getTime() - 1000);
+      const current = cursorOf(target.id);
+      if (current && new Date(current) > before) {
+        await conn.query(
+          "UPDATE memory_extraction_cursor SET last_created_at = ? WHERE session_id = ?;",
+          [before, target.id],
+        );
+      }
+    }
+    await conn.query("DELETE FROM memory_extraction_cursor WHERE session_id = ?;", [
+      source.id,
+    ]);
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    throw err;
+  } finally {
+    conn.release();
+  }
+  return true;
+}
+
+/**
+ * The conversation a signed-in person should be looking at.
+ *
+ * `current` is the session this device remembered, if it is theirs. When
+ * another of their sessions in the same mode is more recent, this device's is
+ * merged into it and that one is returned; when the merge is not safe (the
+ * device's session is shared with someone) the device keeps its own.
+ */
+async function resumeForProfile(profileId, mode, current = null) {
+  const latest = await latestForProfile(profileId, mode);
+  if (!latest) return current;
+  if (!current) return latest;
+  if (Number(current.profile_id) !== Number(profileId)) return current;
+  if (current.mode !== mode || latest.id === current.id) return current;
+  const merged = await mergeSessionInto(latest, current, profileId).catch((err) => {
+    console.warn("[session] merge failed:", err.message);
+    return false;
+  });
+  return merged ? latest : current;
+}
+
 module.exports = {
   addSession,
+  latestForProfile,
+  mergeSessionInto,
+  resumeForProfile,
   getOrCreateForProfile,
   getSessionByUuidAndIp,
   getAuthorizedSession,
   admitToSession,
   updateSession,
   resolveProfileBinding,
+  resolveProfileIdBinding,
   bindSessionProfile,
 };
