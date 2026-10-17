@@ -1,12 +1,12 @@
 ---
 id: workplaces
 title: Workplaces
-summary: I keep a list of where you work, your role at each and which is your primary job, and which connected apps and email addresses belong to each.
-where: Companion → Work → Workplaces
+summary: Where you work (workspaces on the Work page), your role and primary job, and the apps, addresses, sites and work projects that belong to each.
+where: Companion → Work (the Workspaces cards at the top; the editable list under The detail)
 status: live
 surfaces: [companion]
 audiences: [adult]
-triggers: [workplace, workplaces, where i work, my job, my employer, my company, my role, job title, co-owner, primary job, work email, which company, whose jira]
+triggers: [workspace, workspaces, work page, athena's agents, workplace, workplaces, where i work, my job, my employer, my company, my role, job title, co-owner, primary job, work email, which company, whose jira]
 ---
 
 ## What I can do
@@ -18,8 +18,20 @@ I ask when it matters and isn't clear.
 
 Each workplace can also own connected apps and email addresses. Link your Jira
 site to the company it belongs to and I know its tickets are that company's work;
-link your work address and I know mail to or from it is that company's mail. A
-connection or address belongs to one workplace only.
+link your work address and I know mail to or from it is that company's mail.
+Its websites and work projects can belong to it too. Anything linked belongs to
+one workplace only.
+
+The **Work** page is built around them. At the top: four tiles (open Jira
+issues, Slack mentions, work projects, sites monitored), then a card per
+workspace with its role, website, linked apps and its counts of issues,
+projects and sites. Below that: your Jira issues (all, in progress, in review),
+Slack mentions, **Athena's Agents** — the code investigations and fixes you
+approved this week and their state, plus the site monitor — your work projects
+(active, on hold, completed) with their progress, each site's uptime and
+response time, your work meetings in the next 7 days, a blend of recent
+activity, and quick actions. A Jira issue counts toward a workspace only when
+its Jira site is linked there.
 
 I only know what you type and link here. I suggest a link when a connected app
 signed in with an address at a workplace's website — "Jira Cloud ·
@@ -28,8 +40,9 @@ myself.
 
 ## Where to find it
 
-Open **Work** and look for the **Workplaces** panel at the top. **Add a
-workplace** opens a short form: company, your role, website, **My primary
+Open **Work**. **Add workspace** on the Workspaces card scrolls to the
+editable **Workspaces** panel under **The detail**. **Add a
+workplace** there opens a short form: company, your role, website, **My primary
 job**, and notes for me. The first one you add is your primary until you
 choose another.
 
@@ -44,6 +57,10 @@ app**, **Make primary**, **Unlink** for each app and address, and **Remove
 workplace**. Removing a workplace unlinks its apps and addresses; it doesn't
 disconnect anything.
 
+On a workspace card, **⋮** (or its counts) opens **Manage**: tick the sites and
+work projects that are that workspace's. One already belonging to another
+workspace is greyed out with that workspace's name.
+
 ## When it doesn't work
 
 - **The panel says your workplaces are unavailable.** It's a temporary problem
@@ -51,8 +68,13 @@ disconnect anything.
 - **"You already have that on your list."** Two workplaces can't share a name —
   edit the existing one instead.
 - **A website won't save.** Use just the domain, like example.com.
-- **"That already belongs to …"** An app or address can belong to one workplace.
-  Unlink it there first.
+- **"That already belongs to …"** An app, address, site or project can belong
+  to one workplace. Unlink it there first.
+- **Manage says sites and projects can't be given to a workspace yet.** The
+  database update that adds this hasn't been applied; the rest of the page
+  works without it.
+- **A workspace shows 0 issues.** Issues count toward it only when its Jira
+  site is linked to it — link the Jira connection under that workspace.
 - **An app I want isn't in the list.** Only connected apps that no workplace owns
   yet are listed; connect it first under ⋯ menu → Connected apps. Health apps
   like WHOOP never belong to a workplace.
@@ -64,6 +86,9 @@ disconnect anything.
 ## Limits
 
 - Up to 20 workplaces; one primary.
+- Slack shows mentions only — not threads or DMs.
+- The agents panel shows only the code investigations and fixes you approved
+  in the last week; there are no other background agents to show yet.
 - Linking says what a connection is for; it doesn't change which account I use.
   I can't yet switch between a company's own accounts or keys when you're
   working on that company's things.

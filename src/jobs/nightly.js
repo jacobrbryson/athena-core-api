@@ -123,6 +123,10 @@ async function maintenance({ dryRun }) {
 	// gets the reconnect message on their sites, not a failed night.
 	await step("websites", () => websites.refreshEveryone(), results);
 	await step("websitesPrune", async () => ({ pruned: await websites.prune(120) }), results);
+	// Uptime: one check of every site, so the Work page's monitors are never
+	// more than a day old even when nobody opens it; two weeks of checks kept.
+	await step("siteChecks", () => require("../services/siteChecks").checkEveryone(), results);
+	await step("siteChecksPrune", async () => ({ pruned: await require("../services/siteChecks").prune(14) }), results);
 	await dreamSteps(results);
 	return results;
 }

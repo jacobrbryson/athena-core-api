@@ -79,6 +79,7 @@ async function forecast(latitude, longitude, { hours = 8, from = null } = {}) {
 			precipitationChance: p.probabilityOfPrecipitation?.value ?? null,
 			windSpeed: p.windSpeed || null,
 			shortForecast: p.shortForecast || null,
+			isDaytime: typeof p.isDaytime === "boolean" ? p.isDaytime : null,
 		}));
 		const wettest = Math.max(...window.map((h) => h.precipitationChance ?? 0));
 		const raining = /rain|shower|storm|thunder|sleet|snow|ice/i;

@@ -2,7 +2,7 @@
 id: news
 title: News watching
 summary: Paste any news page and I read it in the background, going back more often when something is actually unfolding.
-where: Home → News → Manage pages (or your menu → News sources)
+where: System → News tab → Manage pages (or the Dashboard's News sources button)
 status: live
 surfaces: [companion]
 audiences: [adult]

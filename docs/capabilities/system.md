@@ -1,23 +1,50 @@
 ---
 id: system
 title: Athena System
-summary: I show whether I'm healthy, the time I've saved you, what I've cost, and this month's model and hosting costs — read-only.
-where: Companion → System in the left navigation
+summary: The System page — an Overview of my health, costs and dreams, with tabs for Calendar, Mail, Projects, News, Dreams and Finance (time saved, what I cost).
+where: Companion → System in the left navigation; its tabs are Overview, Calendar, Mail, Projects, News, Dreams and Finance
 status: live
 surfaces: [companion]
 audiences: [adult]
-triggers: [system, time saved, saved me, worth it, value, minutes saved, hours saved, health, status, are you ok, Twilio, OpenAI, ChatGPT, Gemini, Google Cloud, GCP, hosting, billing, usage, balance, spend, total spend, lifetime, LLM cost, cost, costing, Athena System]
+triggers: [system, system page, overview, finance, finance tab, quick actions, service costs, system health, time saved, saved me, worth it, value, minutes saved, hours saved, health, status, are you ok, Twilio, OpenAI, ChatGPT, Gemini, Google Cloud, GCP, hosting, billing, usage, balance, spend, total spend, lifetime, LLM cost, cost, costing, Athena System]
 ---
 
 ## What I can do
 
-Five figures lead the System page:
+The System page has tabs along the top: **Overview**, **Calendar**, **Mail**,
+**Projects**, **News**, **Dreams** and **Finance**. Calendar, Mail, Projects,
+News and Dreams used to be in the left menu; they are the same pages, now
+reached from here.
 
-- **Athena's health** — Good, Degraded or Down, from a live check of my
-  database, whether a model is answering chat (and not failing), and whether
-  my nightly review has run in the last two days. When I'm healthy it shows
-  when it last checked; otherwise it links to the Health panel, which says
-  which check failed and why.
+The **Overview** is everything at a glance:
+
+- A line under the title: how many of your services are connected, how many
+  of my health checks pass, and when I last checked.
+- A tile for each of Calendar (events in the next seven days, one bar a day),
+  Mail (emails waiting for review and how many I'm still sorting, with bars
+  for receipts, travel, school and other), Projects (open projects, how many
+  are active and blocked, and a bar split by state) and News (headlines I read
+  this week, one bar a day). Tapping a tile opens its tab. A source that can't
+  be read shows — and says why rather than a made-up number.
+- **Dreams** — nights I dreamed in the last thirty days, statements I ran in
+  my own database, the questions I'm holding for you, and a bar for each of
+  the last thirty nights; beside it, my most recent dream with its painting,
+  the start of the story and what actually happened.
+- **System Health** — All systems operational, Some things need attention, or
+  Something is down, from a live check of my database, whether a model is
+  answering chat (and not failing), and whether my nightly review has run in
+  the last two days, plus an Integrations entry that says how many of your
+  connected services can't be read right now. View details lists every check
+  and why.
+- **Service Costs** — this month so far: the total, OpenAI and Google Cloud
+  (each with its last seven days) and Twilio's texts. View details opens
+  Finance.
+- **Quick Actions** — Ask a question, Add a calendar event and Report an issue
+  start a message to me; Create a task opens a new project; Explore memories
+  opens your memories.
+
+The **Finance** tab is what this page used to be. Four figures lead it:
+
 - **Time saved** — the minutes my approved actions saved you this month. Only
   things I actually did after you (or a standing approval) said yes count:
   adding a calendar event is 2 minutes, filing a travel or school email with
@@ -57,14 +84,16 @@ send messages, change billing, top up an account or approve anything.
 
 ## Where to find it
 
-After signing in to Companion, choose **System** in the left navigation. Each
-provider is read when the page opens, and each panel says on its own when that
+After signing in to Companion, choose **System** in the left navigation (on a
+phone: Dashboards → System), then pick a tab. Calendar, Mail, Projects, News
+and Dreams are no longer in the left menu — they are tabs here, and the cards
+on Dashboard still open them directly. Each provider is read when the page opens, and each panel says on its own when that
 provider is unavailable or not set up — one failing does not hide the others.
 
 ## When it doesn't work
 
-If Athena's health says Degraded or Down, the Health panel names the check and
-the reason — a database that can't be reached, no model answering or one
+If System Health says something needs attention or is down, View details
+names the check and the reason — a database that can't be reached, no model answering or one
 failing, or a nightly review that has stopped running. If the Google Cloud
 panel says the export is still catching up, a newly switched-on export is
 backfilling older days first; this month's figures appear once it reaches
@@ -108,6 +137,6 @@ A signed-out or access-locked session must be signed in or unlocked first.
 - GCP history before the export: `billing_export.billing_history` (invoice_month, project_id, service, cost net of credits), loaded from a console Reports/Cost-table CSV with `npm run billing:history -- report.csv [--month YYYYMM] [--dry-run]` (`../../db/load-gcp-billing-history.js`, owner's own ADC). Any month it holds replaces the export for that month in the lifetime sum.
 - Lifetime reads: Twilio `Usage/Records/AllTime.json?Category=totalprice`; OpenAI Costs API from `ATHENA_BILLING_SINCE` (default 2025-10-27, cached 1h); GCP export sum for the project. Gemini is split out by service name (`Gemini API` / Generative Language / Vertex AI).
 - Route/controller: `../../src/routes/companion.js` (`/system/health`, `/system/time-saved`, `/system/twilio-billing`, `/system/openai-billing`, `/system/gcp-billing`), `../../src/controllers/system.js`
-- Frontend API and page: `../../../companion/src/api/dashboard.ts`, `../../../companion/src/components/Dashboard.tsx`; mock data in `../../../companion/mock/client.ts` (`?gcp=none` not yet exported, `?gcp=behind` backfilling, `?health=degraded` / `?health=down`, `?saved=none`)
+- Frontend API and pages: `../../../companion/src/api/dashboard.ts`; the Overview and tab strip are `../../../companion/src/components/SystemPage.tsx` + `system.css` (tiles reuse Health's `hp-tile`, tabs reuse Property's `SectionTabs`); the Finance tab (`FinancePage`) and the tab pages are in `../../../companion/src/components/Dashboard.tsx`, which passes the tiles their data from the same reads the tabs use; mock data in `../../../companion/mock/client.ts` (`?gcp=none` not yet exported, `?gcp=behind` backfilling, `?health=degraded` / `?health=down`, `?saved=none`)
 - Tests: `../../src/services/timeSaved.test.js`, `../../src/services/systemHealth.test.js`, `../../src/services/twilioBilling.test.js`, `../../src/services/openaiBilling.test.js`, `../../src/services/gcpBilling.test.js`
 - Prod: `OPENAI_API_ADMIN_KEY` is in Secret Manager with accessor granted to the Cloud Run runtime SA; the runtime SA's project Editor role covers the BigQuery read. The admin key is read-only (rotated to one 2026-09-27) and is an upstream provider credential and rotates manually in the OpenAI console.

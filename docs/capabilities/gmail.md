@@ -2,7 +2,7 @@
 id: gmail
 title: Gmail
 summary: I sort your inbox and propose bundles — archive, unsubscribe, file receipts, add events — and draft replies, acting only when you approve.
-where: approve it when you sign in with Google, or ⋯ menu → Connected apps → Google → Gmail → Connect; then Mail in the left navigation
+where: approve it when you sign in with Google, or ⋯ menu → Connected apps → Google → Gmail → Connect; then System → Mail
 status: live
 surfaces: [companion]
 audiences: [adult]
@@ -51,8 +51,8 @@ Signing in with Google asks for Gmail along with Calendar and Contacts on one
 Google screen; leave it ticked and it's linked to the account you signed in
 with. To connect it separately, or to use a different account, open Connected
 apps from the ⋯ menu, find the Google card, and press Connect on the Gmail row.
-Then choose **Mail** in the left navigation, or tap the Mail card on the
-dashboard. Tap any email to see it and what I propose to do with it.
+Then open **System** in the left navigation and choose the **Mail** tab, or tap
+the Mail card on the dashboard. Tap any email to see it and what I propose to do with it.
 
 ## When it doesn't work
 

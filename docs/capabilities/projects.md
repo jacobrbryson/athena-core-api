@@ -2,7 +2,7 @@
 id: projects
 title: Projects
 summary: I keep your projects across every part of life — steps, what each needs first, the concerns behind them — ordered by what matters most.
-where: the left menu → Projects (everything) or Property (the house and land); tap any project to edit it
+where: System → Projects tab (everything) or Property (the house and land); tap any project to edit it
 status: live
 surfaces: [companion]
 audiences: [adult]
@@ -54,7 +54,7 @@ page and off the Dashboard.
 
 ## Where to find it
 
-- **Projects** in the left menu: every project, filterable by area, with a
+- **System → Projects** (a tab of System; it left the left menu 2026-10-16): every project, filterable by area, with a
   search box and **New project**. Tap one to open it.
 - **Property** in the left menu: the house and land — open projects, programs with their
   parts, your concerns, and your charter.

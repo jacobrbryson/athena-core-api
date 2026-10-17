@@ -1,7 +1,7 @@
 ---
 id: companion-dashboard
 title: Companion dashboard
-summary: I offer a daily dashboard for your health, family, community, calendar, work, projects and memories — Health & Performance, then Family, then Community.
+summary: I offer a daily dashboard — your areas of life around me, today's key numbers, then schedule, work, projects, health, family, property and dreams.
 where: Companion → Dashboard; Chat → Daily briefing for the compact view
 status: partial
 surfaces: [companion]
@@ -92,11 +92,32 @@ page is mine to work out, not yours to set; news watching has its own
 description. A page I could not read last time says so on the card. The
 dashboard reads data; it never connects accounts or approves actions by itself.
 
-I give you a responsive home screen with Health & Performance, Family,
-Community, Calendar, Mail, Work, News & Updates, and Projects. The first three
-follow your own hierarchy: take care of yourself, so you can take care of your
-family, so your family can take care of the community. Calendar and health
-cards check whether your apps are connected. Topic shortcuts open our chat
+The Dashboard opens on "Your day at a glance": a header with your greeting and
+a line saying whether anything could use you (an alert near your places,
+someone unwell, an open property issue, an approval waiting) or that it's a
+calm morning, afternoon or evening. Around me in the header sit your areas of
+life — Health (GO, REST or WARNING and recovery), Family (anyone unwell, a
+birthday, or how many people I know), Work (open Jira issues), Property (open
+issues or concerns), Dreams (nights I've dreamt in the last 30 days) and
+Community (an alert, calls nearby, or what's coming up) — each coloured by how
+it stands and each opening its page. When I've written a line for this moment
+(my Right Now headline) it sits in the header as a quote; the Right Now card
+below then leads with the suggestion itself. Under the header, a strip of six
+tiles: Recovery, today's Gym session from your training plan (or Rest day, or
+No plan), your Next event, Mail to review and still sorting, Open tasks (Jira),
+and the weather at your home point of interest from the National Weather
+Service. Then the cards: Today's schedule (the next three days that have
+events), Work (your Jira issues with a tab per Jira site and their status),
+Projects (non-work projects with a tab per area and a bar for steps done),
+Health & Performance (the recovery ring, the verdict and its reason, and
+resting heart rate, HRV, sleep and weight with two weeks of bars under each),
+Family, Property (the property's header picture, open issues and concerns),
+and Dreams (how many nights I dreamt this month, my latest dream with its
+painting, and Ask her about it). Health then Family still lead the area cards,
+following your own hierarchy: take care of yourself, so you can take care of
+your family, so your family can take care of the community. Every tile and card
+whose app isn't connected says so and carries the button that fixes it.
+Topic shortcuts open our chat
 with an editable question; you choose when to send it. What is waiting for
 your approval lives on the bell in the top bar, visible from any screen —
 there is no separate Notifications card any more. The bell opens Notifications:
@@ -142,7 +163,8 @@ labeled as memories. Memories, photos, and connected apps have direct shortcuts
 too. My controls provide hover, press, and keyboard-focus feedback. I respect
 your device's reduced-motion preference by disabling interaction movement.
 
-The cards are always in the same order: Health & Performance, Family,
+The compact Daily briefing drawer in Chat keeps the earlier card set, one
+headline per card. There, the cards are always in the same order: Health & Performance, Family,
 Community, then the rest. Health leads with the verdict — GO, REST or WARNING
 and the reasons behind it — then the last seven days of recovery and of sleep
 as bars, so a bad day reads as a bad day or a trend — and keeps the individual
@@ -192,8 +214,9 @@ After signing in to Companion, I open Dashboard. On desktop, the left sidebar
 contains Dashboard, topic navigation and Talk to Athena. On mobile, the bottom bar
 has Dashboards, Chat, the central Athena button, Alerts (notifications), and More.
 Dashboards opens a menu of every page the desktop sidebar lists — Dashboard,
-Calendar, Health, Family, Community, Property, Mail, Work, Projects, News, Dreams
-and System — with the page you're on highlighted. Your
+Health, Family, Community, Property, Work and System — with the page you're on
+highlighted. Calendar, Mail, Projects, News and Dreams are tabs of System (with
+Overview and Finance), and the cards on Dashboard open them directly. Your
 name at the bottom of the sidebar — or More on mobile — opens one menu holding
 every setting and panel: memories, photos, brain, phone and car, local server,
 actions, initiative, connected apps, voice, and sign out. In Chat, Daily
@@ -237,7 +260,12 @@ must be configured by the server owner and then authorized by the user. Provider
 results are bounded previews, not complete exports. Dated health metrics may be
 from earlier days; a missing score is displayed as unknown, never zero.
 
-The landscape is decorative, not local weather. I never present sample personal
+The header's wave art and the background landscape are decorative; the
+weather tile is the only weather, read from the National Weather Service at
+your home point of interest (no home place, no weather). The Dashboard no
+longer has a News or Community card — News is under System → News, and
+Community's details are on its page — and the Gym tile only knows the training
+plan you set on Health. I never present sample personal
 data as yours. Opening a card does not send a message or approve an action, and
 I can't reorder the cards. The Calendar page shows only the
 seven days I read — the month beyond them is blank, not empty — and its focus
@@ -280,6 +308,12 @@ in memory and are cleared on sign-in, sign-out, access errors, and updates.
 - Frontend: `../../../companion/src/components/Dashboard.tsx` (Community reads
   `GET /api/v1/dashboard/alert`, the incident watcher's stored situation, and
   `GET /api/v1/dashboard/community` — see `community.md`)
+- The full-width briefing (2026-10-17, from the owner's prototype): `homeBriefing()` in
+  `Dashboard.tsx` derives every value; the hero, stat tile, section shell, tabs,
+  `Spark` bars and `useHomeExtras` (training plan, community weather, dreams list)
+  are in `../../../companion/src/components/DashboardHome.tsx` + `home.css`; the
+  header art is `../../../companion/public/assets/header.jpg`. The compact drawer
+  still renders the `card()` set.
 - Shell and preserved chat: `../../../companion/src/pages/CompanionConsole.tsx`
 - Styling: `../../../companion/src/dashboard.css`
 - Sidebar profile avatar: `../../../companion/src/components/ProfileAvatar.tsx`.

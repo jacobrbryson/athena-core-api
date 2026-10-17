@@ -2,7 +2,7 @@
 id: dreaming
 title: Dreaming
 summary: Each night I reorganize what you've told me into tables of my own design, tell you the night as a dream, and ask when something needs clarifying.
-where: the dashboard (Last night's dream) and Dreams in the left menu
+where: the dashboard (Last night's dream), System → Dreams tab, and the Dreams panel on System → Overview
 status: partial
 surfaces: [companion]
 audiences: [adult]
@@ -45,7 +45,7 @@ down to every step I ran.
   the history.
 - **The dream's picture** is cropped to fit beside the story; tap or click it
   to see the whole painting full-screen. Tap anywhere, ✕ or Escape closes it.
-- **Dreams** in the left-hand menu (on a phone: Dashboards → Dreams, or More → Dreams) is the history:
+- **System → Dreams** (on a phone: Dashboards → System → Dreams, or More → Dreams) is the history; System's Overview shows the thirty-night count and my latest dream:
   the last thirty nights as dreams and as plain accounts, "Show every step" for
   the exact log, and the questions I'm holding for you.
 - Or just ask me: "What did you dream about?", "List the people you know about

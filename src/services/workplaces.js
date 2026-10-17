@@ -4,7 +4,7 @@
  *   workplaces.list(profileId)              every workplace, primary first, with its links
  *   workplaces.overview(profileId)          that, plus the connections not yet linked
  *   workplaces.save / remove                what the person typed
- *   workplaces.link / unlink                a connection or an email address it owns
+ *   workplaces.link / unlink                a connection, email address, site or project it owns
  *   workplaces.promptBlock(profileId)       the list, for Athena's chat prompt
  *
  * One person can have several: a primary job and a company they co-own. The
@@ -93,17 +93,35 @@ async function connections(profileId) {
 	}]));
 }
 
+/** True when a query failed only because 0079 (sites and projects on a workplace) isn't applied yet. */
+const missing0079 = (err) => err?.code === "ER_BAD_FIELD_ERROR" || err?.code === "ER_NO_SUCH_TABLE";
+
+/** Every link row; before 0079 there are no site or project links, and that is all it means. */
+async function linkRowsOf(profileId) {
+	try {
+		const [rows] = await pool.query(
+			"SELECT uuid, workplace_id, kind, credential_uuid, email, site_uuid, project_uuid FROM athena_workplace_link WHERE profile_id = ? ORDER BY kind, email, id",
+			[profileId]
+		);
+		return rows;
+	} catch (err) {
+		if (!missing0079(err)) throw err;
+		const [rows] = await pool.query(
+			"SELECT uuid, workplace_id, kind, credential_uuid, email FROM athena_workplace_link WHERE profile_id = ? ORDER BY kind, email, id",
+			[profileId]
+		);
+		return rows;
+	}
+}
+
 async function load(profileId) {
-	const [[rows], [linkRows], conns] = await Promise.all([
+	const [[rows], linkRows, conns] = await Promise.all([
 		pool.query(
 			`SELECT ${COLUMNS} FROM athena_workplace WHERE profile_id = ?
 			  ORDER BY is_primary DESC, name LIMIT ${MAX_WORKPLACES}`,
 			[profileId]
 		),
-		pool.query(
-			"SELECT uuid, workplace_id, kind, credential_uuid, email FROM athena_workplace_link WHERE profile_id = ? ORDER BY kind, email, id",
-			[profileId]
-		),
+		linkRowsOf(profileId),
 		connections(profileId),
 	]);
 	const places = rows.map((r) => {
@@ -116,6 +134,9 @@ async function load(profileId) {
 				uuid: l.uuid,
 				...(conns.get(l.credential_uuid) || { credentialUuid: l.credential_uuid, provider: null, label: "A removed connection", account: null, status: "revoked" }),
 			})),
+			// The sites and projects that are this workplace's (0079), by their own uuids.
+			sites: mine.filter((l) => l.kind === "site" && l.site_uuid).map((l) => ({ uuid: l.uuid, siteUuid: l.site_uuid })),
+			projects: mine.filter((l) => l.kind === "project" && l.project_uuid).map((l) => ({ uuid: l.uuid, projectUuid: l.project_uuid })),
 		};
 	});
 	const linked = new Set(linkRows.map((l) => l.credential_uuid).filter(Boolean));
@@ -224,8 +245,8 @@ async function remove(profileId, uuid) {
 }
 
 /**
- * Link a connection ({ credential: uuid }) or an address ({ email }) to one
- * workplace. Exclusive: one already belonging to another workplace is refused
+ * Link a connection ({ credential: uuid }), an address ({ email }), a site
+ * ({ site: uuid }) or a project ({ project: uuid }) to one workplace. Exclusive: one already belonging to another workplace is refused
  * with that workplace's name, never moved silently. Linking it again to the
  * same workplace is a no-op.
  */
@@ -233,8 +254,18 @@ async function link(profileId, workplaceUuid, input = {}) {
 	const row = await rowByUuid(profileId, String(workplaceUuid));
 	if (!row) throw notFound();
 
-	let kind, credentialUuid = null, email = null;
-	if (input.credential) {
+	let kind, credentialUuid = null, email = null, siteUuid = null, projectUuid = null;
+	if (input.site) {
+		kind = "site";
+		siteUuid = String(input.site);
+		const [own] = await pool.query("SELECT 1 FROM athena_site WHERE profile_id = ? AND uuid = ? LIMIT 1", [profileId, siteUuid]);
+		if (!own.length) throw bad("That site isn't on your list.");
+	} else if (input.project) {
+		kind = "project";
+		projectUuid = String(input.project);
+		const [own] = await pool.query("SELECT 1 FROM athena_project WHERE profile_id = ? AND uuid = ? LIMIT 1", [profileId, projectUuid]);
+		if (!own.length) throw bad("That project isn't on your list.");
+	} else if (input.credential) {
 		kind = "credential";
 		credentialUuid = String(input.credential);
 		// Only the caller's own, linkable, live connection.
@@ -244,20 +275,32 @@ async function link(profileId, workplaceUuid, input = {}) {
 		email = emailOf(input.email);
 		if (!email) throw bad("That doesn't look like an email address.");
 	} else {
-		throw bad("Choose a connection or an email address.");
+		throw bad("Choose a connection, an email address, a site or a project.");
 	}
+	const column = { credential: "l.credential_uuid", email: "l.email", site: "l.site_uuid", project: "l.project_uuid" }[kind];
+	const value = credentialUuid || email || siteUuid || projectUuid;
 
 	const [owner] = await pool.query(
 		`SELECT w.id, w.name FROM athena_workplace_link l JOIN athena_workplace w ON w.id = l.workplace_id
-		  WHERE l.profile_id = ? AND ${kind === "credential" ? "l.credential_uuid" : "l.email"} = ? LIMIT 1`,
-		[profileId, credentialUuid || email]
-	);
+		  WHERE l.profile_id = ? AND ${column} = ? LIMIT 1`,
+		[profileId, value]
+	).catch((err) => {
+		if (missing0079(err)) throw bad("Sites and projects can't belong to a workplace until the database is updated (migration 0079).");
+		throw err;
+	});
 	if (owner.length) {
 		if (Number(owner[0].id) === Number(row.id)) return;
 		throw bad(`That already belongs to ${owner[0].name}. Unlink it there first.`);
 	}
 	const [[{ n }]] = await pool.query("SELECT COUNT(*) AS n FROM athena_workplace_link WHERE profile_id = ? AND workplace_id = ?", [profileId, row.id]);
 	if (n >= MAX_LINKS) throw bad(`That workplace already has ${MAX_LINKS} links.`);
+	if (kind === "site" || kind === "project") {
+		await pool.query(
+			"INSERT INTO athena_workplace_link (uuid, profile_id, workplace_id, kind, site_uuid, project_uuid) VALUES (?,?,?,?,?,?)",
+			[randomUUID(), profileId, row.id, kind, siteUuid, projectUuid]
+		);
+		return;
+	}
 	await pool.query(
 		"INSERT INTO athena_workplace_link (uuid, profile_id, workplace_id, kind, credential_uuid, email) VALUES (?,?,?,?,?,?)",
 		[randomUUID(), profileId, row.id, kind, credentialUuid, email]

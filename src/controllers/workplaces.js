@@ -39,7 +39,7 @@ module.exports = {
   }),
   link: handler(async (profileId, req) => {
     const body = req.body || {};
-    await workplaces.link(profileId, req.params.uuid, { credential: body.credential, email: body.email });
+    await workplaces.link(profileId, req.params.uuid, { credential: body.credential, email: body.email, site: body.site, project: body.project });
   }),
   unlink: handler(async (profileId, req) => {
     await workplaces.unlink(profileId, req.params.uuid, req.params.linkUuid);

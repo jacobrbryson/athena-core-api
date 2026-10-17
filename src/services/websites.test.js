@@ -1,5 +1,6 @@
 jest.mock("../helpers/db", () => ({ query: jest.fn() }));
 jest.mock("./connectors/http", () => ({ providerGet: jest.fn(), providerRequest: jest.fn(), isNotConnected: (e) => e && e.code === "not_connected" }));
+jest.mock("./siteChecks", () => ({ latest: async () => new Map(), forget: async () => undefined }));
 jest.mock("./connectors/context", () => ({ technicalDetail: (e) => (e && (e.providerDetail || e.message)) || null }));
 jest.mock("./connectors/googleWebsites", () => {
 	const real = jest.requireActual("./connectors/googleWebsites");

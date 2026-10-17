@@ -23,6 +23,7 @@ const pool = require("../helpers/db");
 const google = require("./connectors/googleWebsites");
 const { isNotConnected } = require("./connectors/http");
 const { technicalDetail } = require("./connectors/context");
+const siteChecks = require("./siteChecks");
 
 const MAX_SITES = 50;
 
@@ -32,7 +33,7 @@ const trim = (value, max) =>
 
 const COLUMNS = `id, uuid, domain, label, search_site, ga_property, notes, last_checked_at, last_error, updated_at`;
 
-function toSite(row, snapshots = {}) {
+function toSite(row, snapshots = {}, uptime = null) {
 	return {
 		uuid: row.uuid,
 		domain: row.domain,
@@ -44,6 +45,8 @@ function toSite(row, snapshots = {}) {
 		lastError: row.last_error || null,
 		search: snapshots.search || null,
 		analytics: snapshots.analytics || null,
+		// Is it up, and how fast it answered (siteChecks); null before its first check.
+		uptime,
 	};
 }
 
@@ -88,8 +91,9 @@ async function list(profileId) {
 		`SELECT ${COLUMNS} FROM athena_site WHERE profile_id = ? ORDER BY domain LIMIT ${MAX_SITES}`,
 		[profileId]
 	);
-	const snapshots = await latestSnapshots(rows.map((r) => Number(r.id)));
-	return rows.map((r) => toSite(r, snapshots.get(Number(r.id))));
+	const ids = rows.map((r) => Number(r.id));
+	const [snapshots, uptime] = await Promise.all([latestSnapshots(ids), siteChecks.latest(ids)]);
+	return rows.map((r) => toSite(r, snapshots.get(Number(r.id)), uptime.get(Number(r.id)) || null));
 }
 
 /**
@@ -163,6 +167,9 @@ async function remove(profileId, uuid) {
 	const [rows] = await pool.query("SELECT id FROM athena_site WHERE profile_id = ? AND uuid = ? LIMIT 1", [profileId, uuid]);
 	if (!rows.length) return false;
 	await pool.query("DELETE FROM athena_site_snapshot WHERE site_id = ?", [rows[0].id]);
+	await siteChecks.forget(rows[0].id);
+	// The workplace it belonged to (0079) lets go of it too; before 0079 there is no such link.
+	await pool.query("DELETE FROM athena_workplace_link WHERE profile_id = ? AND site_uuid = ?", [profileId, uuid]).catch(() => undefined);
 	await pool.query("DELETE FROM athena_site WHERE id = ?", [rows[0].id]);
 	return true;
 }

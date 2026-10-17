@@ -42,6 +42,11 @@ module.exports = {
     if (!(await websites.remove(profileId, req.params.uuid))) throw Object.assign(new Error("That site isn't on your list."), { status: 404 });
     return { sites: await websites.list(profileId) };
   }),
+  // Opening the Work page: check whichever sites haven't been checked in ten minutes, then list them.
+  check: handler(async (profileId) => {
+    await require('../services/siteChecks').checkStale(profileId, 10);
+    return { sites: await websites.list(profileId) };
+  }),
   refresh: handler(async (profileId, req, res) => {
     const key = `${profileId}:${req.params.uuid || 'all'}`;
     const wait = REFRESH_GAP_MS - (Date.now() - (lastRefresh.get(key) || 0));

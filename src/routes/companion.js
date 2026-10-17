@@ -59,6 +59,7 @@ router.post('/dashboard/incidents/phone-alert', requireAuthOrDevice, express.jso
 router.get('/dashboard/websites', requireAuth, require('../controllers/websites').list);
 router.get('/dashboard/websites/discover', requireAuth, require('../controllers/websites').discover);
 router.post('/dashboard/websites', requireAuth, express.json({ limit: '2kb' }), require('../controllers/websites').save);
+router.post('/dashboard/websites/check', requireAuth, require('../controllers/websites').check);
 router.post('/dashboard/websites/refresh', requireAuth, require('../controllers/websites').refresh);
 router.patch('/dashboard/websites/:uuid', requireAuth, express.json({ limit: '2kb' }), require('../controllers/websites').update);
 router.post('/dashboard/websites/:uuid/refresh', requireAuth, require('../controllers/websites').refresh);
@@ -66,6 +67,7 @@ router.delete('/dashboard/websites/:uuid', requireAuth, require('../controllers/
 
 // Workplaces: where the person works, their role there, and the connections
 // and email addresses that belong to each. Shown on Work.
+router.get('/dashboard/work/agents', requireAuth, require('../controllers/work').agents);
 router.get('/dashboard/workplaces', requireAuth, require('../controllers/workplaces').list);
 router.post('/dashboard/workplaces', requireAuth, express.json({ limit: '2kb' }), require('../controllers/workplaces').save);
 router.patch('/dashboard/workplaces/:uuid', requireAuth, express.json({ limit: '2kb' }), require('../controllers/workplaces').update);
@@ -76,6 +78,7 @@ router.delete('/dashboard/workplaces/:uuid/links/:linkUuid', requireAuth, requir
 // Community: points of interest (the places above, with what they are),
 // neighbours and local events — typed by the person, read into chat.
 router.get('/dashboard/community', requireAuth, require('../controllers/community').overview);
+router.get('/dashboard/community/weather', requireAuth, require('../controllers/community').weather);
 router.get('/dashboard/community/calendar', requireAuth, require('../controllers/community').calendar);
 router.get('/dashboard/community/contacts', requireAuth, require('../controllers/community').searchContacts);
 router.get('/dashboard/community/contacts/at', requireAuth, require('../controllers/community').contactsAtAddress);

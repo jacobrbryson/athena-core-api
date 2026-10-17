@@ -1,12 +1,12 @@
 ---
 id: websites
 title: Websites
-summary: I keep a list of the websites you manage and show how each is doing, from your Google Search Console and Analytics.
-where: Companion → Projects → Websites (connect it under ⋯ menu → Connected apps → Google → Websites)
+summary: The websites you manage — whether each is up and how fast it answers, and how it is doing in Search Console and Analytics.
+where: Companion → Work → Site Monitors and Sites (also System → Projects tab → Websites; connect Google under ⋯ menu → Connected apps → Google → Websites)
 status: partial
 surfaces: [companion]
 audiences: [adult]
-triggers: [website, websites, my site, my sites, search console, google analytics, analytics, ga4, traffic, visitors, page views, clicks, impressions, search ranking, seo, athena-learning.app, family-chores.app, orcwood, rossbryson]
+triggers: [uptime, site down, is my site up, response time, site monitor, website, websites, my site, my sites, search console, google analytics, analytics, ga4, traffic, visitors, page views, clicks, impressions, search ranking, seo, athena-learning.app, family-chores.app, orcwood, rossbryson]
 ---
 
 ## What I can do
@@ -24,6 +24,13 @@ Each number comes with its change from the week before. If a site has no
 Search Console or Analytics property yet, I show what I have for it and say what
 is missing — I never fill a gap with a guess.
 
+I also check each site is up: one request to its home page, timed until it
+answers. A site that answers is **Healthy** (a redirect counts); an error, no
+answer within ten seconds, or a domain that doesn't resolve is down, with the
+reason. I check whenever you open the Work page and the last check is more
+than ten minutes old, and once every night — not continuously, so a short
+outage between checks can go unseen. This needs no Google connection.
+
 I only read. I can't change anything on your sites, in Search Console, or in
 Analytics.
 
@@ -34,7 +41,9 @@ First connect it: the **⋯ menu in the top right** → **Connected apps** → t
 read-only access to Search Console and Analytics. If you signed in with Google
 before this existed, you'll need to approve it once more.
 
-Then open **Projects** and look for the **Websites** panel. **Add a website**
+**Work** shows each site's state, response time and its last few checks under
+**Site Monitors**, and the full list under **Sites** in The detail. The same
+list is on **Projects** in the **Websites** panel. **Add a website**
 lists the properties Google says you can see so you can pick the right Search
 Console site and Analytics property rather than typing ids. **Check now** reads
 Google again; each site also has **Edit** and **Remove**.
@@ -61,6 +70,9 @@ Google again; each site also has **Edit** and **Remove**.
 - Visitor numbers come from Google Analytics: they include only people whose
   browsers allow it, and they aren't a count of accounts or signups.
 - Up to 50 websites.
+- Uptime is checked when you open Work and nightly, not every minute; I don't
+  alert you when a site goes down. A domain that points at a private network
+  address is never contacted.
 - I don't yet bring these numbers into our conversations or tell you when
   something changes; for now they're on the panel.
 

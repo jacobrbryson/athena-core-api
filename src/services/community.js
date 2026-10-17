@@ -39,6 +39,7 @@ const { randomUUID } = require("node:crypto");
 const pool = require("../helpers/db");
 const watch = require("./pulsepoint/watch");
 const news = require("./news");
+const weather = require("./weather");
 const clock = require("./clock");
 const googleContacts = require("./connectors/googleContacts");
 const googleCalendar = require("./connectors/googleCalendar");
@@ -687,8 +688,24 @@ async function promptBlock(profileId, now = new Date()) {
 	return lines.join("\n");
 }
 
+/**
+ * The forecast at home for the Community page: the next 24 hours at the home
+ * point of interest (else the first one watched). Only that place's own
+ * coordinate goes to the National Weather Service, as for any forecast. Null
+ * weather — never a guess — when there is no place or NWS can't answer.
+ */
+async function weatherAtHome(profileId) {
+	const places = (await watch.listPlaces(profileId)).filter((p) => p.enabled && Number.isFinite(p.latitude) && Number.isFinite(p.longitude));
+	const home = places.find((p) => p.kind === "home") || places[0];
+	if (!home) return { status: "no_place", place: null, weather: null };
+	const sky = await weather.forecast(home.latitude, home.longitude, { hours: 24, from: new Date().toISOString() });
+	if (!sky) return { status: "unavailable", place: home.name, weather: null };
+	return { status: "ready", place: home.name, weather: { town: sky.place, now: sky.now, hours: sky.hours, checkedAt: sky.checkedAt } };
+}
+
 module.exports = {
 	overview,
+	weatherAtHome,
 	listNeighbors,
 	saveNeighbor,
 	removeNeighbor,

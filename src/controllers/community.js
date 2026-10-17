@@ -32,6 +32,8 @@ function handler(run) {
 
 module.exports = {
   overview: handler((profileId) => community.overview(profileId)),
+  // The next 24 hours at the home point of interest (NWS); weather null when unknown.
+  weather: handler((profileId) => community.weatherAtHome(profileId)),
   // Calendar events that mention the community's towns and places; read-only.
   calendar: handler((profileId) => community.calendarEvents(profileId)),
   // The person's own Google Contacts, searched for the "link a contact" box.
