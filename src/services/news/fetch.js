@@ -23,6 +23,12 @@ const dns = require("node:dns").promises;
 const net = require("node:net");
 
 const MAX_BYTES = 2 * 1024 * 1024;
+/**
+ * A news front page is mostly inline script: cnn.com is ~7 MB with its first
+ * story link past the 2 MB mark (10-18). The poller reads up to this much and
+ * keeps a partial page rather than failing past it.
+ */
+const NEWS_MAX_BYTES = 12 * 1024 * 1024;
 const TIMEOUT_MS = 12_000;
 const MAX_REDIRECTS = 3;
 const ROBOTS_MAX_BYTES = 128 * 1024;
@@ -97,8 +103,14 @@ function decode(buffer, contentType) {
  * cookies, no proxy env, and no second DNS lookup — the address resolved by
  * the caller is the address connected to.
  */
-function getOnce(url, address, headers, maxBytes) {
+function getOnce(url, address, headers, maxBytes, truncate = false) {
 	return new Promise((resolve, reject) => {
+		let settled = false;
+		const finish = (fn, value) => {
+			if (settled) return;
+			settled = true;
+			fn(value);
+		};
 		const request = https.get(
 			url,
 			{
@@ -110,24 +122,35 @@ function getOnce(url, address, headers, maxBytes) {
 			(response) => {
 				const chunks = [];
 				let size = 0;
-				response.on("data", (chunk) => {
-					size += chunk.length;
-					if (size > maxBytes) request.destroy(new Error("That page is too big to read."));
-					else chunks.push(chunk);
-				});
-				response.on("error", reject);
-				response.on("end", () =>
-					resolve({
+				const done = (truncated) =>
+					finish(resolve, {
 						statusCode: response.statusCode,
 						headers: response.headers,
 						body: decode(Buffer.concat(chunks), response.headers["content-type"]),
-					})
-				);
+						truncated,
+					});
+				response.on("data", (chunk) => {
+					if (settled) return;
+					if (size + chunk.length <= maxBytes) {
+						size += chunk.length;
+						chunks.push(chunk);
+						return;
+					}
+					if (!truncate) return request.destroy(new Error("That page is too big to read."));
+					// Keep what fits and hang up: the first megabytes of a page are
+					// where its headlines are, and a partial read beats no read.
+					chunks.push(chunk.subarray(0, maxBytes - size));
+					size = maxBytes;
+					done(true);
+					request.destroy();
+				});
+				response.on("error", (err) => finish(reject, err));
+				response.on("end", () => done(false));
 			}
 		);
 		const deadline = setTimeout(() => request.destroy(new Error("That site took too long to answer.")), TIMEOUT_MS);
 		request.on("close", () => clearTimeout(deadline));
-		request.on("error", reject);
+		request.on("error", (err) => finish(reject, err));
 	});
 }
 
@@ -138,7 +161,7 @@ function getOnce(url, address, headers, maxBytes) {
  * `status` 304 means the conditional GET matched and `body` is empty — the
  * cheapest possible visit, and the common one.
  */
-async function fetchPage(value, { etag = null, lastModified = null, maxBytes = MAX_BYTES } = {}) {
+async function fetchPage(value, { etag = null, lastModified = null, maxBytes = MAX_BYTES, truncate = false } = {}) {
 	let target = pageUrl(value);
 	const headers = {};
 	if (etag) headers["If-None-Match"] = etag;
@@ -147,7 +170,7 @@ async function fetchPage(value, { etag = null, lastModified = null, maxBytes = M
 	for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
 		const url = new URL(target);
 		const address = await resolvePublic(url.hostname);
-		const response = await getOnce(url, address, headers, maxBytes);
+		const response = await getOnce(url, address, headers, maxBytes, truncate);
 		const status = response.statusCode;
 
 		if (status >= 300 && status < 400 && response.headers.location) {
@@ -165,6 +188,7 @@ async function fetchPage(value, { etag = null, lastModified = null, maxBytes = M
 			status,
 			finalUrl: target,
 			body: response.body,
+			truncated: Boolean(response.truncated),
 			contentType: String(response.headers["content-type"] || ""),
 			etag: response.headers.etag ? String(response.headers.etag).slice(0, 255) : null,
 			lastModified: response.headers["last-modified"] ? String(response.headers["last-modified"]).slice(0, 64) : null,
@@ -253,4 +277,4 @@ async function robotsFor(value) {
 	}
 }
 
-module.exports = { pageUrl, publicIPv4, resolvePublic, fetchPage, robotsFor, parseRobots, USER_AGENT };
+module.exports = { pageUrl, publicIPv4, resolvePublic, fetchPage, robotsFor, parseRobots, USER_AGENT, NEWS_MAX_BYTES };

@@ -92,6 +92,13 @@ describe("pickLocal", () => {
 		expect(out.map((i) => i.title)).toEqual(["Ham Day draws record crowd in Troutman", "Supper at Troutman ARP Church"]);
 		expect(out[0].matched).toBe("Troutman");
 	});
+	it("keeps headlines from the town's own site even when they don't name it", () => {
+		const items = [
+			{ title: "Notice of Cancellation: Planning and Zoning Board", summary: "", source: "www.troutmannc.gov", host: "www.troutmannc.gov" },
+			{ title: "Council votes on budget", summary: "", source: "cnn.com", host: "cnn.com" },
+		];
+		expect(community.pickLocal(items, places).map((i) => i.title)).toEqual(["Notice of Cancellation: Planning and Zoning Board"]);
+	});
 	it("never searches for a generic name like Home", () => {
 		expect(community.pickLocal([{ title: "Home prices rise", summary: "" }], [{ name: "Home", address: null }])).toEqual([]);
 	});

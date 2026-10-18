@@ -14,7 +14,7 @@
  * gone becomes a recorded failure and a longer interval — the poller's job is
  * to keep working through a list, not to stop on one bad site.
  */
-const { fetchPage, robotsFor, pageUrl } = require("./fetch");
+const { fetchPage, robotsFor, pageUrl, NEWS_MAX_BYTES } = require("./fetch");
 const { extractItems } = require("./extract");
 const cadence = require("./cadence");
 const store = require("./store");
@@ -93,7 +93,12 @@ async function pollSource(source, { dryRun = false } = {}) {
 			return result;
 		}
 
-		const response = await fetchPage(source.url, { etag: source.etag, lastModified: source.lastModified });
+		const response = await fetchPage(source.url, {
+			etag: source.etag,
+			lastModified: source.lastModified,
+			maxBytes: NEWS_MAX_BYTES,
+			truncate: true,
+		});
 		result.httpStatus = response.status;
 
 		let added = [];

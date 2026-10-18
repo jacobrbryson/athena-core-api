@@ -25,6 +25,7 @@ const community = require("../services/community");
 const websites = require("../services/websites");
 const workplaces = require("../services/workplaces");
 const placeReminders = require("../services/placeReminders");
+const weatherAlerts = require("../services/weatherAlerts");
 const timeReminders = require("../services/timeReminders");
 const dreams = require("../services/dreams");
 const { audienceForSession } = require("../services/audience");
@@ -541,6 +542,9 @@ async function processAiResponse(session, message, clients, ctx = {}) {
           // cannot fire.
           safeBlock("place reminder", () => placeReminders.promptBlock(profileId)),
           timeReminders.promptBlock(profileId).catch(() => null),
+          // Weather alerts they've set (frost, heat, rain, wind...), so she
+          // knows what she has been asked to watch for and where it's managed.
+          safeBlock("weather alerts", () => weatherAlerts.promptBlock(profileId)),
           // What she organized while dreaming (her own tables, this person's
           // rows only) and any question she wants to ask them. A child's
           // memories never reach athena_mind. Time-boxed.

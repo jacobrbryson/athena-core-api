@@ -125,15 +125,20 @@ const RESOURCE = /\.(mp3|mp4|m3u8|pdf|jpe?g|png|gif|webp|svg|zip|xml|ics|rss|jso
  * with text that reads exactly like a headline ("All Americas stories") and it
  * is a section.
  */
+const ARTICLE_PARENT = /^(detail|details|article|articles|story|stories|news|newsflash|post|posts|item|items|view|press-releases?|releases?|announcements?|notices?)$/i;
+
 function pathShape(pathname) {
 	const segments = pathname.split("/").filter(Boolean);
 	const last = segments.length ? segments[segments.length - 1] : "";
+	const parent = segments.length > 1 ? segments[segments.length - 2] : "";
 	return {
 		segments,
 		dated: segments.some((segment) => /^(19|20)\d{2}$/.test(segment)),
 		slug: last.split("-").filter(Boolean).length >= 3,
-		// c63d7lexyym1o, nx-s1-5969816: an id, not a word.
-		id: last.length >= 8 && /\d/.test(last),
+		// c63d7lexyym1o, nx-s1-5969816: an id, not a word. A short number counts
+		// too when the segment before it says what it is: CivicPlus town sites
+		// publish every notice as /m/newsflash/Home/Detail/157.
+		id: (last.length >= 8 && /\d/.test(last)) || (/^\d{2,}$/.test(last) && ARTICLE_PARENT.test(parent)),
 	};
 }
 
@@ -150,6 +155,9 @@ function usableTitle(title) {
 	if (title.split(/\s+/).length < 3) return false;
 	// Bare timestamps and counters change every visit and would read as news.
 	if (/^\d[\d\s:./-]*$/.test(title)) return false;
+	// A media card whose only text is its badge: "• Video 0:54 Video 0:54".
+	const words = title.replace(/[•·|]|\b(video|audio|watch|listen|live|\d+:\d{2})\b/gi, " ").trim();
+	if (words.split(/\s+/).filter(Boolean).length < 3) return false;
 	return true;
 }
 
@@ -212,8 +220,20 @@ function harvestJsonLd(html, base) {
  */
 const RELATIVE_TIME = /\s*\d+\s*(?:hr|hrs|hour|hours|min|mins|minute|minutes|sec|secs|day|days|week|weeks)\s+ago\b[\s\S]*$/i;
 
-function titleFromAnchor(inner) {
-	const heading = /<(h[1-6])\b[^>]*>([\s\S]*?)<\/\1>/i.exec(inner);
+/**
+ * Media inside a card. A photo credit is text ("Lucas Destrem/Reuters"), and
+ * the image is usually its own link to the same story, listed before the
+ * headline link — so without this the credit wins the dedupe as the title.
+ */
+const MEDIA = /<(figure|figcaption|picture|video|audio|button)\b[\s\S]*?<\/\1>/gi;
+/** A heading element, or the element a publisher marks as the headline (CNN). */
+const HEADING =
+	/<(h[1-6])\b[^>]*>([\s\S]*?)<\/\1>|<(span|div|p)\b[^>]*(?:class=["'][^"']*headline[^"']*["']|data-editable=["']headline["'])[^>]*>([\s\S]*?)<\/\3>/i;
+
+function titleFromAnchor(rawInner) {
+	const inner = String(rawInner).replace(MEDIA, " ");
+	const found = HEADING.exec(inner);
+	const heading = found ? [found[0], null, found[2] ?? found[4]] : null;
 	const whole = textOf(inner).replace(RELATIVE_TIME, "").trim();
 	if (heading) {
 		const title = textOf(heading[2]).replace(RELATIVE_TIME, "").trim();

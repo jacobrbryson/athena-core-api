@@ -28,6 +28,7 @@ const pool = require("../helpers/db");
 const watch = require("../services/pulsepoint/watch");
 const timeReminders = require("../services/timeReminders");
 const placeReminders = require("../services/placeReminders");
+const weatherAlerts = require("../services/weatherAlerts");
 
 const args = { dryRun: false, loop: 0, force: false, status: false };
 for (let i = 2; i < process.argv.length; i++) {
@@ -72,9 +73,28 @@ async function reminderBackstop() {
 	}
 }
 
+/**
+ * The person's own weather alerts ("34°F or colder at Home"). Each rule
+ * re-reads the forecast every half hour whatever this job's rhythm is; a rule
+ * not due costs one indexed SELECT. Never fails the incidents pass.
+ */
+async function weatherAlertPass() {
+	if (args.status) return;
+	try {
+		const out = await weatherAlerts.checkDue({ dryRun: args.dryRun });
+		if (out.sent || out.held || out.failed || (args.dryRun && out.messages.length)) {
+			log(`weather alerts: checked ${out.checked}, sent ${out.sent}, held for morning ${out.held}, failed ${out.failed}`);
+			if (args.dryRun) for (const m of out.messages) log(`  profile ${m.profileId}: ${m.text}`);
+		}
+	} catch (error) {
+		log("weather alerts failed:", error.message);
+	}
+}
+
 async function pass() {
 	if (args.status) return status();
 	await reminderBackstop();
+	await weatherAlertPass();
 	const out = await watch.runOnce({ dryRun: args.dryRun, force: args.force });
 	const { results } = out;
 	if (out.skipped) return log(`not due (every ${minutes(out.everyMs)}, ${out.why}); next in ${minutes(out.nextInMs)}`);

@@ -167,6 +167,16 @@ describe("fetching", () => {
 		expect(result.status).toBe(304);
 		expect(result.body).toBe("");
 	});
+
+	test("a page past the cap fails by default and is kept, cut short, when asked", async () => {
+		dns.lookup.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
+		respondWith({ headers: { "content-type": "text/html" }, body: "x".repeat(100) });
+		await expect(fetchModule.fetchPage("https://news.example.com/", { maxBytes: 40 })).rejects.toThrow(/too big/);
+		const result = await fetchModule.fetchPage("https://news.example.com/", { maxBytes: 40, truncate: true });
+		expect(result.status).toBe(200);
+		expect(result.body).toHaveLength(40);
+		expect(result.truncated).toBe(true);
+	});
 });
 
 describe("robots.txt", () => {
@@ -324,6 +334,28 @@ describe("extraction against what real publishers actually emit", () => {
 		expect(item.title).toBe("Ferry timetable changes — and what it means for the ‘early boat’");
 		// &amp; in an href is an ampersand; otherwise one story hashes two ways.
 		expect(item.url).toBe("https://news.example.com/2026/09/19/story?a=1&b=2");
+	});
+
+	test("a town site's numbered notices are stories, its numbered pages are not", () => {
+		// CivicPlus, as troutmannc.gov emits it (10-18).
+		const page = `<html><body><main>
+      <a href="/m/newsflash/Home/Detail/157" class="article-title-link">Notice of Cancellation: Planning and Zoning Board</a>
+      <a href="/280/Employment-Opportunities">Employment Opportunities at the Town</a>
+      <a href="/m/newsflash/page/12">Older notices from the town</a>
+      </main></body></html>`;
+		const titles = extract.extractItems(page, "https://www.example.gov/m/newsflash").map((item) => item.title);
+		expect(titles).toEqual(["Notice of Cancellation: Planning and Zoning Board"]);
+	});
+
+	test("a photo credit is not a headline, and a media badge alone is not a story", () => {
+		// CNN links the image and the headline separately, image first (10-18).
+		const page = `<html><body><main>
+      <a href="/2026/10/17/europe/france-protests"><div><video></video><figcaption>Lucas Destrem/Reuters, Reuters</figcaption></div></a>
+      <a href="/2026/10/17/europe/france-protests"><span class="container__headline-text" data-editable="headline">Half a million protesters sweep France</span></a>
+      <a href="/2026/10/17/world/video/paris-protest-digvid"><span>&bull; Video 0:54</span> <span>Video 0:54</span></a>
+      </main></body></html>`;
+		const items = extract.extractItems(page, "https://www.example.com/");
+		expect(items.map((item) => item.title)).toEqual(["Half a million protesters sweep France"]);
 	});
 });
 

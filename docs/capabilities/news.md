@@ -54,6 +54,11 @@ reader that isn't a person with a browser, and I won't pretend to be one, so
 those pages will never work for me however often I try; another outlet
 covering the same story usually will.
 
+Very large front pages (some run to several megabytes of code) are fine: I read
+up to twelve megabytes of a page and keep what I got if it is bigger. Town and
+county sites that number their notices (".../newsflash/Home/Detail/157") read as
+news too.
+
 If a page is on the list but has no headlines, it is usually one that builds
 itself in the browser rather than sending finished text; a section page on the
 same site often works where the front page does not. I keep trying either way,
@@ -96,6 +101,13 @@ telling the truth.
   the item hash as the dedupe key; `../../src/services/memoryStore/news.js` is
   now only the nightly catch-up.
 - Tests: `../../src/services/news/news.test.js`.
+- Notes: the poller reads up to `NEWS_MAX_BYTES` (12 MB) with `truncate: true`
+  — cnn.com is ~7 MB with no story link in its first 2 MB (10-18). Places
+  pages still use the 2 MB default and fail past it. A short numeric last
+  segment is a story only under an `ARTICLE_PARENT` segment (CivicPlus
+  `/m/newsflash/Home/Detail/157`). Photo credits (`figcaption`) and media
+  badges ("• Video 0:54") are stripped/refused, and a `headline`-classed span
+  counts as the heading.
 - Notes: there is deliberately no route, and no UI, for setting an interval by
   hand. The bounds (never under `NEWS_MIN_INTERVAL_MINUTES`, never over a day,
   a fast interval always expires) live in `cadence.js` rather than in the

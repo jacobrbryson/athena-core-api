@@ -1,5 +1,9 @@
 # Capability ledger
 
+- 2026-10-18 — Community → Weather: the week's forecast at any watched place with a frost read for every night (possible / likely / freeze / hard freeze), seven days of highs and lows, 48 hours with humidity and wind, and weather alerts you set (cold/frost, heat, rain, snow, ice, storms, wind) sent to your phone once per night or day, held until 7 AM when found overnight. Needs migration 0080 — `weather-alerts.md`, `community.md` (status: partial)
+
+- 2026-10-18 — News reads very large front pages (cnn.com was failing as "too big") and town sites' numbered notices (troutmannc.gov's newsflash was finding none); photo credits no longer arrive as headlines, and headlines from the town's own site count as local news on Community — `news.md`, `community.md` (status: live)
+
 - 2026-10-17 — One conversation on every device: signed-in sessions bind to the proven identity (Guardians sessions were left anonymous and IP-pinned), a new device resumes the latest conversation, and a device's older one is merged in unless someone else took part — `conversation-across-devices.md` (status: live)
 
 - 2026-10-17 — Bottom dashboard cards share a bounded 400-pixel height, with scrollable content and visible headers — `companion-dashboard.md` (status: partial)

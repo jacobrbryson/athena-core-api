@@ -79,6 +79,12 @@ router.delete('/dashboard/workplaces/:uuid/links/:linkUuid', requireAuth, requir
 // neighbours and local events — typed by the person, read into chat.
 router.get('/dashboard/community', requireAuth, require('../controllers/community').overview);
 router.get('/dashboard/community/weather', requireAuth, require('../controllers/community').weather);
+// The longer forecast (7 days, frost by night) and the person's own weather alerts.
+router.get('/dashboard/weather/outlook', requireAuth, require('../controllers/weatherAlerts').outlook);
+router.get('/dashboard/weather/alerts', requireAuth, require('../controllers/weatherAlerts').list);
+router.post('/dashboard/weather/alerts', requireAuth, express.json({ limit: '2kb' }), require('../controllers/weatherAlerts').save);
+router.patch('/dashboard/weather/alerts/:uuid', requireAuth, express.json({ limit: '2kb' }), require('../controllers/weatherAlerts').update);
+router.delete('/dashboard/weather/alerts/:uuid', requireAuth, require('../controllers/weatherAlerts').remove);
 router.get('/dashboard/community/calendar', requireAuth, require('../controllers/community').calendar);
 router.get('/dashboard/community/contacts', requireAuth, require('../controllers/community').searchContacts);
 router.get('/dashboard/community/contacts/at', requireAuth, require('../controllers/community').contactsAtAddress);

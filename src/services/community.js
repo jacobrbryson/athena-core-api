@@ -580,8 +580,17 @@ function pickLocal(items, places, limit = 12) {
 	const out = [];
 	for (const item of items || []) {
 		const text = `${item.title || ""} ${item.summary || ""}`;
-		const hit = terms.find((t) => t.re.test(text));
-		if (hit) out.push({ ...item, matched: hit.term });
+		// A town's own site rarely names the town in a headline ("Notice of
+		// Cancellation: Planning and Zoning Board" on troutmannc.gov), so the
+		// source counts too. Host matching needs five letters: "ely" is in
+		// lonelyplanet.com.
+		const host = String(item.host || "").toLowerCase();
+		const fromHere = (t) =>
+			t.re.test(String(item.source || "")) ||
+			(t.term.length >= 5 && host.includes(t.term.toLowerCase().replace(/[^a-z0-9]/g, "")));
+		const named = terms.find((t) => t.re.test(text));
+		const hit = named || terms.find(fromHere);
+		if (hit) out.push({ ...item, matched: hit.term, via: named ? "text" : "source" });
 		if (out.length >= limit) break;
 	}
 	return out;

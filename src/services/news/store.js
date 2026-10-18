@@ -222,6 +222,7 @@ async function recentItems(profileId, { limit = 60, days = 7 } = {}) {
 		slot: row.slot,
 		sourceUuid: row.source_uuid,
 		source: row.label || row.host,
+		host: row.host,
 	}));
 }
 

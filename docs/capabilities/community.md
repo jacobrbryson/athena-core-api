@@ -19,7 +19,9 @@ all of it in mind whenever we talk:
   and notes. I keep watch around every one, all the time: a 911 call reported
   by PulsePoint Respond on your phone, or a severe-weather warning, inside a
   ring reaches you straight away. Any headline in the news pages you have me
-  reading that mentions one of these places or its town shows up as local news.
+  reading that mentions one of these places or its town — or that comes from a
+  local site named for the town, like the town's own news page — shows up as
+  local news.
 - **Neighbors** — kept as households, by their address: one entry per house,
   with an optional name ("The Hendersons"), which of your places it's near, a
   description ("the blue house") and notes (the kids' names, the dog, who has a
@@ -71,7 +73,8 @@ in the next 7 days, active alerts), the map (switch **Map** / **Satellite**)
 beside **Watched Places** and **Nearby People**, then **Local Alerts**, **Local
 Weather** (now, today's high and low, and every three hours — the National
 Weather Service forecast at your home point of interest, or your first watched
-place if none is marked home), **Coming Up Nearby** and **Recent Local
+place if none is marked home; **Forecast & alerts** jumps to the full Weather
+panel), **Coming Up Nearby** and **Recent Local
 Updates**. Every **Manage**, **View all** and **Add** there scrolls down to
 **The detail**, where the lists are edited. Each list has its own **Add** button; every entry has **Edit** and
 **Remove**. **Add a household** starts with the address (**Find** standardizes
