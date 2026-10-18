@@ -25,7 +25,7 @@ If the bridge is offline or the Eufy session expires, the page reports unavailab
 
 ## Limits
 
-The doorbell press and Backyard E30 motion events were received. Motion from the other E30 was not observed after two owner triggers, so its event delivery remains unverified. Stored thumbnails were unavailable in testing. Clip recording is new and has not yet been tested on the real cameras. Kept media stays until someone deletes it; there is no automatic expiry. I cannot stream live video or change device settings from this page. I do not automatically monitor cameras, record on my own, or notify anyone, and I never put camera media into a conversation. Fresh captures may take several seconds to wake a battery camera. Device status can be stale even when an on-demand image works.
+The doorbell press and Backyard E30 motion events were received. Motion from the other E30 was not observed after two owner triggers, so its event delivery remains unverified. Stored thumbnails were unavailable in testing. Clip recording is new and has not yet been tested on the real cameras. Kept media stays until someone deletes it; there is no automatic expiry. I cannot stream live video or change device settings from this page. Each motion, person or doorbell event sends one frame for the sightings log (see `sightings.md`); I don't record clips on my own, I alert only for sighting alerts someone set, and I never put camera images into a conversation. Fresh captures may take several seconds to wake a battery camera. Device status can be stale even when an on-demand image works.
 
 ## Under the hood
 

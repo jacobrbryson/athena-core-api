@@ -73,6 +73,11 @@ const SOURCES = [
 		doc: '`{ "source": "groceries" }` — their shared grocery list: what they still need, and what they ticked off lately (probably at home). Ask before suggesting what to cook or eat, so ideas start from what they have.',
 	},
 	{
+		id: "sightings",
+		household: true,
+		doc: '`{ "source": "sightings", "query": "Wynter" }` — who and what the home security cameras have seen, by name where the cameras know them (people, pets, vehicles; anyone unknown is "stranger"), with when, which camera and where. `query` is the name, "stranger", or "" for everything recent. Ask for "when did you last see…", "has anyone been in the yard", "was the dog out".',
+	},
+	{
 		id: "web",
 		web: true,
 		doc: '`{ "source": "web", "query": "..." }` — a Google search you write. Write it the way a person would type it, specific to what they mean ("Westlake OH high school football score Friday", not "the game"). It may name places, times, businesses and public figures; NEVER a family member\'s or private person\'s name, anything about health, or anything from their email or messages — those stay here.',
@@ -94,7 +99,9 @@ async function available(profileId, { audience } = {}) {
 			.then((p) => !!p?.enabled)
 			.catch(() => false),
 	]);
-	return SOURCES.filter((s) => (s.provider ? linked.has(s.provider) : s.heart ? heartOn : true)).map((s) => s.id);
+	// The cameras are the household's, read only by the adults authorized for Property → Security.
+	const household = new Set((process.env.EUFY_AUTHORIZED_PROFILE_IDS || "").split(",").map((v) => v.trim()).filter(Boolean)).has(String(profileId));
+	return SOURCES.filter((s) => (s.provider ? linked.has(s.provider) : s.heart ? heartOn : s.household ? household : true)).map((s) => s.id);
 }
 
 /** The prompt block that tells her `needs` exists. Null when nothing is available. */
@@ -142,6 +149,9 @@ function clean(raw, ids, done = new Set()) {
 		if (need.source === "weather") {
 			n.place = typeof need.place === "string" && need.place.trim() ? need.place.trim().slice(0, 200) : "home";
 			n.when = typeof need.when === "string" ? need.when.trim().slice(0, 40) : null;
+		}
+		if (need.source === "sightings") {
+			n.query = typeof need.query === "string" ? need.query.trim().slice(0, 60) : "";
 		}
 		if (need.source === "web") {
 			n.query = typeof need.query === "string" ? need.query.trim().slice(0, 300) : "";
@@ -286,6 +296,8 @@ async function fetch(profileId, needs, { audience, timeZone, onRead } = {}) {
 						return { block: await heartRate.buildContext(profileId, { message: "", audience, force: true }) };
 					case "weather":
 						return { block: await weatherBlock(profileId, need, { timeZone }) };
+					case "sightings":
+						return { block: await require("./sightings").chatBlock(need.query, { timeZone }) };
 					case "web": {
 						if (!(await mayLeave(profileId, need.query))) {
 							console.info("[needs] web query held back as private");

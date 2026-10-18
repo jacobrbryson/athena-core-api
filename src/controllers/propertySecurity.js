@@ -2,6 +2,7 @@ const pool = require('../helpers/db');
 const { requireAdultActor } = require('../helpers/actor');
 const { ProxyAgent } = require('undici');
 const media = require('../services/securityMedia');
+const sightings = require('../services/sightings');
 
 const BASE = '/api/v1/projects/property/security';
 const configured = () => Boolean(process.env.EUFY_BRIDGE_URL && process.env.EUFY_BRIDGE_TOKEN);
@@ -154,4 +155,50 @@ async function removeMedia(req, res) {
     return res.status(503).json({ message: 'Saved camera media is unavailable.' });
   }
 }
-module.exports = { list, snapshot, clip, listMedia, getMedia, updateMedia, removeMedia, BASE };
+// --- Sightings: gallery, zones, alert rules and the log (services/sightings.js) ---
+
+/** Wrap a sightings call: authorized adult first, service errors with a status are the person's to read. */
+const guarded = fn => async (req, res) => {
+  const actor = await actorFor(req, res);
+  if (!actor) return;
+  try {
+    return await fn(req, res, actor);
+  } catch (error) {
+    if (error.status && error.status < 500) return res.status(error.status).json({ message: error.message });
+    console.warn('[security] sightings call failed', { message: error?.message });
+    return res.status(503).json({ message: 'Sightings are unavailable right now.' });
+  }
+};
+const sightingsOverview = guarded(async (req, res, actor) => {
+  const [subjects, zones, rules, recent] = await Promise.all([sightings.listSubjects(), sightings.listZones(), sightings.listRules(actor.profileId), sightings.list({ limit: 60 })]);
+  return res.json({ subjects, zones, rules, sightings: recent, retentionDays: sightings.RETENTION_DAYS });
+});
+const createSubject = guarded(async (req, res, actor) => res.status(201).json({ id: await sightings.createSubject(actor.profileId, req.body || {}) }));
+const updateSubject = guarded(async (req, res) => { await sightings.updateSubject(req.params.id, req.body || {}); return res.status(204).end(); });
+const removeSubject = guarded(async (req, res, actor) => {
+  await audit(actor, 'eufy_remove_subject');
+  await sightings.removeSubject(req.params.id);
+  return res.status(204).end();
+});
+const addSubjectPhoto = guarded(async (req, res) => {
+  if (!UUID.test(String(req.body?.mediaId || ''))) return res.status(400).json({ message: 'Pick a kept image.' });
+  await sightings.addPhoto(req.params.id, req.body.mediaId);
+  return res.status(204).end();
+});
+const removeSubjectPhoto = guarded(async (req, res) => { await sightings.removePhoto(req.params.id, req.params.mediaId); return res.status(204).end(); });
+const setZones = guarded(async (req, res) => { await sightings.setZones(req.params.serial, req.body?.zones); return res.status(204).end(); });
+const createRule = guarded(async (req, res, actor) => res.status(201).json({ id: await sightings.createRule(actor.profileId, req.body || {}) }));
+const removeRule = guarded(async (req, res, actor) => { await sightings.removeRule(actor.profileId, req.params.id); return res.status(204).end(); });
+const sightingFrame = guarded(async (req, res, actor) => {
+  if (!UUID.test(req.params.id)) return res.status(400).json({ message: 'Invalid sighting id.' });
+  await audit(actor, 'eufy_sighting_frame');
+  const file = await sightings.openFrame(req.params.id);
+  if (!file) return res.status(404).json({ message: 'That frame is gone.' });
+  res.set({ 'Content-Type': 'image/jpeg', 'X-Content-Type-Options': 'nosniff' });
+  const stream = file.createReadStream();
+  stream.on('error', () => { if (!res.headersSent) res.status(404).json({ message: 'That frame is gone.' }); else res.destroy(); });
+  return stream.pipe(res);
+});
+
+module.exports = { list, snapshot, clip, listMedia, getMedia, updateMedia, removeMedia, BASE,
+  sightingsOverview, createSubject, updateSubject, removeSubject, addSubjectPhoto, removeSubjectPhoto, setZones, createRule, removeRule, sightingFrame };

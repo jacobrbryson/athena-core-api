@@ -2,7 +2,7 @@
  * The shape of `needs` in the reply schema (services/needs). Kept apart from
  * needs.js so the prompt builder can name it without loading every connector.
  */
-const SOURCE_IDS = ["calendar", "email", "whoop", "heart_rate", "weather", "groceries", "web"];
+const SOURCE_IDS = ["calendar", "email", "whoop", "heart_rate", "weather", "groceries", "sightings", "web"];
 
 /** Calendar range -> days to read. */
 const RANGES = {

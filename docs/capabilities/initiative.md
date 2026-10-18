@@ -21,6 +21,9 @@ If you turn it on, I'll say something when there's a real reason to:
   time to do something about it.
 - **A thermostat went offline.** If you've linked Google Nest, I tell you
   within moments of a thermostat losing its connection — once per outage.
+- **Someone or something you asked about is on the cameras.** If you've set a
+  sighting alert under Property → Security (say, Wynter outside the back
+  fence), I tell you when the cameras see it — once per occurrence.
 - **Your day is heavier than your night was.** When your Whoop recovery is low
   *and* you've got a full afternoon. Neither of those is worth saying on its
   own; together they usually are.
@@ -141,8 +144,9 @@ each one landed.
   each trigger's own shelf life, and one-per-occurrence dedupe still apply.
 - **Only three things to watch for**, and two of them need Google Calendar
   connected. The third also needs Whoop.
-- **I'm not watching for anything else.** Not your email, not your messages,
-  not what your camera sees. If it isn't in the list, I won't raise it.
+- **I'm not watching for anything else.** Not your email, not your messages.
+  From the home cameras, only the sighting alerts you set yourself. If it
+  isn't in the list, I won't raise it.
 - **I never act on my own.** Speaking first is as far as it goes — anything
   that *changes* something is still a proposal you approve.
 - **Children and Guardians never get this.** It's the account owner's setting.

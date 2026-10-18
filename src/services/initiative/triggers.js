@@ -366,6 +366,57 @@ const TRIGGERS = [
 			);
 		},
 	},
+
+	{
+		id: "sighting_alert",
+		label: "Someone or something seen on the cameras",
+		// Added on the owner's instruction (2026-10-18): "if the dog escapes out
+		// the back fence can Athena send me a push notification". The source is
+		// the household cameras through the sightings log (services/sightings),
+		// and it only ever fires for a rule the person wrote themselves — no
+		// rules, no evaluation. The model saw the frame; whether to speak is the
+		// rule's match, decided in code. Opt-in, mutes, the per-occurrence
+		// dedupe and the quiet-hours hold (the owner chose hold) apply exactly
+		// as for every trigger. The bridge webhook runs this person's pass the
+		// moment a matching sighting lands; the scheduled pass is the backstop.
+		sources: [],
+		urgency: "high",
+		ttlMs: 2 * 60 * MINUTE,
+		describe: "Tell me when someone or something I set an alert for is seen on the cameras.",
+
+		async evaluate(profileId, { now = new Date() } = {}) {
+			const sightings = require("../sightings");
+			const active = await sightings.activeAlerts(profileId, { now });
+			if (!active.length) return null;
+			// The server runs in UTC; say the time in the person's own zone.
+			const [prefRows] = await require("../../helpers/db")
+				.query("SELECT timezone FROM athena_initiative_pref WHERE profile_id = ?", [profileId])
+				.catch(() => [[]]);
+			const timeZone = prefRows[0]?.timezone || undefined;
+			return {
+				// One alert per run of sightings per rule: a dog seen three times in
+				// ten minutes is one occurrence; out again an hour later is another.
+				dedupeKey: `sighting:${createHash("sha1").update(active.map((a) => `${a.rule}@${a.occurrence}`).sort().join("|")).digest("hex")}`,
+				facts: {
+					seen: active.map((a) => ({
+						label: a.latest.label,
+						camera: a.latest.device_name,
+						zone: a.latest.zone,
+						where: a.latest.where_text,
+						at: clockTime(new Date(a.latest.seen_at).toISOString(), timeZone),
+						unsure: a.latest.confidence != null && Number(a.latest.confidence) < 0.6,
+					})),
+				},
+			};
+		},
+
+		brief(f) {
+			const list = f.seen.map((s) =>
+				`${s.label} ${s.unsure ? "may have been " : "was "}seen${s.camera ? ` on the ${s.camera} camera` : ""}` +
+				`${s.where ? `, ${s.where}` : ""}${s.zone ? ` (${s.zone})` : ""} at ${s.at}`).join("; ");
+			return `${list}. They asked to be told. Say it plainly and briefly; if it was marked "may have been", say the camera wasn't sure.`;
+		},
+	},
 ];
 
 const BY_ID = new Map(TRIGGERS.map((t) => [t.id, t]));

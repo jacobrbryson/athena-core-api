@@ -130,6 +130,8 @@ async function maintenance({ dryRun }) {
 	// Grocery list: one read of each Keep list Athena has already seen, so a
 	// tick on it is noticed within a day even when nobody asks about dinner.
 	// Keep never dates items; this read is how "bought" gets a time at all.
+	// Camera sightings and their frames are kept 30 days (owner, 2026-10-18).
+	await step("sightingsPrune", () => require("../services/sightings").prune(), results);
 	await step("keepGroceries", () => require("../services/connectors/googleKeep").observeEveryone(), results);
 	await dreamSteps(results);
 	return results;

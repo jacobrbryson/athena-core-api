@@ -34,6 +34,17 @@ router.get('/property/security/media', security.listMedia);
 router.get('/property/security/media/:id', security.getMedia);
 router.patch('/property/security/media/:id', json, security.updateMedia);
 router.delete('/property/security/media/:id', security.removeMedia);
+// Sightings (docs/capabilities/sightings.md): gallery, camera zones, alert rules, log.
+router.get('/property/security/sightings', security.sightingsOverview);
+router.get('/property/security/sightings/:id/frame', security.sightingFrame);
+router.post('/property/security/subjects', json, security.createSubject);
+router.patch('/property/security/subjects/:id', json, security.updateSubject);
+router.delete('/property/security/subjects/:id', security.removeSubject);
+router.post('/property/security/subjects/:id/photos', json, security.addSubjectPhoto);
+router.delete('/property/security/subjects/:id/photos/:mediaId', security.removeSubjectPhoto);
+router.put('/property/security/zones/:serial', json, security.setZones);
+router.post('/property/security/rules', json, security.createRule);
+router.delete('/property/security/rules/:id', security.removeRule);
 // Vehicle photos are one 1.5 MB JPEG data URL; the same 8 MB parser covers them.
 const vehicles = require('../controllers/propertyVehicles');
 router.get('/property/vehicles', vehicles.list);

@@ -1,5 +1,7 @@
 # Capability ledger
 
+- 2026-10-18 — Camera sightings: each motion/person/doorbell event sends one frame; Athena logs who and what was there (gallery names, else "stranger", "deer", "white pickup"), with camera, where and zone, and answers "when did you last see Wynter?". Alerts like "Wynter outside the back fence" go through initiative (held in quiet hours). Kept 30 days. Needs migration 0083, a bridge rebuild with ATHENA_EVENTS_URL, and deploys; recognition untested on real frames — `sightings.md` (status: partial)
+
 - 2026-10-18 — Property → Security redesign: status tiles, camera cards with the latest image, a filterable events list, and a Kept clips & images strip. Every fresh image and every 15-second clip recorded on request is now kept in the private bucket `athena-security-media`; star, enlarge, play or delete them. Clips are new and untested on the real cameras — `eufy-security.md` (status: partial)
 
 - 2026-10-18 — Property → Security is live for the owner's HomeBase 2, T8213 doorbell and two E30s through a private Tailscale bridge. Doorbell and Backyard motion events arrived; fresh images worked separately from all three cameras through Companion. Stored thumbnails, the other E30's motion event, streams and controls remain unverified or unavailable — `eufy-security.md` (status: partial)
