@@ -54,7 +54,7 @@ Open the Health page from the sidebar (or Dashboards in the bottom bar on a phon
   "Save to favorites" box). "Today" lists what's logged: the star adds or
   removes a favorite, the pencil corrects an entry, ✕ removes it. The arrows
   beside the date page back through past days (never ahead of today) to fix,
-  remove or add to them; **New record** offers the same Tell Athena, Take a picture and Manual entry choices, logged to the day shown. Entries from
+  remove or add to them; **New record** opens the same menu — favorites, Tell Athena, Take a picture and Manual entry — logged to the day shown. Entries from
   a photo are tagged "Photo estimate", barcode lookups "Barcode", and what you
   told me "Told Athena".
 - **Targets:** the Nutrition card → "Targets" (or "Set a target" under

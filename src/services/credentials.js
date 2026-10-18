@@ -29,7 +29,10 @@ const { withTransaction } = require("./parent-helpers");
  * Every provider a credential may be stored for: the OAuth connectors the
  * registry can link, plus "openai", which is an api_key the user pastes and
  * so has no registry descriptor, and "vesync", a password login the owner
- * adds by script (connectors/vesync.js) because VeSync offers no OAuth.
+ * adds by script (connectors/vesync.js) because VeSync offers no OAuth, and
+ * "google_keep", the master token for Athena's own Google account that the
+ * owner links by script (scripts/addKeepLogin.js) because consumer Keep has
+ * no API at all.
  *
  * Derived from the registry rather than repeated here. Listing them by hand
  * is what broke GET /integrations: gmail, jira and slack were added to the
@@ -37,7 +40,7 @@ const { withTransaction } = require("./parent-helpers");
  * the missing names turned the whole Integrations panel into a 400.
  */
 const { PROVIDER_IDS } = require("./connectors/registry");
-const PROVIDERS = new Set([...PROVIDER_IDS, "openai", "vesync"]);
+const PROVIDERS = new Set([...PROVIDER_IDS, "openai", "vesync", "google_keep"]);
 const KINDS = new Set(["oauth2", "api_key"]);
 
 const STATUS_ACTIVE = "active";

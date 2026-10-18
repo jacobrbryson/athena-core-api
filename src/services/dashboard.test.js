@@ -8,7 +8,10 @@ jest.mock('./familyChores', () => ({ getChores: jest.fn() }));
 jest.mock('./connectors/work', () => ({ jira: jest.fn(), slack: jest.fn() }));
 jest.mock('./connectors/context', () => ({ technicalDetail: () => null }));
 jest.mock('./emailTriage', () => ({ summary: jest.fn() }));
+// Unmocked, it loads the real MySQL pool, whose idle timer keeps Jest from exiting.
+jest.mock('./emailSync', () => ({ syncIfStale: jest.fn().mockResolvedValue(undefined) }));
 jest.mock('./familyHealth', () => ({ activeFor: jest.fn().mockResolvedValue([]) }));
+jest.mock('./connectors/googleKeep', () => ({ groceries: jest.fn() }));
 const credentials = require('./credentials');
 const consent = require('./consent');
 const calendar = require('./connectors/googleCalendar');
@@ -19,6 +22,7 @@ const integration = require('./integration');
 const chores = require('./familyChores');
 const emailTriage = require('./emailTriage');
 const familyHealth = require('./familyHealth');
+const keep = require('./connectors/googleKeep');
 const { getDashboard } = require('./dashboard');
 beforeEach(() => {
   jest.resetAllMocks();
@@ -34,6 +38,23 @@ test('unlinked sources remain explicit and make no provider calls', async () => 
   expect(result.emailTriage.status).toBe('not_connected');
   expect(calendar.collectEvents).not.toHaveBeenCalled();
   expect(emailTriage.summary).not.toHaveBeenCalled();
+});
+test('the grocery list is read only when Keep is linked, and the regulars are only counted', async () => {
+  let result = await getDashboard(42, {});
+  expect(result.groceries.status).toBe('not_connected');
+  expect(keep.groceries).not.toHaveBeenCalled();
+  credentials.list.mockResolvedValue([{ provider: 'google_keep', status: 'active' }]);
+  keep.groceries.mockResolvedValue({
+    lists: [{ title: 'Groceries', toBuy: ['Turkey'], recentlyBought: [], usuallyBuys: ['Eggs', 'Milk'] }],
+    otherTitles: ['Christmas gifts'],
+  });
+  result = await getDashboard(42, {});
+  expect(result.groceries).toMatchObject({
+    status: 'ready',
+    data: { lists: [{ title: 'Groceries', toBuy: ['Turkey'], usualCount: 2 }], appUrl: 'https://keep.google.com/' },
+  });
+  // Other lists shared with Athena never reach the page.
+  expect(JSON.stringify(result.groceries)).not.toContain('Christmas');
 });
 test('health data is not read when consent is missing', async () => {
   credentials.list.mockResolvedValue([{ provider: 'whoop', status: 'active' }]);

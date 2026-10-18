@@ -8,3 +8,6 @@ db/reset-campaign.js
 db/issue-guardian-token.js
 # Nightly self-review output (also stored in self_review_report)
 reports/
+
+# Keep helper's Python env (scripts/keep)
+scripts/keep/.venv/

@@ -127,6 +127,10 @@ async function maintenance({ dryRun }) {
 	// more than a day old even when nobody opens it; two weeks of checks kept.
 	await step("siteChecks", () => require("../services/siteChecks").checkEveryone(), results);
 	await step("siteChecksPrune", async () => ({ pruned: await require("../services/siteChecks").prune(14) }), results);
+	// Grocery list: one read of each Keep list Athena has already seen, so a
+	// tick on it is noticed within a day even when nobody asks about dinner.
+	// Keep never dates items; this read is how "bought" gets a time at all.
+	await step("keepGroceries", () => require("../services/connectors/googleKeep").observeEveryone(), results);
 	await dreamSteps(results);
 	return results;
 }

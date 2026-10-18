@@ -12,6 +12,7 @@ const work = require('./connectors/work');
 const emailTriage = require('./emailTriage');
 const emailSync = require('./emailSync');
 const familyHealth = require('./familyHealth');
+const keep = require('./connectors/googleKeep');
 
 const { technicalDetail } = require('./connectors/context');
 
@@ -69,7 +70,7 @@ async function getDashboard(profileId, user) {
     if (health && !healthConsent) return section('consent_required');
     return read(fn);
   }
-  const [calendarData, recovery, sleep, strain, body, familyChores, jira, slack, emailTriageData, familyHealthData] = await Promise.all([
+  const [calendarData, recovery, sleep, strain, body, familyChores, jira, slack, emailTriageData, familyHealthData, groceries] = await Promise.all([
     provider('google_calendar', async () => {
       const result = await calendar.collectEvents(profileId, { days: 7, maxResults: 25 });
       const timeZone = calendar.displayTimeZone(result.calendars);
@@ -151,8 +152,18 @@ async function getDashboard(profileId, user) {
     // as familyChores' memories fallback, so it is always 'ready' unless the
     // read itself fails.
     read(async () => ({ active: await familyHealth.activeFor(profileId) })),
+    // The shared Keep grocery list (connectors/googleKeep). The page shows what
+    // the family is out of; the regulars are only counted, since a years-old
+    // list has hundreds and they are background for meal ideas, not a to-do.
+    provider('google_keep', async () => {
+      const { lists } = await keep.groceries(profileId);
+      return {
+        lists: lists.map(l => ({ title: l.title, toBuy: l.toBuy.slice(0, 50), usualCount: (l.usuallyBuys || []).length })),
+        appUrl: 'https://keep.google.com/',
+      };
+    }),
   ]);
-  const result = { calendar: calendarData, recovery, sleep, strain, body, familyChores, jira, slack, emailTriage: emailTriageData, familyHealth: familyHealthData };
+  const result = { calendar: calendarData, recovery, sleep, strain, body, familyChores, jira, slack, emailTriage: emailTriageData, familyHealth: familyHealthData, groceries };
   for (const [id, entry] of snapshots) if (Date.now() - entry.at >= CACHE_TTL_MS) snapshots.delete(id);
   if (snapshots.size >= 128) snapshots.delete(snapshots.keys().next().value);
   snapshots.set(profileId, { at: Date.now(), data: result });

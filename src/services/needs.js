@@ -68,6 +68,11 @@ const SOURCES = [
 		doc: '`{ "source": "weather", "place": "Clague Park, Westlake OH" | "home", "when": "2026-10-10T17:30:00-04:00" }` — the forecast at a place and time, up to a week out. Take `place` and `when` from their calendar event when the question is about one; "home" is their home. Never search the web for weather.',
 	},
 	{
+		id: "groceries",
+		provider: "google_keep",
+		doc: '`{ "source": "groceries" }` — their shared grocery list: what they still need, and what they ticked off lately (probably at home). Ask before suggesting what to cook or eat, so ideas start from what they have.',
+	},
+	{
 		id: "web",
 		web: true,
 		doc: '`{ "source": "web", "query": "..." }` — a Google search you write. Write it the way a person would type it, specific to what they mean ("Westlake OH high school football score Friday", not "the game"). It may name places, times, businesses and public figures; NEVER a family member\'s or private person\'s name, anything about health, or anything from their email or messages — those stay here.',
@@ -268,6 +273,7 @@ async function fetch(profileId, needs, { audience, timeZone, onRead } = {}) {
 						};
 					case "email":
 					case "whoop":
+					case "groceries":
 						return {
 							block: await connectorContext.buildContext(profileId, {
 								message: "",
