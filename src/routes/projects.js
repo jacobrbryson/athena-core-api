@@ -26,6 +26,14 @@ router.post('/property/issues/:uuid/notes', json, issues.addNote);
 router.delete('/property/issues/:uuid/notes/:noteUuid', issues.removeNote);
 // Google Nest thermostats, read-only (docs/capabilities/nest.md).
 router.get('/property/thermostats', require('../controllers/propertyThermostats').list);
+const security = require('../controllers/propertySecurity');
+router.get('/property/security', security.list);
+router.get('/property/security/devices/:serial/snapshot', security.snapshot);
+router.post('/property/security/devices/:serial/clip', json, security.clip);
+router.get('/property/security/media', security.listMedia);
+router.get('/property/security/media/:id', security.getMedia);
+router.patch('/property/security/media/:id', json, security.updateMedia);
+router.delete('/property/security/media/:id', security.removeMedia);
 // Vehicle photos are one 1.5 MB JPEG data URL; the same 8 MB parser covers them.
 const vehicles = require('../controllers/propertyVehicles');
 router.get('/property/vehicles', vehicles.list);

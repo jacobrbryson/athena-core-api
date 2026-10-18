@@ -5,7 +5,7 @@ steps:
     args:
       - "build"
       - "-t"
-      - "$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-core-api:$COMMIT_SHA"
+      - "$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-core-api:$BUILD_ID"
       - "."
 
   # 2. Push the Docker image to Artifact Registry
@@ -13,7 +13,7 @@ steps:
     id: Push
     args:
       - "push"
-      - "$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-core-api:$COMMIT_SHA"
+      - "$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-core-api:$BUILD_ID"
 
   # 3. Deploy the container image to Cloud Run
   - name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
@@ -24,7 +24,7 @@ steps:
       - "deploy"
       - "athena-core-api"
       - "--image"
-      - "$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-core-api:$COMMIT_SHA"
+      - "$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-core-api:$BUILD_ID"
       - "--region"
       - "$_REGION"
       - "--platform"
@@ -35,7 +35,7 @@ steps:
       # --- Secrets: pulled from Secret Manager at deploy time, never baked into the image ---
       # FAMILY_CHORES_PARTNER_SECRET gates the Family Chores partner endpoints
       # (connect / disconnect / suggest-chores). Create it per SECURITY_SETUP.md.
-      - "--update-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest,DB_PASS=DB_PASS:latest,JWT_SECRET=JWT_SECRET:latest,RECAPTCHA_SECRET=RECAPTCHA_SECRET:latest,FAMILY_CHORES_PARTNER_SECRET=FAMILY_CHORES_PARTNER_SECRET:latest"
+      - "--update-secrets=GEMINI_API_KEY=GEMINI_API_KEY:latest,DB_PASS=DB_PASS:latest,JWT_SECRET=JWT_SECRET:latest,RECAPTCHA_SECRET=RECAPTCHA_SECRET:latest,FAMILY_CHORES_PARTNER_SECRET=FAMILY_CHORES_PARTNER_SECRET:latest,TAILSCALE_AUTHKEY=TAILSCALE_AUTHKEY:latest,EUFY_BRIDGE_TOKEN=EUFY_BRIDGE_TOKEN:latest"
 
       # NOTE: ATHENA_ENC_KEYRING is deliberately NOT injected here. It is read
       # at runtime from Secret Manager (src/services/secrets) so the monthly
@@ -50,18 +50,19 @@ steps:
       # needs must be listed here. Anything set out-of-band with `gcloud run
       # services update` is wiped by the next deploy — which is exactly how the
       # OAuth connector callback broke once already.
-      - "--set-env-vars=^|^GCP_PROJECT_ID=$PROJECT_ID|DB_HOST=$_DB_HOST|DB_USER=$_DB_USER|DB_NAME=$_DB_NAME|RECAPTCHA_PROJECT_ID=$_RECAPTCHA_PROJECT_ID|RECAPTCHA_SITE_KEY=$_RECAPTCHA_SITE_KEY|FAMILY_CHORES_ADMIN_ROLES=$_FAMILY_CHORES_ADMIN_ROLES|PUBLIC_API_BASE_URL=$_PUBLIC_API_BASE_URL|OAUTH_GOOGLE_CALLBACK_URL=$_OAUTH_GOOGLE_CALLBACK_URL|INTEGRATION_REDIRECT_ALLOWLIST=$_INTEGRATION_REDIRECT_ALLOWLIST|FAMILY_CHORES_PARTNER_GOOGLE_ID=$_FAMILY_CHORES_PARTNER_GOOGLE_ID|NEST_DEVICE_ACCESS_PROJECT_ID=$_NEST_DEVICE_ACCESS_PROJECT_ID|NEST_PUBSUB_AUDIENCE=$_NEST_PUBSUB_AUDIENCE|NEST_PUBSUB_SERVICE_ACCOUNT=$_NEST_PUBSUB_SERVICE_ACCOUNT"
+      - "--set-env-vars=^|^GCP_PROJECT_ID=$PROJECT_ID|DB_HOST=$_DB_HOST|DB_USER=$_DB_USER|DB_NAME=$_DB_NAME|RECAPTCHA_PROJECT_ID=$_RECAPTCHA_PROJECT_ID|RECAPTCHA_SITE_KEY=$_RECAPTCHA_SITE_KEY|FAMILY_CHORES_ADMIN_ROLES=$_FAMILY_CHORES_ADMIN_ROLES|PUBLIC_API_BASE_URL=$_PUBLIC_API_BASE_URL|OAUTH_GOOGLE_CALLBACK_URL=$_OAUTH_GOOGLE_CALLBACK_URL|INTEGRATION_REDIRECT_ALLOWLIST=$_INTEGRATION_REDIRECT_ALLOWLIST|FAMILY_CHORES_PARTNER_GOOGLE_ID=$_FAMILY_CHORES_PARTNER_GOOGLE_ID|NEST_DEVICE_ACCESS_PROJECT_ID=$_NEST_DEVICE_ACCESS_PROJECT_ID|NEST_PUBSUB_AUDIENCE=$_NEST_PUBSUB_AUDIENCE|NEST_PUBSUB_SERVICE_ACCOUNT=$_NEST_PUBSUB_SERVICE_ACCOUNT|EUFY_BRIDGE_URL=$_EUFY_BRIDGE_URL|EUFY_AUTHORIZED_PROFILE_IDS=$_EUFY_AUTHORIZED_PROFILE_IDS|EUFY_TAILSCALE_HTTP_PROXY=$_EUFY_TAILSCALE_HTTP_PROXY"
+      - "--memory=1Gi"
 
   # 4. Move the Cloud Run JOBS onto the image this build just deployed.
   #
   # The jobs run out of this same repo (src/jobs/*.js), but nothing used to
-  # update them: each was created once with a pinned :$COMMIT_SHA and stayed
+  # update them: each was created once with a pinned old image and stayed
   # there. athena-nightly sat on a 2026-09-12 image for eight days, writing
   # nightly reports out of code that no longer matched the repo — five
   # maintenance steps it never knew about. A job is only as current as its
   # last deploy, so its deploy belongs here and not in anyone's memory.
   #
-  # Do NOT do this by tagging :latest. cloudbuild pushes :$COMMIT_SHA and
+  # Do NOT do this by tagging :latest. cloudbuild pushes :$BUILD_ID and
   # never moves :latest, so a job pinned to :latest would be pinned to
   # nothing (the docs used to suggest exactly that).
   #
@@ -79,10 +80,10 @@ steps:
       - "-c"
       - |
         set -euo pipefail
-        IMAGE="$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-core-api:$COMMIT_SHA"
+        IMAGE="$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-core-api:$BUILD_ID"
         for job in $_JOBS; do
           if gcloud run jobs describe "$$job" --region "$_REGION" >/dev/null 2>&1; then
-            echo "==> $$job -> $COMMIT_SHA"
+            echo "==> $$job -> $BUILD_ID"
             gcloud run jobs update "$$job" --region "$_REGION" --image "$$IMAGE"
           else
             echo "==> $$job is not deployed in this project; skipping"
@@ -91,7 +92,7 @@ steps:
 
 # The final image tag is saved in the Artifact Registry
 images:
-  - "$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-core-api:$COMMIT_SHA"
+  - "$_AR_HOSTNAME/$PROJECT_ID/cloud-run-source-deploy/athena-core-api:$BUILD_ID"
 
 # Substitute variables.
 # Secrets are NOT here — they live in Secret Manager (see SECURITY_SETUP.md).
@@ -141,5 +142,11 @@ substitutions:
   _NEST_PUBSUB_AUDIENCE: "https://athena-proxy-api-12367074465.us-central1.run.app/api/v1/webhooks/nest"
   _NEST_PUBSUB_SERVICE_ACCOUNT: "nest-pubsub-push@athena-476423.iam.gserviceaccount.com"
   _INTEGRATION_REDIRECT_ALLOWLIST: "https://athena-companion-mlkumvppsa-uc.a.run.app,https://athena-companion-12367074465.us-central1.run.app"
+  # Fixed, tailnet-only destination. The bearer token and Tailscale identity
+  # are supplied as Secret Manager secrets; the only authorized adult profile
+  # is the owner's existing numeric profile id.
+  _EUFY_BRIDGE_URL: "https://bt-one.tail91d9bb.ts.net"
+  _EUFY_AUTHORIZED_PROFILE_IDS: "1"
+  _EUFY_TAILSCALE_HTTP_PROXY: "http://127.0.0.1:1055"
 options:
   logging: CLOUD_LOGGING_ONLY
