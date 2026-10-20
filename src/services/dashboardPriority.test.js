@@ -203,7 +203,8 @@ describe("getPriority", () => {
 		expect(prompt).toContain('"assignedOpenIssues": 1');
 		expect(prompt).toContain('"source":');
 		expect(prompt).toContain('"slackMentions": null');
-		expect(prompt).toContain('"nextTimedEventTitle": "Design review"');
+		expect(prompt).not.toContain('Design review');
+		expect(prompt).toContain('"nextTimedEventInMinutes": 30');
 		expect(prompt).not.toContain("a@b.c");
 	});
 
@@ -222,9 +223,26 @@ describe("getPriority", () => {
 		await priority.getPriority(profile, {});
 		const prompt = llm.generateJson.mock.calls[0][0].contents[0].parts[0].text;
 
-		expect(prompt).toContain('"nextTimedEventTitle": "Sprint planning"');
+		expect(prompt).not.toContain('Sprint planning');
 		expect(prompt).toContain('"nextTimedEventInMinutes": 120');
 		expect(prompt).not.toContain("Patrick");
+	});
+
+	it("does not pass an already-started flight to the alert model", async () => {
+		dashboard.cachedDashboard.mockReturnValue({
+			...dashboard.cachedDashboard(),
+			calendar: source("ready", { events: [{ title: "Flight FIN992 Keflavik to Helsinki", start: new Date(Date.now() - 135 * 60_000).toISOString(), end: new Date(Date.now() + 60 * 60_000).toISOString(), allDay: false, shared: true }] }),
+		});
+		llm.generateJson.mockResolvedValue({ data: { alert: null }, model: "test" });
+		await priority.getPriority(profile, {});
+		const prompt = llm.generateJson.mock.calls[0][0].contents[0].parts[0].text;
+		expect(prompt).not.toContain("FIN992");
+		expect(prompt).toContain('"nextTimedEventInMinutes": null');
+	});
+
+	it("drops an invented missed-flight alert even when the model returns one", async () => {
+		llm.generateJson.mockResolvedValue({ data: { alert: { level: "urgent", headline: "Flight FIN992 departed overdue", body: "Your flight started 135 minutes ago. Check your status immediately." } }, model: "test" });
+		expect((await priority.getPriority(profile, {})).alert).toBeNull();
 	});
 
 	it("keeps the signal sheet (the cache key) still as a far-off countdown ticks", async () => {

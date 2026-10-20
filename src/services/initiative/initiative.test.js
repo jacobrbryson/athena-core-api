@@ -373,6 +373,10 @@ describe("evaluateProfile", () => {
 
 describe("calendar_next_up", () => {
 	const trigger = triggers.get("calendar_next_up");
+	test("does not treat a shared calendar flight as this person's travel", async () => {
+		googleCalendar.collectEvents.mockResolvedValue({ events: [event(15, { title: "Cousin's flight to Denver", shared: true, calendar: "Family" })], calendars: [] });
+		expect(await trigger.evaluate(PROFILE)).toBeNull();
+	});
 
 	test("fires inside the 10-25 minute window", async () => {
 		googleCalendar.collectEvents.mockResolvedValue({ events: [event(15)], calendars: [] });

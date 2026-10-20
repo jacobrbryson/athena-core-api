@@ -50,6 +50,7 @@ const projectStore = require("../projects");
 const projectShape = require("../projects/shape");
 const projectEntries = require("../projects/entries");
 const familyChores = require("../familyChores");
+const googleKeep = require("../connectors/googleKeep");
 
 /** A rejection that is the model's fault, not the person's or the server's. */
 function invalid(message) {
@@ -237,6 +238,68 @@ const MAX_EVENT_DAYS = 365;
 const MAX_EVENT_HOURS = 24 * 14;
 
 const ACTIONS = [
+	{
+		id: "update_grocery_list",
+		label: "Update the grocery list",
+		provider: "google_keep",
+		consentType: "action_authority",
+		reversible: true,
+		// A shared household list changes for everyone. Ask the person each time.
+		standing: false,
+		describe: "Add up to ten items to the family's shared Google Keep grocery list in one proposal, or mark one open item bought. Include every item the person asked to add in grocery_items. Propose only when the person asks to change the list; never claim the change happened before approval.",
+		params: {
+			operation: '"add" to put an item on the list (or untick a regular), or "bought" to tick off an open item.',
+			item: "The exact single grocery item for a one-item request or marking it bought. No comma-separated bundle.",
+			grocery_items: "For adding several items, an array of 1-10 exact item names, such as [\"apples\", \"bananas\", \"blueberries\"]. Use instead of item.",
+			list_title: "Exact Keep list title, required only when more than one grocery list is shared.",
+		},
+		async normalize(raw = {}, ctx = {}) {
+			const operation = raw.operation;
+			if (operation !== "add" && operation !== "bought") throw invalid('Choose "add" or "bought" for the grocery item');
+			const batch = Array.isArray(raw.grocery_items) && raw.grocery_items.length > 0;
+			if (raw.grocery_items != null && !Array.isArray(raw.grocery_items)) throw invalid("Add 1-10 grocery items in one request");
+			if (batch && (operation !== "add" || raw.grocery_items.length > 10)) {
+				throw invalid("Add 1-10 grocery items in one request");
+			}
+			const items = (batch ? raw.grocery_items : [raw.item]).map((value) => typeof value === "string" ? value.trim() : "");
+			if (items.some((item) => !item || item.length > 120 || /[,\r\n\x00-\x1f]/.test(item))) throw invalid("Name each grocery item (120 characters at most)");
+			if (new Set(items.map(googleKeep.itemKey)).size !== items.length) throw invalid("Name each grocery item only once");
+			const list = await googleKeep.groceryTarget(ctx.profileId, raw.list_title);
+			if (batch) {
+				const pending = [];
+				const already_on_list = [];
+				for (const item of items) {
+					const matches = list.items.filter((i) => googleKeep.itemKey(i.text) === googleKeep.itemKey(item));
+					(matches.some((i) => !i.checked) ? already_on_list : pending).push(matches[0]?.text || item);
+				}
+				if (!pending.length) throw invalid("Those items are already on the grocery list");
+				const params = { list_id: list.id, list_title: list.title, grocery_items: pending, already_on_list, operation };
+				if (this.summarize(params).length >= 500) throw invalid("Too many long item names for one approval; please split the request");
+				return params;
+			}
+			const item = items[0];
+			const matches = list.items.filter((i) => googleKeep.itemKey(i.text) === googleKeep.itemKey(item));
+			const open = matches.filter((i) => !i.checked);
+			if (operation === "add" && open.length) throw invalid("That item is already on the grocery list");
+			if (operation === "bought" && !open.length) throw invalid("That item is not waiting to be bought");
+			if (operation === "bought" && open.length > 1) throw invalid("Keep has more than one open matching item; please edit it there");
+			// Keep can hold several checked copies of a regular. One approval
+			// reopens one copy; it never creates an eleventh or changes them all.
+			return { list_id: list.id, list_title: list.title, item: (operation === "bought" ? open[0] : matches[0])?.text || item, operation };
+		},
+		summarize(p) {
+			if (p.grocery_items) {
+				const added = p.grocery_items.map((item) => `"${item}"`).join(", ");
+				const present = p.already_on_list?.length ? `; already on list: ${p.already_on_list.map((item) => `"${item}"`).join(", ")}` : "";
+				return `Add ${added} to "${p.list_title}" in Google Keep${present}`;
+			}
+			return (p.operation === "add" ? `Add "${p.item}" to "${p.list_title}" in Google Keep` : `Mark "${p.item}" bought on "${p.list_title}" in Google Keep`).slice(0, 500);
+		},
+		async execute(profileId, params) {
+			if (params.grocery_items) return googleKeep.updateGroceryItems(profileId, params);
+			return googleKeep.updateGroceryItem(profileId, params);
+		},
+	},
 	{
 		id: "create_calendar_event",
 		label: "Add a calendar event",
@@ -1878,6 +1941,8 @@ const BY_ID = new Map([...ACTIONS, ...DIRECT_ACTIONS].map((a) => [a.id, a]));
  * approve. Types follow what normalize() reads.
  */
 const PARAM_TYPES = {
+	operation: { type: "string", enum: ["add", "bought"] },
+	grocery_items: { type: "array", items: { type: "string" } },
 	all_day: { type: "boolean" },
 	// Closed sets, so the model picks a real value instead of inventing one
 	// ("companion-dashboard"). normalize() still checks; this only stops waste.

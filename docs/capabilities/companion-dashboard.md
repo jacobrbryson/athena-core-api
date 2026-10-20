@@ -204,7 +204,11 @@ event for Calendar, open mail, open issues — tap the title to open or fold it
 and the headline to go to the page; I remember which you folded on that
 browser. On a larger screen every card stays open. I don't re-sort them — you asked me not to. What I do read is the counts and
 timings behind each card, to decide whether anything deserves the alert
-banner across the top of the screen; most days nothing does.
+banner across the top of the screen; most days nothing does. My general
+dashboard alerts are heads-ups. Only verified nearby calls or weather warnings
+appear as emergencies near home. A calendar entry never tells me whether a
+flight departed or someone missed it, so I won't raise a flight-status alert
+from it.
 
 The Calendar page lays out the next seven days: how many events, how many
 today and how many of those are done, what's next, and which calendars they
@@ -246,7 +250,10 @@ Dashboards opens a menu of every page the desktop sidebar lists — Dashboard,
 Health, Family, Community, Property, Work and System — with the page you're on
 highlighted. Calendar, Mail, Projects, News and Dreams are tabs of System (with
 Overview and Finance), and the cards on Dashboard open them directly. Your
-name at the bottom of the sidebar — or More on mobile — opens one menu holding
+browser address follows the selected page and tab, so a link to System → Mail
+or Property → Security opens that view directly, and Back returns to the previous
+view. A property link uses that property's ID in the address once it loads.
+Your name at the bottom of the sidebar — or More on mobile — opens one menu holding
 every setting and panel: memories, photos, brain, phone and car, local server,
 actions, initiative, connected apps, voice, and sign out. In Chat, Daily
 briefing opens a compact drawer with an Open full dashboard button.
@@ -352,6 +359,9 @@ in memory and are cleared on sign-in, sign-out, access errors, and updates.
   minutes while visible. Failed reads clear the affected data; old in-flight
   responses cannot overwrite a newer refresh. All movement respects reduced motion.
 - Shell and preserved chat: `../../../companion/src/pages/CompanionConsole.tsx`
+- Page URL mapping: `../../../companion/src/dashboardRoutes.ts`; route entry points:
+  `../../../companion/src/App.tsx`; Property tab paths:
+  `../../../companion/src/components/Property.tsx`.
 - Styling: `../../../companion/src/dashboard.css`
 - Sidebar profile avatar: `../../../companion/src/components/ProfileAvatar.tsx`.
 - Family editor: `../../../companion/src/components/FamilyPersonEditor.tsx`;
@@ -374,7 +384,9 @@ in memory and are cleared on sign-in, sign-out, access errors, and updates.
 - Card order (fixed: health, family, community — owner removed the model
   ranking 2026-09-26 and set the hierarchy 2026-09-27)
   and the model's dashboard alert: `../../src/services/dashboardPriority.js` via
-  `GET /api/v1/dashboard/priority`.
+  `GET /api/v1/dashboard/priority`. Calendar titles are not used as flight
+  status evidence; the model's alerts are heads-ups, while verified nearby
+  incidents and weather supply urgent emergency alerts.
 - Live updates: `rpc: "dashboardUpdated"` from `../../src/websocket/wsServer.js`.
 - Connection status: existing `GET /api/v1/integrations` through the shared client.
 - The supplied sprite sheet is rendered with CSS background positions.

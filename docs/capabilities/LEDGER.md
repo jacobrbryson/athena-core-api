@@ -1,5 +1,18 @@
 # Capability ledger
 
+- 2026-10-20 — Grocery list: Athena can propose up to ten additions in one approval, show items already open, and send the approved changes to Keep together — `google-keep.md` (status: live)
+
+- 2026-10-20 — Grocery list: when Keep contains several checked copies of a regular, adding it reopens one instead of refusing the proposal or creating another copy; an already open copy still prevents a duplicate — `google-keep.md` (status: live)
+
+- 2026-10-20 — Grocery list: Athena can propose adding one item or marking one bought on a shared Google Keep food list. Each change needs a human approval and is audited; the connector rechecks the list before writing — `google-keep.md` (status: live)
+
+- 2026-10-20 — Companion's sidebar pages, System tabs, Health workouts, chat and Property tabs now have direct URLs; Property links use its ID, and browser Back restores the selected view — `companion-dashboard.md` (status: partial)
+
+- 2026-10-20 — Dashboard alert no longer infers a missed or departed flight from a shared calendar entry and workload counts; only verified nearby incidents or weather display as an emergency — `companion-dashboard.md` (status: partial)
+
+- 2026-10-20 — Camera sightings: ten per page with server filters; correct a stranger to a dog; mark multiple known entities in one frame; link a gallery person to an app profile picture by person key — `sightings.md` (status: partial)
+- 2026-10-20 — Calendar initiative: shared-calendar flights no longer trigger the personal starting-soon reminder; calendar wording cannot claim a missed flight — `initiative.md` (status: partial)
+
 - 2026-10-18 — Family → People & pets moved from the page into a side drawer opened by the small Memories link at the bottom of Family Members — `companion-dashboard.md` (status: partial)
 
 - 2026-10-18 — Community watched places: tapping a place in the overview opens its editor; name, kind, address, radius, status, notes, and a chosen picture can be updated without changing the place's identity — `community.md` (status: partial)

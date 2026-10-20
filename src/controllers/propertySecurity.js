@@ -170,11 +170,18 @@ const guarded = fn => async (req, res) => {
   }
 };
 const sightingsOverview = guarded(async (req, res, actor) => {
-  const [subjects, zones, rules, recent] = await Promise.all([sightings.listSubjects(), sightings.listZones(), sightings.listRules(actor.profileId), sightings.list({ limit: 60 })]);
-  return res.json({ subjects, zones, rules, sightings: recent, retentionDays: sightings.RETENTION_DAYS });
+  const people = await sightings.knownPeople(actor.profileId);
+  const [subjects, zones, rules, recent] = await Promise.all([sightings.listSubjects(actor.profileId, people), sightings.listZones(), sightings.listRules(actor.profileId), sightings.page({ filter: req.query.filter, page: req.query.page })]);
+  return res.json({ subjects, people: people.map(({ id, name, photoUrl }) => ({ id, name, hasPhoto: !!photoUrl })), zones, rules, ...recent, retentionDays: sightings.RETENTION_DAYS });
 });
 const createSubject = guarded(async (req, res, actor) => res.status(201).json({ id: await sightings.createSubject(actor.profileId, req.body || {}) }));
 const updateSubject = guarded(async (req, res) => { await sightings.updateSubject(req.params.id, req.body || {}); return res.status(204).end(); });
+const linkSubjectPerson = guarded(async (req, res, actor) => {
+  if (!UUID.test(req.params.id) || (req.body?.factUuid !== null && !UUID.test(String(req.body?.factUuid || '')))) return res.status(400).json({ message: 'Pick a person from your app profile.' });
+  await audit(actor, 'eufy_link_sighting_person');
+  await sightings.linkPerson(actor.profileId, req.params.id, req.body.factUuid);
+  return res.status(204).end();
+});
 const removeSubject = guarded(async (req, res, actor) => {
   await audit(actor, 'eufy_remove_subject');
   await sightings.removeSubject(req.params.id);
@@ -197,6 +204,11 @@ const teachSighting = guarded(async (req, res, actor) => {
   await audit(actor, 'eufy_teach_sighting');
   return res.json(await sightings.teachFromSighting(actor.profileId, req.params.id, req.body || {}));
 });
+const addSightingEntity = guarded(async (req, res, actor) => {
+  if (!UUID.test(req.params.id) || !UUID.test(String(req.body?.subjectId || ''))) return res.status(400).json({ message: 'Pick a known person or animal.' });
+  await audit(actor, 'eufy_add_sighting_entity');
+  return res.status(201).json(await sightings.addEntityFromSighting(req.params.id, req.body.subjectId));
+});
 const sightingFrame = guarded(async (req, res, actor) => {
   if (!UUID.test(req.params.id)) return res.status(400).json({ message: 'Invalid sighting id.' });
   await audit(actor, 'eufy_sighting_frame');
@@ -209,4 +221,4 @@ const sightingFrame = guarded(async (req, res, actor) => {
 });
 
 module.exports = { list, snapshot, clip, listMedia, getMedia, updateMedia, removeMedia, BASE,
-  sightingsOverview, createSubject, updateSubject, removeSubject, addSubjectPhoto, removeSubjectPhoto, setZones, createRule, removeRule, sightingFrame, teachSighting };
+  sightingsOverview, createSubject, updateSubject, linkSubjectPerson, removeSubject, addSubjectPhoto, removeSubjectPhoto, setZones, createRule, removeRule, sightingFrame, teachSighting, addSightingEntity };

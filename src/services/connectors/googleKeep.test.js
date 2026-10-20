@@ -1,6 +1,8 @@
 jest.mock("../credentials", () => ({ get: jest.fn(), markNeedsReauth: jest.fn() }));
 jest.mock("../../helpers/db", () => ({ query: jest.fn() }));
 
+const { EventEmitter } = require("events");
+const https = require("https");
 const pool = require("../../helpers/db");
 const keep = require("./googleKeep");
 
@@ -37,6 +39,72 @@ describe("googleKeep", () => {
 				],
 			},
 		]);
+	});
+
+	it("builds one Keep node for a new item without touching any other list", () => {
+		const list = { id: "G", serverId: "server-G", type: "LIST", title: "Groceries", timestamps: ts("2026-10-18T12:00:00.000Z") };
+		const other = { id: "X", type: "LIST_ITEM", parentId: "Other", text: "bananas", checked: false };
+		const node = keep.groceryItemNode([list, other], list, "bananas", "add");
+		expect(node).toMatchObject({ kind: "notes#node", type: "LIST_ITEM", parentId: "G", parentServerId: "server-G", text: "bananas", checked: false });
+		expect(node.id).toMatch(/^[0-9a-f]+\.[0-9a-f]{16}$/);
+		expect(node.timestamps).toMatchObject({ kind: "notes#timestamps", created: expect.any(String), updated: expect.any(String) });
+		expect(node.nodeSettings.newListItemPlacement).toBe("BOTTOM");
+	});
+
+	it("unticks a checked regular or ticks an open item, preserving Keep IDs and settings", () => {
+		const list = { id: "G", serverId: "server-G", type: "LIST", title: "Groceries", timestamps: ts("2026-10-18T12:00:00.000Z") };
+		const item = { id: "I", serverId: "server-I", parentId: "G", parentServerId: "server-G", type: "LIST_ITEM", text: "Eggs", checked: true, sortValue: "42", timestamps: ts("1970-01-01T00:00:00.002Z"), nodeSettings: { graveyardState: "EXPANDED" }, annotationsGroup: { kind: "notes#annotationsGroup" } };
+		const added = keep.groceryItemNode([list, item], list, "eggs", "add");
+		expect(added).toMatchObject({ id: "I", serverId: "server-I", parentServerId: "server-G", checked: false, text: "Eggs", nodeSettings: item.nodeSettings });
+		const bought = keep.groceryItemNode([list, { ...item, checked: false }], list, "eggs", "bought");
+		expect(bought).toMatchObject({ id: "I", checked: true, text: "Eggs" });
+		expect(() => keep.groceryItemNode([list, { ...item, checked: false }], list, "Eggs", "add")).toThrow(/already/);
+		expect(() => keep.groceryItemNode([list, item], list, "Eggs", "bought")).toThrow(/not waiting/);
+	});
+
+	it("reopens only the topmost of many checked copies and refuses open duplicates", () => {
+		const list = { id: "G", serverId: "server-G", type: "LIST", title: "Groceries" };
+		const item = { id: "I", parentId: "G", type: "LIST_ITEM", text: "Apples", checked: true, sortValue: "10", timestamps: ts("2026-10-18T12:00:00.000Z") };
+		const copies = [item, { ...item, id: "I2", sortValue: "30" }, { ...item, id: "I3", sortValue: "20" }];
+		expect(keep.groceryItemNode(copies, list, "apples", "add")).toMatchObject({ id: "I2", checked: false });
+		expect(copies.every((n) => n.checked)).toBe(true);
+		expect(() => keep.groceryItemNode([...copies, { ...item, id: "I4", checked: false }], list, "apples", "add")).toThrow(/already on/);
+		expect(() => keep.groceryItemNode([{ ...item, checked: false }, { ...item, id: "I4", checked: false }], list, "apples", "bought")).toThrow(/more than one open/);
+		expect(() => keep.groceryItemNode([], { ...list, title: "Christmas gifts" }, "Eggs", "add")).toThrow(/unavailable/);
+	});
+
+	it("prepares a whole batch before writing and gives new items distinct positions", () => {
+		const list = { id: "G", serverId: "server-G", type: "LIST", title: "Groceries" };
+		const apples = { id: "A", parentId: "G", type: "LIST_ITEM", text: "Apples", checked: true, sortValue: "10", timestamps: ts("2026-10-18T12:00:00.000Z") };
+		const changes = keep.groceryItemNodes([list, apples], list, ["apples", "bananas", "blueberries"]);
+		expect(changes.map((node) => [node.text, node.checked])).toEqual([["Apples", false], ["bananas", false], ["blueberries", false]]);
+		expect(new Set(changes.map((node) => node.id)).size).toBe(3);
+		expect(Number(changes[2].sortValue)).toBeGreaterThan(Number(changes[1].sortValue));
+		expect(() => keep.groceryItemNodes([list, { ...apples, checked: false }], list, ["bananas", "apples", "blueberries"])).toThrow(/already on/);
+	});
+
+	it("sends all item writes once with the read version even when Keep paginates", async () => {
+		const sent = [];
+		const replies = [
+			{ nodes: [{ id: "new" }], toVersion: "v2", truncated: true },
+			{ nodes: [{ id: "other" }], toVersion: "v3", truncated: false },
+		];
+		const request = jest.spyOn(https, "request").mockImplementation((_url, _options, callback) => {
+			const req = new EventEmitter();
+			req.end = (body) => {
+				sent.push(JSON.parse(body));
+				const res = new EventEmitter();
+				res.statusCode = 200;
+				callback(res);
+				process.nextTick(() => { res.emit("data", Buffer.from(JSON.stringify(replies.shift()))); res.emit("end"); });
+			};
+			return req;
+		});
+		try {
+			const out = await keep.syncAll("session", { targetVersion: "v1", writeNodes: [{ id: "apples" }, { id: "bananas" }, { id: "blueberries" }], withVersion: true });
+			expect(sent.map((s) => [s.targetVersion, s.nodes])).toEqual([["v1", [{ id: "apples" }, { id: "bananas" }, { id: "blueberries" }]], ["v2", []]]);
+			expect(out).toEqual({ nodes: [{ id: "new" }, { id: "other" }], version: "v3" });
+		} finally { request.mockRestore(); }
 	});
 
 	it("derives the same Android id as the Python link helper", () => {

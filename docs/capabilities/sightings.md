@@ -31,17 +31,21 @@ until quiet hours end.
 
 ## Where to find it
 
-The left menu → Property → Security → the Sightings card. **Log** lists recent
-sightings and shows each frame. Every unnamed row ("stranger", "unknown dog",
-"white pickup") has a **This is…** button: pick someone from the gallery of the
-same kind, or add a new name (and an optional description). That frame is kept
+The left menu → Property → Security → the Sightings card. **Log** shows ten
+sightings per page, with older pages available, and shows each frame. Every unnamed row ("stranger", "unknown dog",
+"white pickup") has a **This is…** button: correct its kind, pick someone from
+the gallery, or add a new name (and an optional description). That frame is kept
 as a starred image and becomes one of their reference photos — unless they
 already have three, in which case the row still takes the name and I say the
 photo wasn't added. Other unnamed sightings on the same camera around then are
-listed to tick if they're the same one; nothing else is renamed. **Gallery**
+listed to tick if they're the same one; nothing else is renamed. **Add another…**
+records a second known person, pet, or vehicle in the same frame, so you can
+mark both Dexter and Wynter. **Gallery**
 adds names: give a name, kind and short description, then add reference photos
 from kept images (take a fresh image while they're in view first, or use
-**This is…** on a sighting). **Alerts & zones** sets alerts and names the areas
+**This is…** on a sighting). For a known person, you can explicitly link their
+gallery entry to a person in your app profile; their profile picture then shows
+beside their sightings when available. **Alerts & zones** sets alerts and names the areas
 each camera sees.
 
 ## When it doesn't work
@@ -77,6 +81,8 @@ later. Motion frames are not kept unless something was seen in them.
 - Ingress: proxy `POST /api/v1/webhooks/eufy` → core `POST /webhooks/eufy` (`src/controllers/eufyEvents.js`).
 - Service: `src/services/sightings.js` — gallery, zones, identification (task `vision`), log, rules, 30-day prune (nightly `sightingsPrune`).
 - This is…: `POST /projects/property/security/sightings/:id/teach` → `teachFromSighting` — copies the frame into `securityMedia.save` + `addPhoto` (stars it), renames that row and any `alsoIds` (refused if from the same frame); audited `eufy_teach_sighting`.
+- Paging and multiple entities: `GET /projects/property/security/sightings?page=&filter=`; `POST /projects/property/security/sightings/:id/entities` creates another row for the same frame, audited `eufy_add_sighting_entity`.
+- Person pictures: `PUT /projects/property/security/subjects/:id/person` links a gallery person to one of the caller's `user_memory` person/family UUIDs; `familyPeople.overview()` supplies their private portrait or linked contact photo. Migration `0086_sighting_person_link`.
 - Alerts: initiative trigger `sighting_alert` (`src/services/initiative/triggers.js`).
 - Chat: the `sightings` need (`src/services/needs.js`), adults in `EUFY_AUTHORIZED_PROFILE_IDS` only.
 - Tables (migration 0083): `athena_sighting_subject`, `athena_sighting_subject_photo`, `athena_camera_zone`, `athena_sighting`, `athena_sighting_rule`. Frames in `gs://athena-security-media/sightings/`.

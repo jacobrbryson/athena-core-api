@@ -50,8 +50,44 @@ const clip = (v, n) => (v == null ? null : String(v).trim().slice(0, n) || null)
 // Gallery
 // ---------------------------------------------------------------------------
 
-async function listSubjects() {
+async function knownPeople(profileId) {
+	const [facts] = await pool.query(`SELECT uuid, memory_key FROM user_memory
+		WHERE profile_id = ? AND deleted_at IS NULL AND category IN ('person', 'family') ORDER BY memory_key`, [profileId]);
+	const familyPeople = require("./familyPeople");
+	const people = await familyPeople.overview(profileId).catch((error) => {
+		console.warn("[sightings] person pictures unavailable", { message: error?.message });
+		return { links: [], photos: {} };
+	});
+	const contactPhotos = new Map((people.links || []).map((link) => [link.factUuid, link.card?.photoUrl || null]));
+	return facts.map((fact) => ({ id: fact.uuid, name: fact.memory_key,
+		photoUrl: people.photos?.[fact.uuid] || contactPhotos.get(fact.uuid) || null }));
+}
+
+async function linkPerson(profileId, subjectUuid, factUuid) {
+	const subject = await subjectRow(subjectUuid);
+	if (subject.kind !== "person") throw bad("Only people can link to a person profile.");
+	if (factUuid === null) {
+		await pool.query("DELETE FROM athena_sighting_person_link WHERE profile_id = ? AND subject_id = ?", [profileId, subject.id]);
+		return;
+	}
+	const [facts] = await pool.query(`SELECT uuid FROM user_memory WHERE profile_id = ? AND uuid = ?
+		AND deleted_at IS NULL AND category IN ('person', 'family')`, [profileId, factUuid]);
+	if (!facts.length) throw bad("That person is not in your app profile.", 404);
+	try {
+		await pool.query(`INSERT INTO athena_sighting_person_link (profile_id, subject_id, fact_uuid) VALUES (?, ?, ?)
+			ON DUPLICATE KEY UPDATE fact_uuid = VALUES(fact_uuid)`, [profileId, subject.id, factUuid]);
+	} catch (err) {
+		if (err.code === "ER_DUP_ENTRY") throw bad("That app person is already linked to another gallery entry.", 409);
+		throw err;
+	}
+}
+
+async function listSubjects(profileId = null, peopleForProfile = null) {
 	const [subjects] = await pool.query("SELECT * FROM athena_sighting_subject ORDER BY kind, name");
+	const [links] = profileId == null ? [[]] : await pool.query("SELECT subject_id, fact_uuid FROM athena_sighting_person_link WHERE profile_id = ?", [profileId]);
+	const people = profileId == null ? [] : peopleForProfile || await knownPeople(profileId);
+	const linked = new Map(links.map((r) => [Number(r.subject_id), r.fact_uuid]));
+	const byFact = new Map(people.map((p) => [p.id, p]));
 	const [photos] = await pool.query("SELECT subject_id, media_uuid FROM athena_sighting_subject_photo ORDER BY added_at");
 	const [last] = await pool.query(
 		`SELECT s.subject_id, s.seen_at, s.device_name, s.where_text FROM athena_sighting s
@@ -65,6 +101,8 @@ async function listSubjects() {
 			id: s.uuid,
 			name: s.name,
 			kind: s.kind,
+			personFactUuid: byFact.has(linked.get(Number(s.id))) ? linked.get(Number(s.id)) : null,
+			profilePhotoUrl: byFact.get(linked.get(Number(s.id)))?.photoUrl || null,
 			description: s.description,
 			photos: photos.filter((p) => Number(p.subject_id) === Number(s.id)).map((p) => p.media_uuid),
 			lastSeen: l ? { at: new Date(l.seen_at).toISOString(), camera: l.device_name, where: l.where_text } : null,
@@ -118,6 +156,7 @@ async function removeSubject(uuid) {
 	await pool.query("DELETE FROM athena_sighting WHERE subject_id = ?", [row.id]);
 	await pool.query("DELETE FROM athena_sighting_rule WHERE subject_id = ?", [row.id]);
 	await pool.query("DELETE FROM athena_sighting_subject_photo WHERE subject_id = ?", [row.id]);
+	await pool.query("DELETE FROM athena_sighting_person_link WHERE subject_id = ?", [row.id]);
 	await pool.query("DELETE FROM athena_sighting_subject WHERE id = ?", [row.id]);
 	photoCache.clear();
 }
@@ -338,15 +377,31 @@ const shape = (r) => ({
 	hasFrame: !!r.frame_uri,
 });
 
-async function list({ label = null, limit = 50 } = {}) {
+async function list({ label = null, limit = 50, offset = 0, subjectId = null } = {}) {
 	const lim = Math.min(Math.max(Number(limit) || 50, 1), 200);
+	const skip = Math.max(0, Math.min(Number(offset) || 0, 100000));
+	const where = subjectId ? "WHERE j.uuid = ?" : label ? "WHERE s.label = ?" : "";
+	const args = subjectId ? [subjectId] : label ? [label] : [];
 	const [rows] = await pool.query(
 		`SELECT s.*, j.uuid AS subject_uuid FROM athena_sighting s
 		 LEFT JOIN athena_sighting_subject j ON j.id = s.subject_id
-		 ${label ? "WHERE s.label = ?" : ""} ORDER BY s.seen_at DESC, s.id DESC LIMIT ?`,
-		label ? [label, lim] : [lim],
+		 ${where} ORDER BY s.seen_at DESC, s.id DESC LIMIT ? OFFSET ?`,
+		[...args, lim, skip],
 	);
 	return rows.map(shape);
+}
+
+async function page({ filter = "all", page = 1 } = {}) {
+	const current = Math.max(1, Math.min(Number.parseInt(page, 10) || 1, 10000));
+	const label = filter === "stranger" ? "stranger" : null;
+	const subjectId = filter !== "all" && filter !== "stranger" ? String(filter) : null;
+	if (subjectId && !/^[0-9a-f-]{36}$/i.test(subjectId)) throw bad("Invalid sighting filter.");
+	const where = subjectId ? "WHERE j.uuid = ?" : label ? "WHERE s.label = ?" : "";
+	const args = subjectId ? [subjectId] : label ? [label] : [];
+	const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total FROM athena_sighting s LEFT JOIN athena_sighting_subject j ON j.id = s.subject_id ${where}`, args);
+	const pages = Math.max(1, Math.ceil(Number(total) / 10));
+	const safePage = Math.min(current, pages);
+	return { sightings: await list({ label, subjectId, limit: 10, offset: (safePage - 1) * 10 }), page: safePage, pages, total: Number(total) };
 }
 
 function frameFile(uri) {
@@ -398,14 +453,16 @@ async function teachFromSighting(profileId, sightingUuid, body = {}) {
 	let created = false;
 	if (body.subjectId) {
 		subject = await subjectRow(String(body.subjectId));
-		if (subject.kind !== sighting.kind) throw bad(`${subject.name} is in the gallery as ${subject.kind === "animal" ? "an animal" : `a ${subject.kind}`}; this sighting is ${sighting.kind === "animal" ? "an animal" : `a ${sighting.kind}`}.`);
 	} else if (body.newSubject) {
-		const uuid = await createSubject(profileId, { ...body.newSubject, kind: sighting.kind });
+		const kind = body.newSubject.kind || sighting.kind;
+		if (alsoIds.length && kind !== sighting.kind) throw bad("Correct one sighting's kind at a time.");
+		const uuid = await createSubject(profileId, { ...body.newSubject, kind });
 		subject = await subjectRow(uuid);
 		created = true;
 	} else {
 		throw bad("Pick someone from the gallery, or add a new name.");
 	}
+	if (alsoIds.length && subject.kind !== sighting.kind) throw bad("Correct one sighting's kind at a time.");
 
 	let photo = { added: false, reason: null };
 	try {
@@ -417,8 +474,24 @@ async function teachFromSighting(profileId, sightingUuid, body = {}) {
 	}
 
 	const ids = [sighting.id, ...also.map((r) => r.id)];
-	await pool.query("UPDATE athena_sighting SET subject_id = ?, label = ? WHERE id IN (?) AND subject_id IS NULL", [subject.id, subject.name, ids]);
+	await pool.query("UPDATE athena_sighting SET subject_id = ?, label = ?, kind = ? WHERE id IN (?) AND subject_id IS NULL", [subject.id, subject.name, subject.kind, ids]);
 	return { subjectId: subject.uuid, name: subject.name, created, photoAdded: photo.added, photoNote: photo.reason, renamed: ids.length };
+}
+
+/** A person can identify another entity visible in the same camera frame. */
+async function addEntityFromSighting(sightingUuid, subjectUuid) {
+	const [rows] = await pool.query("SELECT * FROM athena_sighting WHERE uuid = ?", [sightingUuid]);
+	const source = rows[0];
+	if (!source || !source.frame_uri) throw bad("That camera frame is gone.", 404);
+	const subject = await subjectRow(subjectUuid);
+	const [existing] = await pool.query("SELECT id FROM athena_sighting WHERE frame_uri = ? AND subject_id = ?", [source.frame_uri, subject.id]);
+	if (existing.length) throw bad(`${subject.name} is already in this frame.`, 409);
+	const uuid = randomUUID();
+	await pool.query("INSERT INTO athena_sighting SET ?", [{ uuid, event_id: source.event_id, event_kind: source.event_kind,
+		device_serial: source.device_serial, device_name: source.device_name, seen_at: source.seen_at,
+		subject_id: subject.id, label: subject.name, kind: subject.kind, zone: source.zone,
+		where_text: null, confidence: null, frame_uri: source.frame_uri }]);
+	return { id: uuid, name: subject.name };
 }
 
 /** Copy the sighting's frame into a kept image and add it as a reference photo, unless the subject is full. */
@@ -561,9 +634,9 @@ async function prune(days = RETENTION_DAYS) {
 }
 
 module.exports = {
-	listSubjects, createSubject, updateSubject, removeSubject, addPhoto, removePhoto,
+	listSubjects, knownPeople, linkPerson, createSubject, updateSubject, removeSubject, addPhoto, removePhoto,
 	listZones, setZones,
-	identify, cleanSubjects, record, list, openFrame, chatBlock, teachFromSighting,
+	identify, cleanSubjects, record, list, page, openFrame, chatBlock, teachFromSighting, addEntityFromSighting,
 	listRules, createRule, removeRule, profilesToAlert, activeAlerts, matches,
 	prune, RETENTION_DAYS, KINDS,
 	_setStorage: (s) => (storageClient = s),

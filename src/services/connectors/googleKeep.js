@@ -5,7 +5,7 @@ const credentials = require("../credentials");
 const { DEFAULT_TZ } = require("../clock");
 
 /**
- * Google Keep, read-only: the lists people share with Athena's own Google
+ * Google Keep: the lists people share with Athena's own Google
  * account (EMAIL_ADDRESS) — the family grocery list first, so dinner ideas can
  * start from what is probably in the house instead of a recipe nobody can make.
  *
@@ -116,13 +116,15 @@ function keepTimestamp(date = new Date()) {
 }
 
 /** Every node in the account, paging through `truncated` responses. */
-async function syncAll(token) {
+async function syncAll(token, { targetVersion: startingVersion, writeNodes = [], withVersion = false } = {}) {
 	const sessionId = `s--${Date.now()}--${crypto.randomInt(1_000_000_000, 9_999_999_999)}`;
 	const nodes = new Map();
-	let targetVersion;
+	let targetVersion = startingVersion;
 	for (let page = 0; page < MAX_PAGES; page++) {
 		const body = JSON.stringify({
-			nodes: [],
+			// A write is sent once. A timeout after this request is ambiguous and
+			// must never cause an automatic second write.
+			nodes: page === 0 ? writeNodes : [],
 			clientTimestamp: keepTimestamp(),
 			requestHeader: {
 				clientSessionId: sessionId,
@@ -143,9 +145,13 @@ async function syncAll(token) {
 			throw fail(`Google Keep returned HTTP ${status} without JSON`);
 		}
 		if (reply.error) throw fail(`Google Keep: ${reply.error.message || reply.error.code}`, reply.error.code === 401 ? "session_rejected" : "provider_error");
+		if (status < 200 || status >= 300) throw fail(`Google Keep returned HTTP ${status}`, status === 401 ? "session_rejected" : "provider_error");
+		if (reply.forceFullResync || reply.upgradeRecommended || (reply.nodes || []).some((n) => n.mergeConflict)) {
+			throw fail("Google Keep could not safely sync this change");
+		}
 		for (const node of reply.nodes || []) nodes.set(node.id, node);
 		targetVersion = reply.toVersion;
-		if (!reply.truncated) return [...nodes.values()];
+		if (!reply.truncated) return withVersion ? { nodes: [...nodes.values()], version: targetVersion } : [...nodes.values()];
 	}
 	throw fail("Google Keep kept paging past the limit");
 }
@@ -163,18 +169,21 @@ function when(value) {
 
 /** Raw nodes -> [{ id, title, updated, items: [{ text, checked, updated }] }], live lists only. */
 function toLists(nodes) {
-	const gone = (n) => n.timestamps?.trashed > "1970-01-01T00:00:00.000Z" || n.timestamps?.deleted > "1970-01-01T00:00:00.000Z";
-	const lists = nodes.filter((n) => n.type === "LIST" && !n.isArchived && !gone(n));
+	const lists = nodes.filter((n) => n.type === "LIST" && !n.isArchived && !isGone(n));
 	return lists.map((list) => ({
 		id: list.id,
 		title: list.title || "",
 		updated: when(list.timestamps?.updated),
 		items: nodes
-			.filter((n) => n.type === "LIST_ITEM" && n.parentId === list.id && !gone(n))
+			.filter((n) => n.type === "LIST_ITEM" && n.parentId === list.id && !isGone(n))
 			.sort((a, b) => Number(b.sortValue || 0) - Number(a.sortValue || 0))
 			.map((n) => ({ text: String(n.text || "").trim(), checked: !!n.checked, updated: when(n.timestamps?.updated) }))
 			.filter((i) => i.text),
 	}));
+}
+
+function isGone(node) {
+	return node.timestamps?.trashed > "1970-01-01T00:00:00.000Z" || node.timestamps?.deleted > "1970-01-01T00:00:00.000Z";
 }
 
 async function linkFor(profileId) {
@@ -189,9 +198,9 @@ const sessions = new Map(); // account email -> { token, expiresAt }
 const cache = new Map(); // profileId -> { at, lists }
 
 /** Every list shared with Athena's account that this profile linked, newest first. */
-async function listLists(profileId) {
+async function listLists(profileId, { fresh = false } = {}) {
 	const hit = cache.get(profileId);
-	if (hit && Date.now() - hit.at < CACHE_MS) return hit.lists;
+	if (!fresh && hit && Date.now() - hit.at < CACHE_MS) return hit.lists;
 	const credential = await linkFor(profileId);
 	const email = credential.externalAccountId;
 	for (let attempt = 0; attempt < 2; attempt++) {
@@ -225,6 +234,99 @@ async function listLists(profileId) {
 
 function invalidate(profileId) {
 	cache.delete(profileId);
+}
+
+/** Resolve only a food list this person has actually shared with the linked account. */
+async function groceryTarget(profileId, requestedTitle) {
+	const food = (await listLists(profileId, { fresh: true })).filter((l) => FOOD_LIST.test(l.title));
+	const title = typeof requestedTitle === "string" ? requestedTitle.trim().toLowerCase() : "";
+	const matches = title ? food.filter((l) => l.title.toLowerCase() === title) : food;
+	if (matches.length !== 1) {
+		throw fail(matches.length ? "Choose one grocery list by its exact title" : "I can't find that grocery list shared with me", "invalid_action_params");
+	}
+	return matches[0];
+}
+
+/** Serialize exactly one item change in the shape Keep's Android client sends. */
+function groceryItemNode(nodes, list, item, operation) {
+	if (!list || !list.serverId || list.type !== "LIST" || list.isArchived || isGone(list) || !FOOD_LIST.test(list.title || "")) {
+		throw fail("That grocery list is unavailable to edit");
+	}
+	const list_id = list.id;
+	const matches = nodes.filter((n) => n.type === "LIST_ITEM" && n.parentId === list_id && !isGone(n) && itemKey(n.text) === itemKey(item));
+	const open = matches.filter((n) => !n.checked);
+	if (operation === "add" && open.length) throw fail("That item is already on the grocery list");
+	if (operation === "bought" && !open.length) throw fail("That item is not waiting to be bought");
+	if (operation === "bought" && open.length > 1) throw fail("Keep has more than one open matching item; please edit it there");
+	const stamp = keepTimestamp();
+	// Pick the topmost checked copy consistently; the rest are left alone.
+	const existing = (operation === "bought" ? open : matches)
+		.sort((a, b) => Number(b.sortValue || 0) - Number(a.sortValue || 0) || String(a.id).localeCompare(String(b.id)))[0];
+	const id = existing?.id || `${Date.now().toString(16)}.${crypto.randomBytes(8).toString("hex")}`;
+	return existing ? {
+		id, kind: "notes#node", type: "LIST_ITEM", parentId: list_id,
+		parentServerId: existing.parentServerId || list.serverId,
+		...(existing.serverId ? { serverId: existing.serverId } : {}),
+		...(existing.baseVersion != null ? { baseVersion: existing.baseVersion } : {}),
+		sortValue: existing.sortValue, text: existing.text,
+		timestamps: { ...existing.timestamps, updated: stamp, userEdited: stamp },
+		nodeSettings: existing.nodeSettings, annotationsGroup: existing.annotationsGroup,
+		superListItemId: existing.superListItemId || null, checked: operation === "bought",
+	} : {
+		id, kind: "notes#node", type: "LIST_ITEM", parentId: list_id,
+		parentServerId: list.serverId, superListItemId: null,
+		sortValue: Math.max(1_000_000_000, ...nodes.filter((n) => n.parentId === list_id && n.type === "LIST_ITEM").map((n) => Number(n.sortValue) || 0)) + 10_000,
+		text: item, checked: false,
+		timestamps: { kind: "notes#timestamps", created: stamp, updated: stamp, userEdited: stamp },
+		nodeSettings: { newListItemPlacement: "BOTTOM", graveyardState: "COLLAPSED", checkedListItemsPolicy: "GRAVEYARD" },
+		annotationsGroup: { kind: "notes#annotationsGroup" },
+	};
+}
+
+/** One approved change to one existing food list. No caller-supplied URL or account. */
+async function updateGroceryItem(profileId, { list_id, item, operation }) {
+	if (!list_id || typeof item !== "string" || !["add", "bought"].includes(operation)) {
+		throw fail("That grocery change is invalid", "invalid_action_params");
+	}
+	const target = (await listLists(profileId, { fresh: true })).find((l) => l.id === list_id && FOOD_LIST.test(l.title));
+	if (!target) throw fail("That grocery list is no longer shared with me", "invalid_action_params");
+	const credential = await linkFor(profileId);
+	const session = sessions.get(credential.externalAccountId);
+	if (!session || session.expiresAt <= Date.now()) throw fail("Google Keep needs reconnecting", "not_connected");
+	const { nodes, version } = await syncAll(session.token, { withVersion: true });
+	if (!version) throw fail("Google Keep returned no version for this list");
+	const list = nodes.find((n) => n.id === list_id);
+	const node = groceryItemNode(nodes, list, item, operation);
+	await syncAll(session.token, { targetVersion: version, writeNodes: [node] });
+	invalidate(profileId);
+	return { ref: node.id, detail: null };
+}
+
+/** One approved batch, checked against one fresh snapshot and written in one Keep change request. */
+async function updateGroceryItems(profileId, { list_id, grocery_items, operation }) {
+	if (!list_id || operation !== "add" || !Array.isArray(grocery_items) || !grocery_items.length || grocery_items.length > 10 ||
+		grocery_items.some((item) => typeof item !== "string" || !item.trim() || item !== item.trim() || item.length > 120 || /[,\r\n\x00-\x1f]/.test(item)) ||
+		new Set(grocery_items.map(itemKey)).size !== grocery_items.length) {
+		throw fail("That grocery change is invalid", "invalid_action_params");
+	}
+	const target = (await listLists(profileId, { fresh: true })).find((l) => l.id === list_id && FOOD_LIST.test(l.title));
+	if (!target) throw fail("That grocery list is no longer shared with me", "invalid_action_params");
+	const credential = await linkFor(profileId);
+	const session = sessions.get(credential.externalAccountId);
+	if (!session || session.expiresAt <= Date.now()) throw fail("Google Keep needs reconnecting", "not_connected");
+	const { nodes, version } = await syncAll(session.token, { withVersion: true });
+	if (!version) throw fail("Google Keep returned no version for this list");
+	const list = nodes.find((n) => n.id === list_id);
+	const changes = groceryItemNodes(nodes, list, grocery_items);
+	await syncAll(session.token, { targetVersion: version, writeNodes: changes });
+	invalidate(profileId);
+	return { ref: list_id, detail: `${changes.length} grocery items` };
+}
+
+function groceryItemNodes(nodes, list, items) {
+	const changes = [];
+	for (const item of items) changes.push(groceryItemNode([...nodes, ...changes], list, item, "add"));
+	return changes;
 }
 
 /** "Eggs " and "eggs" are one item. Fits athena_keep_item_event.item_key. */
@@ -427,6 +529,11 @@ module.exports = {
 	HOW_TO_RELINK,
 	matches,
 	listLists,
+	groceryTarget,
+	updateGroceryItem,
+	updateGroceryItems,
+	groceryItemNode,
+	groceryItemNodes,
 	groceries,
 	invalidate,
 	observe,

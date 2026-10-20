@@ -383,7 +383,9 @@ async function word(trigger, facts) {
 		`What you noticed: ${fallback}\n\n` +
 		`Rules: under 25 words. Speak to them directly. Do not greet them, do ` +
 		`not apologise for interrupting, do not offer a list of options, do not ` +
-		`ask more than one question. Say the useful thing.\n\n` +
+		`ask more than one question. Stay within the observed facts. A calendar entry ` +
+		`does not prove attendance, a missed flight, or who is travelling. For a ` +
+		`shared calendar, do not imply this person is the traveller. Say the useful thing.\n\n` +
 		`Reply as JSON: {"text": "..."}`;
 
 	try {
@@ -396,7 +398,7 @@ async function word(trigger, facts) {
 					: "missing text",
 		});
 		const text = String(data.text).trim();
-		return text.length > 300 ? fallback : text;
+		return text.length > 300 || /\bmiss(?:ed|ing)?\b.{0,80}\bflight\b|\bflight\b.{0,80}\bmiss(?:ed|ing)?\b/i.test(text) ? fallback : text;
 	} catch (err) {
 		console.warn(`[initiative] wording failed for ${trigger.id}:`, err.message);
 		return fallback;

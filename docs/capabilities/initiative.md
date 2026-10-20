@@ -16,7 +16,9 @@ Almost everything I do is answering you. This is the part where I start.
 If you turn it on, I'll say something when there's a real reason to:
 
 - **Something's about to start.** Ten to twenty-five minutes before an event
-  on your calendar — early enough to move, late enough to matter.
+  on your calendar — early enough to move, late enough to matter. A flight on a
+  shared calendar is not treated as your travel, and I cannot tell whether
+  anyone missed a flight from a calendar entry.
 - **Two things clash.** When one event runs into the next, and there's still
   time to do something about it.
 - **A thermostat went offline.** If you've linked Google Nest, I tell you

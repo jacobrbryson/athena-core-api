@@ -208,8 +208,11 @@ describe("dashboard alert merge", () => {
 	test("the model cannot downgrade it", () => {
 		expect(mergeAlert({ level: "watch", headline: "x", body: "y" }, urgent).level).toBe("urgent");
 	});
-	test("the model can raise an alert about anything else", () => {
-		expect(mergeAlert({ level: "urgent", headline: "Flight in 40 min", body: "Leave now." }, { level: "none" })).toMatchObject({ source: "athena", level: "urgent" });
+	test("a model flight claim is discarded without a flight status source", () => {
+		expect(mergeAlert({ level: "urgent", headline: "Flight in 40 min", body: "Leave now." }, { level: "none" })).toBeNull();
+	});
+	test("a model alert is a heads-up; only the incident feed can be urgent", () => {
+		expect(mergeAlert({ level: "urgent", headline: "Low recovery", body: "Take it easy." }, { level: "none" })).toMatchObject({ source: "athena", level: "watch" });
 	});
 	test("most days: nothing", () => {
 		expect(mergeAlert(null, { level: "none" })).toBeNull();

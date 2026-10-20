@@ -89,7 +89,9 @@ const TRIGGERS = [
 			// not yet useful; later than 10 and it is too late to act on.
 			const next = timedEvents(events).find((e) => {
 				const mins = minutesUntil(e.start, now);
-				return mins >= 10 && mins <= 25;
+				// A flight on a non-primary calendar may belong to another traveller.
+				// Calendar timing cannot establish whether anyone boarded or missed it.
+				return mins >= 10 && mins <= 25 && !(e.shared && /\b(flight|fly|airline|airport)\b/i.test(e.title || ""));
 			});
 			if (!next) return null;
 			// An event id, so the same meeting is announced exactly once even
@@ -102,6 +104,8 @@ const TRIGGERS = [
 					at: clockTime(next.start, zone),
 					minutes: Math.round(minutesUntil(next.start, now)),
 					location: next.location || null,
+					calendar: next.calendar || null,
+					shared: !!next.shared,
 					time_zone: zone,
 				},
 			};
@@ -109,7 +113,7 @@ const TRIGGERS = [
 
 		brief(f) {
 			return (
-				`"${f.title}" starts at ${f.at}, about ${f.minutes} minutes from now` +
+				`"${f.title}" ${f.shared ? `on the ${f.calendar || "shared"} calendar ` : ""}starts at ${f.at}, about ${f.minutes} minutes from now` +
 				(f.location ? `, at ${f.location}` : "") +
 				"."
 			);

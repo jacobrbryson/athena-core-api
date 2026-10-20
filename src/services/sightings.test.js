@@ -127,6 +127,41 @@ test("removing a subject deletes their sightings and rules", async () => {
 	expect(sql).toEqual(expect.arrayContaining([expect.stringMatching(/^DELETE FROM athena_sighting WHERE subject_id/), expect.stringMatching(/^DELETE FROM athena_sighting_rule WHERE subject_id/)]));
 });
 
+test("sighting pages count the selected filter and return ten rows at the requested offset", async () => {
+	pool.query.mockResolvedValueOnce([[{ total: 23 }]]).mockResolvedValueOnce([[]]);
+	expect(await sightings.page({ filter: "stranger", page: 2 })).toEqual({ sightings: [], page: 2, pages: 3, total: 23 });
+	const sql = pool.query.mock.calls;
+	expect(sql[0][0]).toMatch(/s.label = \?/);
+	expect(sql[0][1]).toEqual(["stranger"]);
+	expect(sql[1][1]).toEqual(["stranger", 10, 10]);
+});
+
+test("another named entity can be added to the same camera frame", async () => {
+	const frame = "gs://athena-security-media/sightings/a.jpg";
+	pool.query.mockResolvedValueOnce([[{ uuid: "source", frame_uri: frame, event_id: "e1", event_kind: "motion", device_serial: "T8171B", device_name: "Backyard", seen_at: new Date(), zone: null }]])
+		.mockResolvedValueOnce([[{ id: 7, uuid: "s-wynter", name: "Wynter", kind: "animal" }]])
+		.mockResolvedValueOnce([[]]).mockResolvedValueOnce([{}]);
+	expect(await sightings.addEntityFromSighting("source", "s-wynter")).toEqual({ id: expect.any(String), name: "Wynter" });
+	const insert = pool.query.mock.calls.find((c) => /^INSERT INTO athena_sighting SET/.test(c[0]));
+	expect(insert[1][0]).toMatchObject({ frame_uri: frame, subject_id: 7, label: "Wynter", kind: "animal" });
+});
+
+test("person pictures follow an explicit profile-scoped person key", async () => {
+	pool.query.mockResolvedValueOnce([[{ id: 8, uuid: "s-ross", name: "Ross", kind: "person" }]])
+		.mockResolvedValueOnce([[{ subject_id: 8, fact_uuid: "fact-ross" }]])
+		.mockResolvedValueOnce([[]]).mockResolvedValueOnce([[]]);
+	const [ross] = await sightings.listSubjects(3, [{ id: "fact-ross", name: "Ross", photoUrl: "data:image/jpeg;base64,abc" }]);
+	expect(ross).toMatchObject({ personFactUuid: "fact-ross", profilePhotoUrl: "data:image/jpeg;base64,abc" });
+	expect(pool.query.mock.calls[1][1]).toEqual([3]);
+});
+
+test("a gallery person can only link to the caller's own remembered person", async () => {
+	pool.query.mockResolvedValueOnce([[{ id: 8, uuid: "s-ross", kind: "person" }]]).mockResolvedValueOnce([[]]);
+	await expect(sightings.linkPerson(3, "s-ross", "fact-other")).rejects.toMatchObject({ status: 404 });
+	expect(pool.query.mock.calls[1][1]).toEqual([3, "fact-other"]);
+	expect(pool.query.mock.calls.some((call) => /INSERT INTO athena_sighting_person_link/.test(call[0]))).toBe(false);
+});
+
 test("prune removes frames and rows past 30 days", async () => {
 	pool.query.mockResolvedValueOnce([[{ frame_uri: "gs://athena-security-media/sightings/x.jpg" }]]).mockResolvedValueOnce([{ affectedRows: 4 }]);
 	expect(await sightings.prune()).toEqual({ rows: 4, frames: 1 });
@@ -172,7 +207,7 @@ describe("teachFromSighting", () => {
 		expect(insert[1]).toEqual([7, "m-new", expect.any(Date)]);
 		const update = pool.query.mock.calls.find((c) => /^UPDATE athena_sighting SET/.test(c[0]));
 		expect(update[0]).toMatch(/subject_id IS NULL/);
-		expect(update[1]).toEqual([7, "Wynter", [41]]);
+		expect(update[1]).toEqual([7, "Wynter", "animal", [41]]);
 	});
 
 	test("a full subject still takes the name, says so, and copies nothing", async () => {
@@ -184,19 +219,19 @@ describe("teachFromSighting", () => {
 		expect(sqlCalls().some((q) => /^UPDATE athena_sighting SET/.test(q))).toBe(true);
 	});
 
-	test("a new name takes the sighting's kind, whatever was sent", async () => {
+	test("a new name can correct the sighting's kind", async () => {
 		pool.query
 			.mockResolvedValueOnce([[dog]])
 			.mockResolvedValueOnce([{}]) // INSERT subject
-			.mockResolvedValueOnce([[{ id: 9, uuid: "s-new", name: "Biscuit", kind: "animal" }]]) // subjectRow
+			.mockResolvedValueOnce([[{ id: 9, uuid: "s-new", name: "Biscuit", kind: "person" }]]) // subjectRow
 			.mockResolvedValueOnce([[{ n: 0 }]])
-			.mockResolvedValueOnce([[{ id: 9, uuid: "s-new", name: "Biscuit", kind: "animal" }]])
+			.mockResolvedValueOnce([[{ id: 9, uuid: "s-new", name: "Biscuit", kind: "person" }]])
 			.mockResolvedValueOnce([[{ n: 0 }]])
 			.mockResolvedValue([{}]);
 		const out = await sightings.teachFromSighting(1, S1, { newSubject: { name: "Biscuit", kind: "person", description: "neighbour's beagle" } });
 		expect(out).toEqual(expect.objectContaining({ name: "Biscuit", created: true, photoAdded: true }));
 		const insert = pool.query.mock.calls.find((c) => /^INSERT INTO athena_sighting_subject SET/.test(c[0]));
-		expect(insert[1][0]).toEqual(expect.objectContaining({ name: "Biscuit", kind: "animal", description: "neighbour's beagle", created_by: 1 }));
+		expect(insert[1][0]).toEqual(expect.objectContaining({ name: "Biscuit", kind: "person", description: "neighbour's beagle", created_by: 1 }));
 	});
 
 	test("a reserved name is refused before anything is written", async () => {
@@ -205,9 +240,7 @@ describe("teachFromSighting", () => {
 		expect(pool.query).toHaveBeenCalledTimes(1);
 	});
 
-	test("a subject of another kind, an already-named row, or no choice is refused", async () => {
-		pool.query.mockResolvedValueOnce([[dog]]).mockResolvedValueOnce([[{ id: 8, uuid: "s-ross", name: "Ross", kind: "person" }]]);
-		await expect(sightings.teachFromSighting(1, S1, { subjectId: "s-ross" })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/Ross is in the gallery as a person/) });
+	test("an already-named row or no choice is refused", async () => {
 		pool.query.mockResolvedValueOnce([[{ ...dog, subject_id: 7 }]]);
 		await expect(sightings.teachFromSighting(1, S1, { subjectId: "s-wynter" })).rejects.toMatchObject({ status: 409 });
 		pool.query.mockResolvedValueOnce([[dog]]);
@@ -226,7 +259,7 @@ describe("teachFromSighting", () => {
 			.mockResolvedValue([{}]);
 		const out = await sightings.teachFromSighting(1, S1, { subjectId: "s-wynter", alsoIds: [S2] });
 		expect(out.renamed).toBe(2);
-		expect(pool.query.mock.calls.find((c) => /^UPDATE athena_sighting SET/.test(c[0]))[1]).toEqual([7, "Wynter", [41, 42]]);
+		expect(pool.query.mock.calls.find((c) => /^UPDATE athena_sighting SET/.test(c[0]))[1]).toEqual([7, "Wynter", "animal", [41, 42]]);
 
 		pool.query.mockReset();
 		const sameFrame = { ...dog, id: 43, uuid: S3, label: "unknown dog" };

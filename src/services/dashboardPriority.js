@@ -68,7 +68,7 @@ function minutesUntil(start) {
  */
 function nextTimed(events) {
 	const now = Date.now();
-	return events.find((e) => !e.allDay && e.eventType !== "outOfOffice" && Date.parse(e.end || e.start) > now) || null;
+	return events.find((e) => !e.allDay && e.eventType !== "outOfOffice" && Date.parse(e.start) > now) || null;
 }
 
 /**
@@ -97,7 +97,6 @@ function describe(summary, pendingCount) {
 			empty: events.length === 0,
 			signals: {
 				eventsNext7Days: events.length,
-				nextTimedEventTitle: next?.title || null,
 				nextTimedEventInMinutes: next ? minutesUntil(next.start) : null,
 			},
 		},
@@ -213,7 +212,9 @@ ${JSON.stringify(cards, null, 1)}
 	`to find out about later. Ongoing emergencies near their home always are. A card ` +
 	`marked "empty": true has nothing behind it and cannot be the reason, and an ` +
 		`ordinary upcoming event is not one either — the calendar card already shows it. Most ` +
-	`days nothing is: use null.
+	`days nothing is: use null. Calendar entries only show scheduled times; they do not
+	verify attendance, boarding, departure, delays, or missed flights. Counts of
+	events, unread mail, chores, or Jira issues do not establish an emergency.
 
 ` +
 	`Answer as JSON:
@@ -230,10 +231,14 @@ ${JSON.stringify(cards, null, 1)}
  */
 function mergeAlert(raw, situation) {
 	const RANK = { watch: 1, urgent: 2 };
+	// No connected flight-status source exists. A calendar title or travel email
+	// cannot support a claim that a flight departed, was missed, or is overdue.
+	const unsupportedFlight = /\bflight\b|\b(?:departed|boarding|airline|airport)\b|\b[A-Z]{2,3}\d{2,4}\b/i.test(`${raw?.headline || ""} ${raw?.body || ""}`);
 	const fromModel =
-		raw && RANK[raw.level] && typeof raw.headline === "string" && raw.headline.trim()
+		raw && !unsupportedFlight && RANK[raw.level] && typeof raw.headline === "string" && raw.headline.trim()
 			? {
-					level: raw.level,
+					// Only the verified incident/weather situation can be urgent.
+					level: "watch",
 					headline: raw.headline.trim().slice(0, 200),
 					body: typeof raw.body === "string" ? raw.body.trim().slice(0, 600) : "",
 					source: "athena",
@@ -283,7 +288,7 @@ async function getPriority(profileId, user) {
 	const pending = await actions.listPending(profileId).catch(() => []);
 	const cards = describe(summary, pending.length);
 	// Reuse only an identical signal sheet and prompt, not merely a profile.
-	const inputKey = readCache.hash(['dashboard-alert-v1', PROMPT(cards, emergencies)]);
+	const inputKey = readCache.hash(['dashboard-alert-v2', PROMPT(cards, emergencies)]);
 
 	// Nothing on the page has anything in it. Usually this is a snapshot taken
 	// before the providers answered — no model call, and nothing cached. Not

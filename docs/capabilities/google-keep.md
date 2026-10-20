@@ -1,7 +1,7 @@
 ---
 id: google-keep
 title: Grocery list (Google Keep)
-summary: I can read the grocery list you share with me in Google Keep, and use it to suggest dinners you can actually make.
+summary: I can read your shared Google Keep grocery list, propose adding up to ten items at once or ticking off one item with your approval, and use it for dinner ideas.
 where: Family page → Grocery list (also a line on the dashboard's Family card); share the list with my address in Keep
 status: live
 surfaces: [companion]
@@ -20,7 +20,14 @@ what you're out of, tell you which ingredients I'm assuming you have, and lean
 towards something quick on a long day. I can't see your kitchen, so on a tired
 night I'll offer a few easy options and let you tell me what's actually there.
 
-Right now I can only read. I can't add or tick off items yet.
+If you ask me to add items ("put apples, bananas and blueberries on the grocery
+list"), I can propose up to ten in one approval card. I can also propose
+marking one item bought. The card names the items and list; Keep changes only
+after you tap **Approve**. Items already open are shown as already on the list
+and left alone. If an item is a regular already ticked off, adding it unticks
+that item instead of making a duplicate.
+If Keep has several checked copies of the same regular, I reopen one copy.
+If one is already open, I tell you it's already on the list.
 
 ## Where to find it
 
@@ -28,7 +35,8 @@ Once it's linked, the Family page has a Grocery list panel under the
 calendar. It shows what you're out of, how many regulars are on the list, an
 "Open in Keep" link, and a "What can we make tonight?" button that asks me.
 The Family card on the dashboard also shows the first few things you're out
-of. The panel only reads; you still add and tick items in Keep.
+of. The panel still shows the list; ask me in chat to change items, or open
+Keep to edit it yourself.
 
 To set it up, open the list in Google Keep, choose Collaborator, and add my
 address. The owner then links my Keep account once on their side. There's no
@@ -55,9 +63,13 @@ Connect button for it in the app.
   have, not what's in the kitchen today.
 - I read only lists shared with my own account, and only food-looking lists
   come up when we talk about meals.
-- For now I can only read the list for the person who linked it, not everyone
-  in the household.
-- I can't add items or tick them off yet.
+- I can add up to ten items per approval on a food-looking list shared with
+  my account, or mark one item bought. I cannot rename a list, remove an item,
+  or edit other lists.
+- For now I can only read or propose changes for the person who linked the
+  list, not everyone in the household.
+- Keep has no official personal-account API. If a change is refused or its
+  result is unclear, check the item in Keep before asking me to retry.
 
 ## Under the hood
 
@@ -65,7 +77,7 @@ Connect button for it in the app.
 
 - Connector: `src/services/connectors/googleKeep.js`, which speaks the Keep
   Android app's private protocol: a master token buys an OAuth token from
-  android.clients.google.com, which then reads notes/v1/changes. It's
+  android.clients.google.com, which then reads or writes notes/v1/changes. It's
   registered in `src/services/connectors/context.js`, matched by keyword, and
   is also the `groceries` source in `src/services/needs.js`.
 - Link: `scripts/addKeepLogin.js` with `scripts/keep/keep_helper.py`
@@ -77,6 +89,12 @@ Connect button for it in the app.
   toBuy plus a count of regulars; other shared lists never reach the page).
   Rendered by `GroceriesPanel` in `../../../companion/src/components/FamilyPage.tsx`
   and the Family card line in `../../../companion/src/components/Dashboard.tsx`.
+- Writes: `update_grocery_list` in `src/services/actions/registry.js` is
+  available only with the linked Keep credential and action consent. It is
+  never standing-approved. `updateGroceryItem()` and `updateGroceryItems()` in
+  the connector recheck the list and items at approval time. A batch sends all
+  node changes in one Keep request. The generic action layer owns the human
+  approval and audit trail. Tests: `src/services/actions/groceryAction.test.js`.
 - Notes: android.clients.google.com returns BadAuthentication when the client
   offers ALPN or disables TLS session tickets. That's why it uses
   https.request rather than fetch (undici offers ALPN). Verified against the

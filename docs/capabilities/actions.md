@@ -26,9 +26,12 @@ A small counter in the message box (like "2 ↑") shows how many unanswered card
 have folded — tap it to scroll up and open the next one, and keep tapping to
 move through them. Nothing is approved by a folded card; you open it first.
 
-Two things I can propose today:
+Things I can propose today:
 
 - **Add a calendar event** to your own Google Calendar.
+- **Update your shared grocery list** in Google Keep: add up to ten items
+  (or untick regulars) with one approval, or mark one item bought. The card
+  names every item it will change. See [google-keep.md](google-keep.md).
 - **Take a look through your camera**, when seeing would answer what we're
   talking about. See [camera.md](camera.md) — this is the one action I can do
   repeatedly on my own once you allow it, and the only one that opens something
