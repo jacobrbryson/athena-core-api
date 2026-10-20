@@ -22,6 +22,7 @@ app.post('/webhooks/eufy', express.json({ limit: '8mb' }), require('./controller
 // limit; everything else keeps the 100kb default. body-parser skips a body
 // that is already parsed, so the global parser below is a no-op for these.
 app.use(["/memory/photos", "/vision/observe", "/vision/describe", "/projects/:uuid/entries", "/projects/property", "/dashboard/health/nutrition/scan"], express.json({ limit: "8mb" }));
+app.use('/dashboard/family/people/:factUuid/portrait', express.json({ limit: '200kb' }));
 app.use(express.json());
 
 // Keep fact embeddings in sync with every writer, and watch Orcwood health.

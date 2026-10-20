@@ -88,17 +88,57 @@ function toPlace(row) {
 		longitude: Number(row.longitude),
 		radiusMiles: Number(row.radius_miles) || DEFAULT_RADIUS_MILES,
 		enabled: row.enabled === 1 || row.enabled === true,
+		...(row.image !== undefined ? { photoUrl: row.image ? `data:image/jpeg;base64,${row.image.toString('base64')}` : null } : {}),
 	};
 }
 
 /** Every place this person has saved, enabled or not, for the API. */
-async function listPlaces(profileId) {
+async function listPlaces(profileId, includePhotos = false) {
 	const [rows] = await pool.query(
-		`SELECT uuid, name, kind, address, notes, latitude, longitude, radius_miles, enabled
-		 FROM athena_watch_place WHERE profile_id = ? ORDER BY name = 'Home' DESC, name`,
+		`SELECT p.uuid, p.name, p.kind, p.address, p.notes, p.latitude, p.longitude, p.radius_miles, p.enabled${includePhotos ? ', photo.image' : ''}
+		 FROM athena_watch_place p${includePhotos ? ' LEFT JOIN athena_watch_place_photo photo ON photo.profile_id = p.profile_id AND photo.place_uuid = p.uuid COLLATE utf8mb4_unicode_ci' : ''}
+		 WHERE p.profile_id = ? ORDER BY p.name = 'Home' DESC, p.name`,
 		[profileId]
 	);
 	return rows.map(toPlace);
+}
+
+/** Edit one of the caller's existing places, retaining its stable UUID and linked events. */
+async function updatePlace(profileId, uuid, input = {}) {
+	const [[existing]] = await pool.query('SELECT uuid FROM athena_watch_place WHERE profile_id = ? AND uuid = ?', [profileId, String(uuid)]);
+	if (!existing) throw Object.assign(new Error('That place is no longer on your list.'), { status: 404 });
+	const name = typeof input.name === 'string' ? input.name.trim() : '';
+	if (!name || name.length > 60) throw bad('Give the place a name of 60 characters or less.');
+	const point = { latitude: Number(input.latitude), longitude: Number(input.longitude) };
+	if (!geo.isPoint(point)) throw bad('Choose a real location for that place.');
+	const radius = Number(input.radiusMiles);
+	if (!Number.isFinite(radius) || radius <= 0 || radius > 50) throw bad('Radius must be between 0 and 50 miles.');
+	if (!PLACE_KINDS.has(input.kind)) throw bad('Choose what kind of place this is.');
+	const address = typeof input.address === 'string' && input.address.trim() ? input.address.trim().slice(0, 255) : null;
+	const notes = typeof input.notes === 'string' && input.notes.trim() ? input.notes.trim().slice(0, 500) : null;
+	if (input.photoBase64 !== undefined && input.photoBase64 !== null) {
+		const encoded = input.photoBase64;
+		if (typeof encoded !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded) || encoded.length > 180000) throw bad('Choose a smaller JPEG picture.');
+		const image = Buffer.from(encoded, 'base64');
+		if (image.length < 4 || image.length > 131072 || image[0] !== 0xff || image[1] !== 0xd8 || image[image.length - 2] !== 0xff || image[image.length - 1] !== 0xd9) throw bad('That picture is not a valid JPEG.');
+	}
+	const [[duplicate]] = await pool.query('SELECT uuid FROM athena_watch_place WHERE profile_id = ? AND name = ? AND uuid <> ?', [profileId, name, uuid]);
+	if (duplicate) throw bad('You already have a place with that name.');
+	const connection = await pool.getConnection();
+	try {
+		await connection.beginTransaction();
+		await connection.query(`UPDATE athena_watch_place SET name = ?, kind = ?, address = ?, notes = ?, latitude = ?, longitude = ?, radius_miles = ?, enabled = ? WHERE profile_id = ? AND uuid = ?`,
+			[name, input.kind, address, notes, point.latitude, point.longitude, radius, input.enabled === false ? 0 : 1, profileId, uuid]);
+		if (input.photoBase64 === null) await connection.query('DELETE FROM athena_watch_place_photo WHERE profile_id = ? AND place_uuid = ?', [profileId, uuid]);
+		else if (input.photoBase64 !== undefined) await connection.query(`INSERT INTO athena_watch_place_photo (profile_id, place_uuid, image) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE image = VALUES(image), updated_at = CURRENT_TIMESTAMP`, [profileId, uuid, Buffer.from(input.photoBase64, 'base64')]);
+		await connection.commit();
+	} catch (err) {
+		await connection.rollback();
+		throw err;
+	} finally {
+		connection.release();
+	}
+	return listPlaces(profileId, true);
 }
 
 /**
@@ -127,12 +167,23 @@ async function savePlace(profileId, input = {}) {
 		   kind = COALESCE(?, kind), notes = IF(?, VALUES(notes), notes)`,
 		[randomUUID(), profileId, name, kind, address, notes, point.latitude, point.longitude, radius, enabled, kind, notesGiven ? 1 : 0]
 	);
-	return listPlaces(profileId);
+	return listPlaces(profileId, true);
 }
 
 async function removePlace(profileId, uuid) {
-	await pool.query("DELETE FROM athena_watch_place WHERE profile_id = ? AND uuid = ?", [profileId, String(uuid)]);
-	return listPlaces(profileId);
+	const connection = await pool.getConnection();
+	try {
+		await connection.beginTransaction();
+		await connection.query('DELETE FROM athena_watch_place_photo WHERE profile_id = ? AND place_uuid = ?', [profileId, String(uuid)]);
+		await connection.query("DELETE FROM athena_watch_place WHERE profile_id = ? AND uuid = ?", [profileId, String(uuid)]);
+		await connection.commit();
+	} catch (err) {
+		await connection.rollback();
+		throw err;
+	} finally {
+		connection.release();
+	}
+	return listPlaces(profileId, true);
 }
 
 /** Enabled saved places, as points the radius check understands. */
@@ -1573,6 +1624,7 @@ module.exports = {
 	placesFor,
 	listPlaces,
 	savePlace,
+	updatePlace,
 	removePlace,
 	PLACE_KINDS,
 	wording,

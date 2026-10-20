@@ -1,14 +1,15 @@
 jest.mock("../helpers/db", () => ({ query: jest.fn() }));
 jest.mock("./llm", () => ({ generateJson: jest.fn() }));
-jest.mock("./securityMedia", () => ({ open: jest.fn(), setImportant: jest.fn() }));
+jest.mock("./securityMedia", () => ({ open: jest.fn(), setImportant: jest.fn(), save: jest.fn(), remove: jest.fn() }));
 const pool = require("../helpers/db");
+const securityMedia = require("./securityMedia");
 const sightings = require("./sightings");
 
 const saved = [];
 beforeEach(() => {
 	saved.length = 0;
 	pool.query.mockReset();
-	sightings._setStorage({ bucket: (b) => ({ file: (n) => ({ save: jest.fn(async () => saved.push(`${b}/${n}`)), delete: jest.fn(async () => {}) }) }) });
+	sightings._setStorage({ bucket: (b) => ({ file: (n) => ({ save: jest.fn(async () => saved.push(`${b}/${n}`)), delete: jest.fn(async () => {}), download: jest.fn(async () => [Buffer.from(`frame:${b}/${n}`)]) }) }) });
 });
 
 const gallery = [
@@ -137,4 +138,113 @@ test("the chat block says who it doesn't know rather than guessing", async () =>
 	pool.query.mockResolvedValueOnce([[{ id: 7, uuid: "s-wynter", name: "Wynter", kind: "animal" }]]).mockResolvedValueOnce([[]]).mockResolvedValueOnce([[]]).mockResolvedValueOnce([[]]);
 	const block = await sightings.chatBlock("Bigfoot", { timeZone: "America/New_York" });
 	expect(block).toMatch(/"Bigfoot" is not in the camera gallery/);
+});
+
+describe("teachFromSighting", () => {
+	const S1 = "11111111-1111-4111-8111-111111111111";
+	const S2 = "22222222-2222-4222-8222-222222222222";
+	const S3 = "33333333-3333-4333-8333-333333333333";
+	const frame = "gs://athena-security-media/sightings/2026-10-18/T8171B/f1.jpg";
+	const dog = { id: 41, uuid: S1, subject_id: null, label: "unknown dog", kind: "animal", device_serial: "T8171B", device_name: "Backyard", frame_uri: frame };
+	const wynter = { id: 7, uuid: "s-wynter", name: "Wynter", kind: "animal" };
+	const sqlCalls = () => pool.query.mock.calls.map((c) => c[0]);
+	beforeEach(() => {
+		securityMedia.save.mockReset().mockResolvedValue({ id: "m-new" });
+		securityMedia.open.mockReset().mockResolvedValue({ row: { type: "image", important: false } });
+		securityMedia.setImportant.mockReset();
+		securityMedia.remove.mockReset();
+	});
+
+	test("copies the frame into a kept, starred image, adds it as a reference and names only that row", async () => {
+		pool.query
+			.mockResolvedValueOnce([[dog]]) // the sighting
+			.mockResolvedValueOnce([[wynter]]) // subjectRow
+			.mockResolvedValueOnce([[{ n: 1 }]]) // photo count
+			.mockResolvedValueOnce([[wynter]]) // addPhoto: subjectRow
+			.mockResolvedValueOnce([[{ n: 1 }]]) // addPhoto: count
+			.mockResolvedValue([{}]);
+		const out = await sightings.teachFromSighting(1, S1, { subjectId: "s-wynter" });
+		expect(out).toEqual({ subjectId: "s-wynter", name: "Wynter", created: false, photoAdded: true, photoNote: null, renamed: 1 });
+		expect(securityMedia.save).toHaveBeenCalledWith(expect.objectContaining({ profileId: 1, serial: "T8171B", deviceName: "Backyard", type: "image" }));
+		expect(securityMedia.save.mock.calls[0][0].buf.toString()).toBe("frame:athena-security-media/sightings/2026-10-18/T8171B/f1.jpg");
+		expect(securityMedia.setImportant).toHaveBeenCalledWith("m-new", true);
+		const insert = pool.query.mock.calls.find((c) => /INSERT IGNORE INTO athena_sighting_subject_photo/.test(c[0]));
+		expect(insert[1]).toEqual([7, "m-new", expect.any(Date)]);
+		const update = pool.query.mock.calls.find((c) => /^UPDATE athena_sighting SET/.test(c[0]));
+		expect(update[0]).toMatch(/subject_id IS NULL/);
+		expect(update[1]).toEqual([7, "Wynter", [41]]);
+	});
+
+	test("a full subject still takes the name, says so, and copies nothing", async () => {
+		pool.query.mockResolvedValueOnce([[dog]]).mockResolvedValueOnce([[wynter]]).mockResolvedValueOnce([[{ n: 3 }]]).mockResolvedValue([{}]);
+		const out = await sightings.teachFromSighting(1, S1, { subjectId: "s-wynter" });
+		expect(out.photoAdded).toBe(false);
+		expect(out.photoNote).toMatch(/already has 3 reference photos/);
+		expect(securityMedia.save).not.toHaveBeenCalled();
+		expect(sqlCalls().some((q) => /^UPDATE athena_sighting SET/.test(q))).toBe(true);
+	});
+
+	test("a new name takes the sighting's kind, whatever was sent", async () => {
+		pool.query
+			.mockResolvedValueOnce([[dog]])
+			.mockResolvedValueOnce([{}]) // INSERT subject
+			.mockResolvedValueOnce([[{ id: 9, uuid: "s-new", name: "Biscuit", kind: "animal" }]]) // subjectRow
+			.mockResolvedValueOnce([[{ n: 0 }]])
+			.mockResolvedValueOnce([[{ id: 9, uuid: "s-new", name: "Biscuit", kind: "animal" }]])
+			.mockResolvedValueOnce([[{ n: 0 }]])
+			.mockResolvedValue([{}]);
+		const out = await sightings.teachFromSighting(1, S1, { newSubject: { name: "Biscuit", kind: "person", description: "neighbour's beagle" } });
+		expect(out).toEqual(expect.objectContaining({ name: "Biscuit", created: true, photoAdded: true }));
+		const insert = pool.query.mock.calls.find((c) => /^INSERT INTO athena_sighting_subject SET/.test(c[0]));
+		expect(insert[1][0]).toEqual(expect.objectContaining({ name: "Biscuit", kind: "animal", description: "neighbour's beagle", created_by: 1 }));
+	});
+
+	test("a reserved name is refused before anything is written", async () => {
+		pool.query.mockResolvedValueOnce([[dog]]);
+		await expect(sightings.teachFromSighting(1, S1, { newSubject: { name: "Stranger 2" } })).rejects.toMatchObject({ status: 400 });
+		expect(pool.query).toHaveBeenCalledTimes(1);
+	});
+
+	test("a subject of another kind, an already-named row, or no choice is refused", async () => {
+		pool.query.mockResolvedValueOnce([[dog]]).mockResolvedValueOnce([[{ id: 8, uuid: "s-ross", name: "Ross", kind: "person" }]]);
+		await expect(sightings.teachFromSighting(1, S1, { subjectId: "s-ross" })).rejects.toMatchObject({ status: 400, message: expect.stringMatching(/Ross is in the gallery as a person/) });
+		pool.query.mockResolvedValueOnce([[{ ...dog, subject_id: 7 }]]);
+		await expect(sightings.teachFromSighting(1, S1, { subjectId: "s-wynter" })).rejects.toMatchObject({ status: 409 });
+		pool.query.mockResolvedValueOnce([[dog]]);
+		await expect(sightings.teachFromSighting(1, S1, {})).rejects.toMatchObject({ status: 400 });
+		expect(sqlCalls().some((q) => /^UPDATE/.test(q))).toBe(false);
+		expect(securityMedia.save).not.toHaveBeenCalled();
+	});
+
+	test("other rows are renamed only when ticked, and never one from the same frame", async () => {
+		const later = { ...dog, id: 42, uuid: S2, frame_uri: frame.replace("f1", "f2") };
+		pool.query
+			.mockResolvedValueOnce([[dog]])
+			.mockResolvedValueOnce([[later]])
+			.mockResolvedValueOnce([[wynter]])
+			.mockResolvedValueOnce([[{ n: 3 }]])
+			.mockResolvedValue([{}]);
+		const out = await sightings.teachFromSighting(1, S1, { subjectId: "s-wynter", alsoIds: [S2] });
+		expect(out.renamed).toBe(2);
+		expect(pool.query.mock.calls.find((c) => /^UPDATE athena_sighting SET/.test(c[0]))[1]).toEqual([7, "Wynter", [41, 42]]);
+
+		pool.query.mockReset();
+		const sameFrame = { ...dog, id: 43, uuid: S3, label: "unknown dog" };
+		pool.query.mockResolvedValueOnce([[dog]]).mockResolvedValueOnce([[sameFrame]]);
+		await expect(sightings.teachFromSighting(1, S1, { subjectId: "s-wynter", alsoIds: [S3] })).rejects.toMatchObject({ status: 400 });
+		expect(sqlCalls().some((q) => /^UPDATE/.test(q))).toBe(false);
+	});
+
+	test("a failed copy for a brand-new name removes that name again", async () => {
+		pool.query
+			.mockResolvedValueOnce([[dog]])
+			.mockResolvedValueOnce([{}])
+			.mockResolvedValueOnce([[{ id: 9, uuid: "s-new", name: "Biscuit", kind: "animal" }]])
+			.mockResolvedValueOnce([[{ n: 0 }]])
+			.mockResolvedValue([[{ id: 9, uuid: "s-new" }]]);
+		securityMedia.save.mockRejectedValueOnce(new Error("bucket down"));
+		await expect(sightings.teachFromSighting(1, S1, { newSubject: { name: "Biscuit" } })).rejects.toThrow("bucket down");
+		expect(sqlCalls()).toEqual(expect.arrayContaining([expect.stringMatching(/^DELETE FROM athena_sighting_subject WHERE id/)]));
+		expect(sqlCalls().some((q) => /^UPDATE athena_sighting SET/.test(q))).toBe(false);
+	});
 });

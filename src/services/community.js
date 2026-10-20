@@ -608,7 +608,7 @@ async function localNews(profileId, places) {
 
 /** Everything the Community page shows, in one read. */
 async function overview(profileId) {
-	const places = await watch.listPlaces(profileId);
+	const places = await watch.listPlaces(profileId, true);
 	const [listed, events, local] = await Promise.all([
 		listNeighbors(profileId),
 		listEvents(profileId),

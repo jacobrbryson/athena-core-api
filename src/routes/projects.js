@@ -37,6 +37,7 @@ router.delete('/property/security/media/:id', security.removeMedia);
 // Sightings (docs/capabilities/sightings.md): gallery, camera zones, alert rules, log.
 router.get('/property/security/sightings', security.sightingsOverview);
 router.get('/property/security/sightings/:id/frame', security.sightingFrame);
+router.post('/property/security/sightings/:id/teach', json, security.teachSighting);
 router.post('/property/security/subjects', json, security.createSubject);
 router.patch('/property/security/subjects/:id', json, security.updateSubject);
 router.delete('/property/security/subjects/:id', security.removeSubject);

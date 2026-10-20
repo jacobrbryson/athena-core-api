@@ -6,7 +6,7 @@ where: Companion → Community (sidebar; on the phone, Dashboard → Community c
 status: live
 surfaces: [companion]
 audiences: [adult]
-triggers: [community, google contact, link contact, neighbor, neighbors, neighbour, next door, neighborhood, church, town, local event, ham day, festival, fair, parade, point of interest, points of interest, watched places, add a place, my town, school event, local news]
+triggers: [community, google contact, link contact, neighbor, neighbors, neighbour, next door, neighborhood, church, town, local event, ham day, festival, fair, parade, point of interest, points of interest, watched places, add a place, place picture, place photo, my town, school event, local news]
 ---
 
 ## What I can do
@@ -15,8 +15,8 @@ The Community page is where you tell me about the place you live, and I keep
 all of it in mind whenever we talk:
 
 - **Points of interest** — home, your church, the kids' school, the town
-  square, a parent's house. Each has a kind, a ring on the map (1 to 10 miles)
-  and notes. I keep watch around every one, all the time: a 911 call reported
+  square, a parent's house. Each has a kind, a ring on the map (1 to 10 miles),
+  notes, and an optional picture you choose. I keep watch around every one, all the time: a 911 call reported
   by PulsePoint Respond on your phone, or a severe-weather warning, inside a
   ring reaches you straight away. Any headline in the news pages you have me
   reading that mentions one of these places or its town — or that comes from a
@@ -77,7 +77,7 @@ place if none is marked home; **Forecast & alerts** jumps to the full Weather
 panel), **Coming Up Nearby** and **Recent Local
 Updates**. Every **Manage**, **View all** and **Add** there scrolls down to
 **The detail**, where the lists are edited. Each list has its own **Add** button; every entry has **Edit** and
-**Remove**. **Add a household** starts with the address (**Find** standardizes
+**Remove**. Tap a watched place in the overview to open its editor in **The detail**. There you can change its name, kind, address, watch radius, watching switch, notes, and picture. Choose a new address with **Find address** before saving; the picture appears beside the place on this page and on your other devices. **Add a household** starts with the address (**Find** standardizes
 it). Under **Who lives here**, contacts at that address are offered first; the
 **Add someone from your Google contacts** box finds anyone else by name, email
 or phone. **Unlink** takes a person off the house. A contact can only live at
@@ -94,6 +94,7 @@ happening near your places, local news, and **Emergency alerts on this phone**
 - **"I couldn't find that address":** the lookup only knows US street
   addresses. Check the street and town, or stand there and use your current
   location.
+- **A place picture won't save:** choose a smaller image. The app scales it down before uploading.
 - **No local news:** I only see the news pages you've given me (News → Manage
   pages). Add your local paper or your town's news page — "Add a local news
   page" on the Community page opens the same list. A place whose address has no
@@ -138,8 +139,12 @@ happening near your places, local news, and **Emergency alerts on this phone**
   names/towns via `townOf()`), `overview()`, `promptBlock()`.
 - Points of interest are `athena_watch_place` rows, owned by
   `../../src/services/pulsepoint/watch.js` (`kind`, `notes`, `PLACE_KINDS`);
-  every kind is watched the same way. Saved through
-  `PUT /api/v1/dashboard/incidents/places` (kind/notes omitted = kept).
+  every kind is watched the same way. Added through
+  `PUT /api/v1/dashboard/incidents/places`; edited by UUID through
+  `PATCH /api/v1/dashboard/incidents/places/:uuid` in
+  `../../src/controllers/nearbyIncidents.js`. Optional JPEGs live in
+  `athena_watch_place_photo` (`../../db/migrations/0085_watch_place_photo.up.sql`),
+  loaded only for UI reads, and deleted with their place.
 - Households: `athena_neighbor` keyed by `address_key` = `streetKey()` (street
   line, normalized: "Lane" = "LN"); unique per profile. Links in
   `athena_neighbor_contact` (People API id + display-name snapshot for the
@@ -161,6 +166,7 @@ happening near your places, local news, and **Emergency alerts on this phone**
   superseded) and `../../db/migrations/0053_neighbor_household.up.sql`
   (address key, coordinates, `athena_neighbor_contact`; moves 0051 links).
 - Frontend: `../../../companion/src/components/Community.tsx` (panels),
+  `../../../companion/src/components/CommunityPage.tsx` (overview and place row),
   `../../../companion/src/components/Dashboard.tsx` (CommunityPage),
   `../../../companion/src/components/EmergencyAlertSetup.tsx`.
 - Tests: `../../src/services/community.test.js`.

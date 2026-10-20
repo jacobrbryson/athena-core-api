@@ -17,7 +17,9 @@ describe("isoDay", () => {
 	test("keeps a plain date, trims a datetime, reads a Date in local time", () => {
 		expect(people.isoDay("2015-05-03")).toBe("2015-05-03");
 		expect(people.isoDay("2015-05-03T00:00:00.000Z")).toBe("2015-05-03");
-		expect(people.isoDay(new Date(2015, 4, 3))).toBe("2015-05-03");
+		// The pool reads DATEs as UTC midnight; that is the same day in every zone.
+		expect(people.isoDay(new Date(Date.UTC(2015, 4, 3)))).toBe("2015-05-03");
+		expect(people.isoDay(new Date("2019-01-11T00:00:00.000Z"))).toBe("2019-01-11");
 		expect(people.isoDay(null)).toBeNull();
 		expect(people.isoDay("May 3")).toBeNull();
 	});
@@ -43,7 +45,7 @@ describe("overview", () => {
 
 	test("a link reads its contact's birthday from Google", async () => {
 		family.getFamilyForProfile.mockResolvedValue(null);
-		db.query.mockResolvedValue([[LINK]]);
+		db.query.mockImplementation(async sql => /athena_family_portrait/.test(sql) ? [[]] : [[LINK]]);
 		community.contactsFor.mockResolvedValue([CONTACT]);
 		const { links, contactsLinked } = await people.overview(1);
 		expect(contactsLinked).toBe(true);
@@ -55,7 +57,7 @@ describe("overview", () => {
 		["contact deleted in Google", [], "missing"],
 	])("%s keeps the link and says why", async (_label, book, status) => {
 		family.getFamilyForProfile.mockResolvedValue(null);
-		db.query.mockResolvedValue([[LINK]]);
+		db.query.mockImplementation(async sql => /athena_family_portrait/.test(sql) ? [[]] : [[LINK]]);
 		community.contactsFor.mockResolvedValue(book);
 		const { links } = await people.overview(1);
 		expect(links[0]).toMatchObject({ contactId: "111", name: "Linda", card: null, status });
@@ -63,10 +65,43 @@ describe("overview", () => {
 
 	test("a Google outage never drops the link", async () => {
 		family.getFamilyForProfile.mockResolvedValue(null);
-		db.query.mockResolvedValue([[LINK]]);
+		db.query.mockImplementation(async sql => /athena_family_portrait/.test(sql) ? [[]] : [[LINK]]);
 		community.contactsFor.mockRejectedValue(new Error("boom"));
 		const { links } = await people.overview(1);
 		expect(links[0].status).toBe("unreadable");
+	});
+
+	test('returns only the caller’s live family portraits', async () => {
+		family.getFamilyForProfile.mockResolvedValue(null);
+		const image = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+		db.query.mockImplementation(async sql => /athena_family_portrait/.test(sql) ? [[{ fact_uuid: 'f-1', image }]] : [[]]);
+		const result = await people.overview(42);
+		expect(result.photos).toEqual({ 'f-1': `data:image/jpeg;base64,${image.toString('base64')}` });
+		const portraitRead = db.query.mock.calls.find(([sql]) => /athena_family_portrait/.test(sql));
+		expect(portraitRead[0]).toMatch(/m\.profile_id = p\.profile_id AND m\.deleted_at IS NULL/);
+		expect(portraitRead[1]).toEqual([42]);
+	});
+});
+
+describe('setPortrait', () => {
+	const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString('base64');
+	test('rejects another person’s memory before writing a portrait', async () => {
+		db.query.mockResolvedValue([[]]);
+		await expect(people.setPortrait(1, 'other', jpeg)).rejects.toMatchObject({ status: 404 });
+		expect(db.query).toHaveBeenCalledTimes(1);
+	});
+	test('saves a bounded JPEG for an owned family memory', async () => {
+		family.getFamilyForProfile.mockResolvedValue(null);
+		db.query.mockImplementation(async sql => /SELECT id, uuid, category/.test(sql) ? [[{ uuid: 'f-1' }]] : [[]]);
+		await people.setPortrait(1, 'f-1', jpeg);
+		const write = db.query.mock.calls.find(([sql]) => /INSERT INTO athena_family_portrait/.test(sql));
+		expect(write[1].slice(0, 2)).toEqual([1, 'f-1']);
+		expect(write[1][2]).toEqual(Buffer.from(jpeg, 'base64'));
+	});
+	test('rejects a non-JPEG image', async () => {
+		db.query.mockResolvedValue([[{ uuid: 'f-1' }]]);
+		await expect(people.setPortrait(1, 'f-1', Buffer.from('not a jpeg').toString('base64'))).rejects.toMatchObject({ status: 400 });
+		expect(db.query).toHaveBeenCalledTimes(1);
 	});
 });
 
@@ -124,7 +159,24 @@ describe("removePerson / mergePeople", () => {
 		await people.removePerson(1, "a");
 		expect(ran(/SET deleted_at = NOW/)).toHaveLength(1);
 		expect(ran(/DELETE FROM athena_family_contact/)[0][1]).toEqual([1, "a"]);
+		expect(ran(/DELETE FROM athena_family_portrait/)[0][1]).toEqual([1, "a"]);
 		expect(memory.memoryEvents.emit).toHaveBeenCalledWith("fact:deleted", { id: 1, profile_id: 1 });
+	});
+
+	test('removing a pet also forgets its editor details without touching similarly named pets', async () => {
+		const pet = { id: 10, uuid: 'pet-1', category: 'pet', memory_key: 'Nash', memory_value: 'a dog' };
+		family.getFamilyForProfile.mockResolvedValue(null);
+		db.query.mockImplementation(async (sql, params) => {
+			if (/FROM user_memory\s+WHERE profile_id = \? AND uuid/.test(sql)) return [[pet]];
+			if (/SELECT id, memory_key FROM user_memory/.test(sql)) return [[
+				pet, { id: 11, memory_key: 'Nash display name' },
+				{ id: 12, memory_key: "Nash's birthday" }, { id: 13, memory_key: 'Nashville' },
+			]];
+			return [[]];
+		});
+		await people.removePerson(7, pet.uuid);
+		expect(ran(/SET deleted_at = NOW/).map(([, params]) => params[0])).toEqual([11, 12, 10]);
+		expect(ran(/SELECT id, memory_key FROM user_memory/)[0][1]).toEqual([7, 'pet']);
 	});
 
 	test("deleting someone that is not theirs is a 404 and writes nothing", async () => {
@@ -139,6 +191,7 @@ describe("removePerson / mergePeople", () => {
 		await people.mergePeople(1, "a", "b");
 		expect(ran(/SET memory_value/)[0][1][0]).toBe("daughter, 8; likes soccer");
 		expect(ran(/SET fact_uuid = \?/)[0][1]).toEqual(["b", 1, "a"]);
+		expect(ran(/UPDATE athena_family_portrait SET fact_uuid/)[0][1]).toEqual(["b", 1, "a"]);
 		expect(ran(/SET deleted_at = NOW/)[0][1]).toEqual([1]);
 	});
 
@@ -147,7 +200,7 @@ describe("removePerson / mergePeople", () => {
 		family.getFamilyForProfile.mockResolvedValue(null);
 		await people.mergePeople(1, "a", "b");
 		expect(ran(/SET memory_value/)).toHaveLength(0);
-		expect(ran(/SET fact_uuid = \?/)).toHaveLength(0);
+		expect(ran(/UPDATE athena_family_contact SET fact_uuid = \?/)).toHaveLength(0);
 		expect(ran(/DELETE FROM athena_family_contact/)[0][1]).toEqual([1, "a"]);
 	});
 

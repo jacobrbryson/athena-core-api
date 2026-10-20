@@ -1,8 +1,18 @@
 # Capability ledger
 
+- 2026-10-18 — Family → People & pets moved from the page into a side drawer opened by the small Memories link at the bottom of Family Members — `companion-dashboard.md` (status: partial)
+
+- 2026-10-18 — Community watched places: tapping a place in the overview opens its editor; name, kind, address, radius, status, notes, and a chosen picture can be updated without changing the place's identity — `community.md` (status: partial)
+
+- 2026-10-18 — Family → Pets rows stay inside their card and open the shared editor on tap. The editor can save a chosen picture and remove a pet after confirmation — `companion-dashboard.md` (status: partial)
+
+- 2026-10-18 — Family member cards on the Family page open the editor for details and a private portrait. Portraits appear across devices, take priority over linked Google Contact photos, and can be removed — `companion-dashboard.md` (status: partial)
+
 - 2026-10-18 — Camera sightings: each motion/person/doorbell event sends one frame; Athena logs who and what was there (gallery names, else "stranger", "deer", "white pickup"), with camera, where and zone, and answers "when did you last see Wynter?". Alerts like "Wynter outside the back fence" go through initiative (held in quiet hours). Kept 30 days. Needs migration 0083, a bridge rebuild with ATHENA_EVENTS_URL, and deploys; recognition untested on real frames — `sightings.md` (status: partial)
 
 - 2026-10-18 — Property → Security redesign: status tiles, camera cards with the latest image, a filterable events list, and a Kept clips & images strip. Every fresh image and every 15-second clip recorded on request is now kept in the private bucket `athena-security-media`; star, enlarge, play or delete them. Clips are new and untested on the real cameras — `eufy-security.md` (status: partial)
+
+- 2026-10-18 — Playing video games: Athena beat Downside-Up Level 1 on the real orcwood.com through screen and keyboard alone, signed in as her own account ATHENA (7.9 s, 0 coins, ranked #9). The policy gained a 2-second memory and DAgger training on her own runs. With 2-3% expert help she clears Levels 1-3; alone, only Level 1 is reliable so far — `game-playing.md` (status: partial)
 
 - 2026-10-18 — Property → Security is live for the owner's HomeBase 2, T8213 doorbell and two E30s through a private Tailscale bridge. Doorbell and Backyard motion events arrived; fresh images worked separately from all three cameras through Companion. Stored thumbnails, the other E30's motion event, streams and controls remain unverified or unavailable — `eufy-security.md` (status: partial)
 
@@ -614,3 +624,4 @@ See [`README.md`](README.md) for the full contract.
 - 2026-10-16 — The Work page is rebuilt around workspaces: four tiles, a card per workspace (role, site, linked apps, its issues, projects and sites), Jira by status, Slack mentions, Athena's Agents (this week's code investigations and fixes, and the site monitor), work projects with progress, site uptime and response time, the week's work meetings, recent activity and quick actions. A workspace can now own its sites and work projects (Manage on its card; needs migration 0079) — `workplaces.md` (status: live)
 - 2026-10-16 — I check that each of your websites is up and how fast it answers — when you open Work (if the last check is over ten minutes old) and nightly; shown under Site Monitors on Work. No alerts yet — `websites.md` (status: partial)
 - 2026-10-18 — The food log's New record menu now lists your favorites too (tap one to log it to the day shown), the same menu as the Nutrition card's Log food — `training-and-nutrition.md` (status: partial)
+- 2026-10-18 — Sightings → Log: every unnamed row ("stranger", "unknown dog") has **This is…** — pick a gallery name of the same kind or add a new one; the frame becomes a kept, starred reference photo (unless they already have three, which I say), that row takes the name, and other unnamed sightings on the same camera around then can be ticked to rename too. Nothing else is renamed — `sightings.md` (status: partial)

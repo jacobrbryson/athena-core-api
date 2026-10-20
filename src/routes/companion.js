@@ -46,6 +46,7 @@ router.post('/dashboard/alert/ack', requireAuth, express.json({ limit: '2kb' }),
 router.post('/dashboard/notifications/:uuid/ack', requireAuthOrDevice, express.json({ limit: '1kb' }), require('../controllers/nearbyIncidents').acknowledgePush);
 router.get('/dashboard/incidents/places', requireAuth, require('../controllers/nearbyIncidents').listPlaces);
 router.put('/dashboard/incidents/places', requireAuth, express.json({ limit: '4kb' }), require('../controllers/nearbyIncidents').savePlace);
+router.patch('/dashboard/incidents/places/:uuid', requireAuth, express.json({ limit: '200kb' }), require('../controllers/nearbyIncidents').updatePlace);
 router.delete('/dashboard/incidents/places/:uuid', requireAuth, require('../controllers/nearbyIncidents').removePlace);
 router.get('/dashboard/incidents/geocode', requireAuth, require('../controllers/nearbyIncidents').lookupAddress);
 // Test PulsePoint / weather alert: a made-up call at their own place, pushed.
@@ -168,6 +169,7 @@ router.put('/dashboard/family/people/:factUuid/contact', requireAuth, express.js
 router.delete('/dashboard/family/people/:factUuid/contact', requireAuth, require('../controllers/familyPeople').unlink);
 router.delete('/dashboard/family/people/:factUuid', requireAuth, require('../controllers/familyPeople').remove);
 router.post('/dashboard/family/people/:factUuid/merge', requireAuth, express.json({ limit: '1kb' }), require('../controllers/familyPeople').merge);
+router.put('/dashboard/family/people/:factUuid/portrait', requireAuth, express.json({ limit: '200kb' }), require('../controllers/familyPeople').portrait);
 
 // Public: the on-device model manifest carries no secrets, and devices poll it
 // before (and after) pairing.

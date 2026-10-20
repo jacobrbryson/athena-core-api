@@ -175,11 +175,12 @@ async function forgetFactsByKey(profileId, keys = []) {
 	for (const key of keys) {
 		if (typeof key !== "string" || !key.trim()) continue;
 		const [rows] = await pool.query(
-			`SELECT id FROM user_memory WHERE profile_id = ? AND LOWER(memory_key) = LOWER(?) AND deleted_at IS NULL;`,
+			`SELECT id, uuid FROM user_memory WHERE profile_id = ? AND LOWER(memory_key) = LOWER(?) AND deleted_at IS NULL;`,
 			[profileId, key.trim().slice(0, 120)]
 		);
 		for (const r of rows) {
 			await pool.query(`UPDATE user_memory SET deleted_at = NOW() WHERE id = ?;`, [r.id]);
+			await pool.query('DELETE FROM athena_family_portrait WHERE profile_id = ? AND fact_uuid = ?', [profileId, r.uuid]);
 			memoryEvents.emit("fact:deleted", { id: r.id, profile_id: profileId });
 			count += 1;
 		}
@@ -203,7 +204,12 @@ async function forgetFactById(profileId, id) {
 		`UPDATE user_memory SET deleted_at = NOW() WHERE id = ? AND profile_id = ? AND deleted_at IS NULL;`,
 		[id, profileId]
 	);
-	if (r?.affectedRows) memoryEvents.emit("fact:deleted", { id, profile_id: profileId });
+	if (r?.affectedRows) {
+		await pool.query(`DELETE p FROM athena_family_portrait p JOIN user_memory m
+		 ON m.uuid = p.fact_uuid AND m.profile_id = p.profile_id
+		 WHERE m.id = ? AND p.profile_id = ?`, [id, profileId]);
+		memoryEvents.emit("fact:deleted", { id, profile_id: profileId });
+	}
 	return r?.affectedRows || 0;
 }
 
@@ -222,6 +228,7 @@ async function deleteMemory(actor, memoryUuid) {
 	);
 	if (!rows.length) throw new Error("Memory not found");
 	await pool.query(`UPDATE user_memory SET deleted_at = NOW() WHERE id = ?;`, [rows[0].id]);
+	await pool.query('DELETE FROM athena_family_portrait WHERE profile_id = ? AND fact_uuid = ?', [profileId, memoryUuid]);
 	memoryEvents.emit("fact:deleted", { id: rows[0].id, profile_id: profileId });
 	return { success: true };
 }

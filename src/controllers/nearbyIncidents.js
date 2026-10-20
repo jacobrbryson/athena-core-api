@@ -17,7 +17,7 @@ function recheck(profileId) {
  * caller-supplied profile. See docs/capabilities/nearby-incidents.md.
  */
 function fail(res, err) {
-  if (err?.status === 400) return res.status(400).json({ success: false, message: err.message });
+  if (err?.status === 400 || err?.status === 404) return res.status(err.status).json({ success: false, message: err.message });
   console.warn('[nearby-incidents] unavailable:', err?.message || err);
   return res.status(503).json({ success: false, message: 'Nearby emergencies are unavailable right now.' });
 }
@@ -27,7 +27,7 @@ async function listPlaces(req, res) {
   const actor = await requireAdultActor(req, res);
   if (!actor) return;
   try {
-    return res.json({ places: await watch.listPlaces(actor.profileId) });
+    return res.json({ places: await watch.listPlaces(actor.profileId, true) });
   } catch (err) {
     return fail(res, err);
   }
@@ -53,6 +53,19 @@ async function removePlace(req, res) {
   if (!actor) return;
   try {
     const places = await watch.removePlace(actor.profileId, req.params.uuid);
+    recheck(actor.profileId);
+    return res.json({ places });
+  } catch (err) {
+    return fail(res, err);
+  }
+}
+
+async function updatePlace(req, res) {
+  res.set('Cache-Control', 'no-store');
+  const actor = await requireAdultActor(req, res);
+  if (!actor) return;
+  try {
+    const places = await watch.updatePlace(actor.profileId, req.params.uuid, req.body || {});
     recheck(actor.profileId);
     return res.json({ places });
   } catch (err) {
@@ -218,4 +231,4 @@ async function testAlert(req, res) {
   }
 }
 
-module.exports = { listPlaces, savePlace, removePlace, nearby, alert, acknowledgeAlert, acknowledgePush, lookupAddress, phoneAlert, testAlert };
+module.exports = { listPlaces, savePlace, updatePlace, removePlace, nearby, alert, acknowledgeAlert, acknowledgePush, lookupAddress, phoneAlert, testAlert };

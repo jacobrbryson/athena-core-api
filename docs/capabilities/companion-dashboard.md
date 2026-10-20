@@ -50,15 +50,19 @@ the next time we talk. A relation word that opens their name ("Aunt Missy") says
 how they're related. Household facts filed with the family ("children home
 time", "family dinner") aren't people and don't appear on the card.
 
-You can set that tag yourself: open the Family page, open the person's ⋯ menu,
-choose Edit, change Relationship to you (up to 40 characters), and Save.
+You can set that tag yourself: open the Family page, tap the person's card,
+change Relationship to you (up to 40 characters), and Save. The ⋯ menu in the
+Family Members → Memories drawer also has Edit.
 I remember your label and use it ahead of the relationship in their older
 memory, keeping everything else I know about them. This control is available
-for remembered people and pets; children listed only from profiles keep Child.
+for remembered people and pets. For a child listed only from a family profile,
+saving the editor creates a memory linked by their name; the family profile
+continues to supply their birthday and grade.
 
 Children on your family profiles appear on the card on their own, with their
 birthday, and a child you have also told me about is one row, not two. On the
-Family page, each person I remember has a ⋯ menu (Health watch, Link contact,
+Family Members → Memories opens a side drawer where each person I remember has
+a ⋯ menu (Health watch, Link contact,
 Edit, Move to Community, Merge, Delete). Link contact lets you search your
 Google Contacts and pick the one that is them, and I read their birthday, photo
 and phone number from there. Only the contact's ID and name are kept, so a
@@ -82,10 +86,13 @@ Edit opens one dialog with their name, relationship, remembered notes and any
 separately saved details, such as their birthday. Name changes appear on both
 the Family page and card; I show a person's name rather than the memory key
 ("Spouse"). The dialog also lets you link, change or unlink their Google
-Contact, and open their health watch. Contact changes save immediately; Save
-saves the memory fields. Contact photos, phone numbers and contact birthdays
-are edited in Google Contacts. Children listed only from profiles are not
-editable in this dialog.
+Contact, choose a private picture from your device, and open their health
+watch. A chosen picture takes priority over the Google Contact photo, appears
+on your other devices, and can be removed to show the contact photo again.
+On Family → Pets, tap a pet's row to open this editor. You can also remove a
+pet there after confirming; its family memory and chosen picture are removed.
+Contact changes save immediately; Save saves the memory fields and picture.
+Contact phone numbers and birthdays are edited in Google Contacts.
 Someone who isn't family at all — the neighbor's dog — can go to the
 Community page with Move to Community: pick their household (or give an
 address for a new one), what I knew is added to that household's notes, and
@@ -219,9 +226,9 @@ family event and family health; today's chores and the family's day; your
 closest people as cards (spouse, children, pets) with what's on for them today,
 and everyone else as smaller tiles; the family's upcoming events; and Kids
 (age, grade, and the sports their events mention), Pets, and Birthdays (from
-what I remember and from birthdays on your calendar). Tapping a person asks me
-about them. The full list where you edit people, link contacts and mark someone
-better is under The detail, further down.
+what I remember and from birthdays on your calendar). Tapping a member opens
+their editor. The small Memories link at the bottom of Family Members opens a
+side drawer with the full memory list, contact links, and health watches.
 
 There is no refresh button, because there is nothing to refresh by hand: the
 dashboard updates itself when the server tells it something moved.
@@ -349,6 +356,9 @@ in memory and are cleared on sign-in, sign-out, access errors, and updates.
 - Sidebar profile avatar: `../../../companion/src/components/ProfileAvatar.tsx`.
 - Family editor: `../../../companion/src/components/FamilyPersonEditor.tsx`;
   remembered names and relationships: `../../../companion/src/components/familyRoster.ts`.
+- Private family portraits: `../../src/services/familyPeople.js`,
+  `../../src/controllers/familyPeople.js`, `../../src/routes/companion.js`,
+  and `../../db/migrations/0084_family_portrait.up.sql`.
 - Work banner: `../../../companion/src/components/WorkBanner.tsx`, logic and its
   tests in `workStatus.ts` / `companion/scripts/workStatus.test.mjs`
   (`npm run test:work`). Data: `workingLocations` on `GET /api/v1/dashboard`'s

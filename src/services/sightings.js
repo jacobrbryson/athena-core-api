@@ -17,7 +17,8 @@
  * What is kept: rows and frames for 30 days (owner's choice), then purged
  * nightly. A frame in which nothing was seen is deleted straight away.
  * Removing a subject deletes its sightings. Strangers stay "stranger": a
- * face that is not in the gallery is never matched against anything else.
+ * face that is not in the gallery is never matched against anything else —
+ * only the owner naming a row ("This is…", teachFromSighting) changes one.
  */
 const { randomUUID } = require("node:crypto");
 const pool = require("../helpers/db");
@@ -348,10 +349,96 @@ async function list({ label = null, limit = 50 } = {}) {
 	return rows.map(shape);
 }
 
+function frameFile(uri) {
+	const m = /^gs:\/\/([^/]+)\/(.+)$/.exec(uri || "");
+	return m ? storage().bucket(m[1]).file(m[2]) : null;
+}
+
 async function openFrame(uuid) {
 	const [rows] = await pool.query("SELECT frame_uri FROM athena_sighting WHERE uuid = ?", [uuid]);
-	const m = /^gs:\/\/([^/]+)\/(.+)$/.exec(rows[0]?.frame_uri || "");
-	return m ? storage().bucket(m[1]).file(m[2]) : null;
+	return frameFile(rows[0]?.frame_uri);
+}
+
+// ---------------------------------------------------------------------------
+// Teaching from the log
+// ---------------------------------------------------------------------------
+
+const MAX_ALSO = 50;
+
+/**
+ * "This is Wynter": the owner names an unnamed sighting. The frame is copied
+ * into a kept, starred security image and added as a reference photo (when the
+ * subject has room), and that one row takes the name. `alsoIds` are other
+ * unnamed rows the owner ticked one by one — nothing else is relabelled, and a
+ * row from the same frame is refused, since two subjects in one frame are two
+ * different subjects. Matching of future frames is still only the gallery's.
+ */
+async function teachFromSighting(profileId, sightingUuid, body = {}) {
+	const [rows] = await pool.query("SELECT * FROM athena_sighting WHERE uuid = ?", [sightingUuid]);
+	const sighting = rows[0];
+	if (!sighting) throw bad("That sighting is gone.", 404);
+	if (sighting.subject_id) throw bad("That sighting already has a name.", 409);
+
+	const alsoIds = [...new Set(Array.isArray(body.alsoIds) ? body.alsoIds.map(String) : [])].filter((id) => id !== sightingUuid);
+	if (alsoIds.length > MAX_ALSO) throw bad(`Up to ${MAX_ALSO} other sightings at once.`);
+	let also = [];
+	if (alsoIds.length) {
+		[also] = await pool.query("SELECT * FROM athena_sighting WHERE uuid IN (?)", [alsoIds]);
+		if (also.length !== alsoIds.length) throw bad("One of those sightings is gone.", 404);
+		const frames = new Set([sighting.frame_uri]);
+		for (const r of also) {
+			if (r.subject_id) throw bad("One of those sightings already has a name.", 409);
+			if (r.kind !== sighting.kind) throw bad("Those sightings aren't all the same kind.");
+			if (r.frame_uri && frames.has(r.frame_uri)) throw bad("Two sightings from the same frame can't be the same one.");
+			if (r.frame_uri) frames.add(r.frame_uri);
+		}
+	}
+
+	let subject;
+	let created = false;
+	if (body.subjectId) {
+		subject = await subjectRow(String(body.subjectId));
+		if (subject.kind !== sighting.kind) throw bad(`${subject.name} is in the gallery as ${subject.kind === "animal" ? "an animal" : `a ${subject.kind}`}; this sighting is ${sighting.kind === "animal" ? "an animal" : `a ${sighting.kind}`}.`);
+	} else if (body.newSubject) {
+		const uuid = await createSubject(profileId, { ...body.newSubject, kind: sighting.kind });
+		subject = await subjectRow(uuid);
+		created = true;
+	} else {
+		throw bad("Pick someone from the gallery, or add a new name.");
+	}
+
+	let photo = { added: false, reason: null };
+	try {
+		photo = await framePhoto(profileId, subject, sighting);
+	} catch (err) {
+		// A brand-new name with nothing behind it would only confuse the gallery.
+		if (created) await removeSubject(subject.uuid).catch(() => {});
+		throw err;
+	}
+
+	const ids = [sighting.id, ...also.map((r) => r.id)];
+	await pool.query("UPDATE athena_sighting SET subject_id = ?, label = ? WHERE id IN (?) AND subject_id IS NULL", [subject.id, subject.name, ids]);
+	return { subjectId: subject.uuid, name: subject.name, created, photoAdded: photo.added, photoNote: photo.reason, renamed: ids.length };
+}
+
+/** Copy the sighting's frame into a kept image and add it as a reference photo, unless the subject is full. */
+async function framePhoto(profileId, subject, sighting) {
+	const [[{ n }]] = await pool.query("SELECT COUNT(*) n FROM athena_sighting_subject_photo WHERE subject_id = ?", [subject.id]);
+	if (Number(n) >= MAX_PHOTOS_PER_SUBJECT) {
+		return { added: false, reason: `${subject.name} already has ${MAX_PHOTOS_PER_SUBJECT} reference photos — remove one in the Gallery to use this frame.` };
+	}
+	const file = frameFile(sighting.frame_uri);
+	if (!file) return { added: false, reason: "That sighting has no frame to learn from." };
+	const [buf] = await file.download();
+	const media = await securityMedia.save({ profileId, serial: sighting.device_serial, deviceName: sighting.device_name, type: "image", buf });
+	try {
+		await addPhoto(subject.uuid, media.id);
+	} catch (err) {
+		await securityMedia.remove(media.id).catch(() => {});
+		if (err.status === 409) return { added: false, reason: `${subject.name} already has ${MAX_PHOTOS_PER_SUBJECT} reference photos — remove one in the Gallery to use this frame.` };
+		throw err;
+	}
+	return { added: true, reason: null };
 }
 
 function localTime(date, timeZone) {
@@ -476,7 +563,7 @@ async function prune(days = RETENTION_DAYS) {
 module.exports = {
 	listSubjects, createSubject, updateSubject, removeSubject, addPhoto, removePhoto,
 	listZones, setZones,
-	identify, cleanSubjects, record, list, openFrame, chatBlock,
+	identify, cleanSubjects, record, list, openFrame, chatBlock, teachFromSighting,
 	listRules, createRule, removeRule, profilesToAlert, activeAlerts, matches,
 	prune, RETENTION_DAYS, KINDS,
 	_setStorage: (s) => (storageClient = s),

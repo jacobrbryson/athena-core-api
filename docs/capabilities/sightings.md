@@ -32,10 +32,17 @@ until quiet hours end.
 ## Where to find it
 
 The left menu → Property → Security → the Sightings card. **Log** lists recent
-sightings and shows each frame. **Gallery** adds names: give a name, kind and
-short description, then add reference photos from kept images (take a fresh
-image while they're in view first). **Alerts & zones** sets alerts and names
-the areas each camera sees.
+sightings and shows each frame. Every unnamed row ("stranger", "unknown dog",
+"white pickup") has a **This is…** button: pick someone from the gallery of the
+same kind, or add a new name (and an optional description). That frame is kept
+as a starred image and becomes one of their reference photos — unless they
+already have three, in which case the row still takes the name and I say the
+photo wasn't added. Other unnamed sightings on the same camera around then are
+listed to tick if they're the same one; nothing else is renamed. **Gallery**
+adds names: give a name, kind and short description, then add reference photos
+from kept images (take a fresh image while they're in view first, or use
+**This is…** on a sighting). **Alerts & zones** sets alerts and names the areas
+each camera sees.
 
 ## When it doesn't work
 
@@ -53,7 +60,9 @@ the areas each camera sees.
 Only authorized adults in the household can see sightings or the gallery, and
 only they can ask me about them. Sightings and their frames are kept 30 days,
 then deleted. Removing someone from the gallery deletes all their sightings
-and alerts. I never try to identify a stranger beyond calling them a stranger.
+and alerts. I never try to identify a stranger beyond calling them a stranger;
+only you naming a sighting with **This is…** changes one, and naming one never
+renames the others.
 
 Recognition is the vision model's best judgement from one frame — reliable
 for distinctive pets and vehicles in daylight, much less so for people at a
@@ -67,6 +76,7 @@ later. Motion frames are not kept unless something was seen in them.
 - Bridge: `../../../eufy-bridge/server.mjs` posts each event and one frame to `ATHENA_EVENTS_URL` with the bridge token.
 - Ingress: proxy `POST /api/v1/webhooks/eufy` → core `POST /webhooks/eufy` (`src/controllers/eufyEvents.js`).
 - Service: `src/services/sightings.js` — gallery, zones, identification (task `vision`), log, rules, 30-day prune (nightly `sightingsPrune`).
+- This is…: `POST /projects/property/security/sightings/:id/teach` → `teachFromSighting` — copies the frame into `securityMedia.save` + `addPhoto` (stars it), renames that row and any `alsoIds` (refused if from the same frame); audited `eufy_teach_sighting`.
 - Alerts: initiative trigger `sighting_alert` (`src/services/initiative/triggers.js`).
 - Chat: the `sightings` need (`src/services/needs.js`), adults in `EUFY_AUTHORIZED_PROFILE_IDS` only.
 - Tables (migration 0083): `athena_sighting_subject`, `athena_sighting_subject_photo`, `athena_camera_zone`, `athena_sighting`, `athena_sighting_rule`. Frames in `gs://athena-security-media/sightings/`.

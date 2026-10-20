@@ -189,6 +189,14 @@ const removeSubjectPhoto = guarded(async (req, res) => { await sightings.removeP
 const setZones = guarded(async (req, res) => { await sightings.setZones(req.params.serial, req.body?.zones); return res.status(204).end(); });
 const createRule = guarded(async (req, res, actor) => res.status(201).json({ id: await sightings.createRule(actor.profileId, req.body || {}) }));
 const removeRule = guarded(async (req, res, actor) => { await sightings.removeRule(actor.profileId, req.params.id); return res.status(204).end(); });
+/** "This is…": the owner names one unnamed sighting (and any others they ticked). */
+const teachSighting = guarded(async (req, res, actor) => {
+  if (!UUID.test(req.params.id)) return res.status(400).json({ message: 'Invalid sighting id.' });
+  const alsoIds = req.body?.alsoIds;
+  if (alsoIds !== undefined && (!Array.isArray(alsoIds) || !alsoIds.every(id => UUID.test(String(id))))) return res.status(400).json({ message: 'Invalid sighting id.' });
+  await audit(actor, 'eufy_teach_sighting');
+  return res.json(await sightings.teachFromSighting(actor.profileId, req.params.id, req.body || {}));
+});
 const sightingFrame = guarded(async (req, res, actor) => {
   if (!UUID.test(req.params.id)) return res.status(400).json({ message: 'Invalid sighting id.' });
   await audit(actor, 'eufy_sighting_frame');
@@ -201,4 +209,4 @@ const sightingFrame = guarded(async (req, res, actor) => {
 });
 
 module.exports = { list, snapshot, clip, listMedia, getMedia, updateMedia, removeMedia, BASE,
-  sightingsOverview, createSubject, updateSubject, removeSubject, addSubjectPhoto, removeSubjectPhoto, setZones, createRule, removeRule, sightingFrame };
+  sightingsOverview, createSubject, updateSubject, removeSubject, addSubjectPhoto, removeSubjectPhoto, setZones, createRule, removeRule, sightingFrame, teachSighting };

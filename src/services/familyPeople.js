@@ -14,14 +14,18 @@ const memory = require("./memory");
 const FAMILY_CATEGORIES = ["person", "family", "pet"];
 const bad = (message) => Object.assign(new Error(message), { status: 400 });
 
-/** A DATE column as YYYY-MM-DD, whether the driver gave a string or a Date. */
+/**
+ * A DATE column as YYYY-MM-DD, whether the driver gave a string or a Date.
+ * The pool reads with timezone 'Z', so a Date is UTC midnight: read it back in
+ * UTC, or any process west of UTC (local dev in Eastern) reports the day before.
+ */
 function isoDay(value) {
 	if (!value) return null;
 	if (value instanceof Date) {
 		if (Number.isNaN(value.getTime())) return null;
-		const mm = String(value.getMonth() + 1).padStart(2, "0");
-		const dd = String(value.getDate()).padStart(2, "0");
-		return `${value.getFullYear()}-${mm}-${dd}`;
+		const mm = String(value.getUTCMonth() + 1).padStart(2, "0");
+		const dd = String(value.getUTCDate()).padStart(2, "0");
+		return `${value.getUTCFullYear()}-${mm}-${dd}`;
 	}
 	const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(value));
 	return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
@@ -74,8 +78,30 @@ async function linksFor(profileId) {
 }
 
 async function overview(profileId) {
-	const [children, { links, contactsLinked }] = await Promise.all([childrenOf(profileId), linksFor(profileId)]);
-	return { children, links, contactsLinked };
+	const [children, { links, contactsLinked }, [portraits]] = await Promise.all([
+		childrenOf(profileId), linksFor(profileId),
+		pool.query(`SELECT p.fact_uuid, p.image FROM athena_family_portrait p
+		 JOIN user_memory m ON m.uuid = p.fact_uuid AND m.profile_id = p.profile_id AND m.deleted_at IS NULL
+		 WHERE p.profile_id = ?`, [profileId]),
+	]);
+	const photos = Object.fromEntries(portraits.map((p) => [p.fact_uuid, `data:image/jpeg;base64,${p.image.toString('base64')}`]));
+	return { children, links, contactsLinked, photos };
+}
+
+/** Replace or clear a portrait. The person must still be in the caller's own family memories. */
+async function setPortrait(profileId, factUuid, imageBase64) {
+	const fact = await ownFact(profileId, factUuid);
+	if (!fact) throw notFound();
+	if (imageBase64 === null) {
+		await pool.query('DELETE FROM athena_family_portrait WHERE profile_id = ? AND fact_uuid = ?', [profileId, factUuid]);
+		return overview(profileId);
+	}
+	if (typeof imageBase64 !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(imageBase64) || imageBase64.length > 180000) throw bad('Choose a smaller JPEG portrait.');
+	const image = Buffer.from(imageBase64, 'base64');
+	if (image.length < 4 || image.length > 131072 || image[0] !== 0xff || image[1] !== 0xd8 || image[image.length - 2] !== 0xff || image[image.length - 1] !== 0xd9) throw bad('That portrait is not a valid JPEG.');
+	await pool.query(`INSERT INTO athena_family_portrait (profile_id, fact_uuid, image) VALUES (?, ?, ?)
+	 ON DUPLICATE KEY UPDATE image = VALUES(image), updated_at = CURRENT_TIMESTAMP`, [profileId, factUuid, image]);
+	return overview(profileId);
 }
 
 /** Link (or re-link) a remembered family member to a Google Contact. */
@@ -125,8 +151,22 @@ async function ownFact(profileId, uuid) {
 async function removePerson(profileId, factUuid) {
 	const fact = await ownFact(profileId, factUuid);
 	if (!fact) throw notFound();
+	// Editor fields are separate memories under this person's key. Forget them too,
+	// or a saved "display name" becomes a stray person after the parent is gone.
+	const [rows] = await pool.query(
+		'SELECT id, memory_key FROM user_memory WHERE profile_id = ? AND category = ? AND deleted_at IS NULL',
+		[profileId, fact.category]
+	);
+	const key = fact.memory_key.trim().toLowerCase();
+	const details = rows.filter((row) => row.id !== fact.id &&
+		(row.memory_key.trim().toLowerCase().startsWith(`${key} `) || row.memory_key.trim().toLowerCase().startsWith(`${key}'s `)));
+	for (const detail of details) {
+		await pool.query('UPDATE user_memory SET deleted_at = NOW() WHERE id = ?', [detail.id]);
+		memory.memoryEvents.emit('fact:deleted', { id: detail.id, profile_id: profileId });
+	}
 	await pool.query("UPDATE user_memory SET deleted_at = NOW() WHERE id = ?", [fact.id]);
 	await pool.query("DELETE FROM athena_family_contact WHERE profile_id = ? AND fact_uuid = ?", [profileId, fact.uuid]);
+	await pool.query("DELETE FROM athena_family_portrait WHERE profile_id = ? AND fact_uuid = ?", [profileId, fact.uuid]);
 	memory.memoryEvents.emit("fact:deleted", { id: fact.id, profile_id: profileId });
 	return overview(profileId);
 }
@@ -151,6 +191,9 @@ async function mergePeople(profileId, fromUuid, intoUuid) {
 	const [[intoLink]] = await pool.query("SELECT id FROM athena_family_contact WHERE profile_id = ? AND fact_uuid = ?", [profileId, into.uuid]);
 	if (intoLink) await pool.query("DELETE FROM athena_family_contact WHERE profile_id = ? AND fact_uuid = ?", [profileId, from.uuid]);
 	else await pool.query("UPDATE athena_family_contact SET fact_uuid = ? WHERE profile_id = ? AND fact_uuid = ?", [into.uuid, profileId, from.uuid]);
+	const [[intoPortrait]] = await pool.query('SELECT fact_uuid FROM athena_family_portrait WHERE profile_id = ? AND fact_uuid = ?', [profileId, into.uuid]);
+	if (!intoPortrait) await pool.query('UPDATE athena_family_portrait SET fact_uuid = ? WHERE profile_id = ? AND fact_uuid = ?', [into.uuid, profileId, from.uuid]);
+	else await pool.query('DELETE FROM athena_family_portrait WHERE profile_id = ? AND fact_uuid = ?', [profileId, from.uuid]);
 
 	await pool.query("UPDATE user_memory SET deleted_at = NOW() WHERE id = ?", [from.id]);
 	memory.memoryEvents.emit("fact:deleted", { id: from.id, profile_id: profileId });
@@ -160,4 +203,4 @@ async function mergePeople(profileId, fromUuid, intoUuid) {
 	return overview(profileId);
 }
 
-module.exports = { overview, linkContact, unlinkContact, removePerson, mergePeople, isoDay };
+module.exports = { overview, linkContact, unlinkContact, removePerson, mergePeople, setPortrait, isoDay };

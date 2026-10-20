@@ -27,4 +27,5 @@ module.exports = {
   unlink: handler((profileId, req) => familyPeople.unlinkContact(profileId, req.params.factUuid)),
   remove: handler((profileId, req) => familyPeople.removePerson(profileId, req.params.factUuid)),
   merge: handler((profileId, req) => familyPeople.mergePeople(profileId, req.params.factUuid, req.body?.intoUuid)),
+  portrait: handler((profileId, req) => familyPeople.setPortrait(profileId, req.params.factUuid, req.body?.imageBase64)),
 };
