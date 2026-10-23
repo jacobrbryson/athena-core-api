@@ -24,6 +24,16 @@ const SCAN_DEFAULTS = Object.freeze({
 
 // Ordinary listed common stock: 1–5 letters. Skips units, warrants, preferreds.
 const PLAIN = /^[A-Z]{1,5}$/;
+// Not a common stock, by name: ETFs, ETNs, leveraged/inverse products, and
+// warrants, rights and units (BGLWW passes the ticker check). The plan
+// trades equities with no leverage; a 3× ETF is leverage in a wrapper. Names
+// come from Alpaca's asset list; one without a name is kept out too, since we
+// can't tell what it is.
+const FUND = /\b(ETFs?|ETNs?|ETP|fund|proshares|direxion|ishares|spdr|graniteshares|roundhill|grayscale|leveraged?|inverse|[1-9]x|warrants?|rights?|units?)\b/i;
+
+function isFundName(name) {
+	return !name || FUND.test(name);
+}
 
 /** The fraction of a normal day's volume typically traded by `minutesIn` (a U-shaped intraday profile, roughly). */
 function expectedVolumeFraction(minutesIn) {
@@ -105,7 +115,16 @@ async function scan({ feed, minutesIn, settledCash, spyChange, extraSymbols = []
 		else ranked.push({ ...r, catalyst: headlines.find((n) => n.symbols.includes(sym)) || null });
 	}
 	ranked.sort((a, b) => b.score - a.score);
-	return { ranked: ranked.slice(0, p.top), considered: ranked.length, skipped, source_partial: list.partial, scanned_at: new Date().toISOString() };
+	// Names are looked up only for the candidates that passed, best first.
+	const kept = [];
+	for (const r of ranked) {
+		if (kept.length >= p.top) break;
+		const asset = await alpaca.assetName(r.symbol);
+		if (isFundName(asset.name)) skipped.push({ symbol: r.symbol, reason: asset.name ? `not a common stock (${asset.name})` : "unknown security type" });
+		else if (asset.tradable === false) skipped.push({ symbol: r.symbol, reason: "not tradable" });
+		else kept.push({ ...r, company_name: asset.name });
+	}
+	return { ranked: kept, considered: ranked.length, skipped, source_partial: list.partial, scanned_at: new Date().toISOString() };
 }
 
-module.exports = { SCAN_DEFAULTS, scan, scoreSnapshot, expectedVolumeFraction };
+module.exports = { SCAN_DEFAULTS, scan, scoreSnapshot, expectedVolumeFraction, isFundName };

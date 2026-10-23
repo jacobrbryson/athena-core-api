@@ -266,6 +266,20 @@ async function begin(actor, providerId, { redirectTo } = {}) {
 		}
 	}
 
+	// A provider whose consent screen isn't plain OAuth (Smartcar Connect v3)
+	// builds its own URL; the single-use state is issued the same way.
+	if (provider.buildAuthorize) {
+		const state = await issueState(actor.profileId, provider.id, {
+			codeVerifier: null,
+			redirectTo: resolveReturnTarget(redirectTo),
+		});
+		return {
+			provider: provider.id,
+			authorize_url: await provider.buildAuthorize({ state, redirectUri: redirectUri(provider.id) }),
+			expires_in: STATE_TTL_MINUTES * 60,
+		};
+	}
+
 	const { clientId } = await clientCredentials(provider);
 	const pkce = provider.pkce ? pkcePair() : null;
 	const target = resolveReturnTarget(redirectTo);
@@ -304,7 +318,7 @@ async function begin(actor, providerId, { redirectTo } = {}) {
  *
  * @returns {Promise<{provider:string, credential:object, redirectTo:string|null}>}
  */
-async function complete(providerId, { code, state, error, errorDescription }) {
+async function complete(providerId, { code, userId, state, error, errorDescription }) {
 	const provider = getProvider(providerId);
 
 	// The user declined, or the provider refused. Burn the state anyway so it
@@ -316,6 +330,29 @@ async function complete(providerId, { code, state, error, errorDescription }) {
 			{ redirectTo: record ? record.redirect_to : null }
 		);
 	}
+	// No code to exchange: the provider hands back who the person is and the
+	// app reads with its own credentials (Smartcar v3). The state still
+	// decides whose link this is; completeLink only validates what came back.
+	if (provider.completeLink) {
+		const record = await consumeState(state, provider.id);
+		try {
+			const link = await provider.completeLink({ userId });
+			const credential = await credentials.put({
+				profileId: record.profile_id,
+				provider: provider.id,
+				kind: "api_key",
+				externalAccountId: link.externalAccountId,
+				displayName: link.displayName,
+				accessToken: link.accessToken,
+				actor: "oauth-callback",
+			});
+			return { provider: provider.id, credential, redirectTo: record.redirect_to || null };
+		} catch (err) {
+			err.redirectTo = record.redirect_to || null;
+			throw err;
+		}
+	}
+
 	if (typeof code !== "string" || !code) {
 		throw httpError("Missing authorization code", 400, "code_missing");
 	}

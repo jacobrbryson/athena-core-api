@@ -58,15 +58,25 @@ off for that car.
 ## Under the hood
 
 - Connector: `src/services/connectors/smartcar.js` (athena_smartcar_vehicle,
-  migration 0091); registry entry `smartcar` in
-  `src/services/connectors/registry.js` (no control_* scope; read_location is
-  asked, read only when `location_enabled`).
+  migration 0091), on Smartcar's **v3** platform since 2026-10-23: one
+  application token from the M2M client id/secret
+  (`iam.smartcar.com/oauth2/token`, client_credentials, 1 h, cached), reads at
+  `vehicle.api.smartcar.com/v3` with `sc-user-id`; cars from `/connections`,
+  readings from `/vehicles/:id/signals/:code`. No command is ever sent.
+- Connect: registry entry `smartcar` in `src/services/connectors/registry.js`
+  builds the URL itself (`buildAuthorize`: `application_id`,
+  `response_type=none`, state) and `completeLink` stores the returned
+  `user_id` as an encrypted `api_key` credential (`oauth.js` begin/complete
+  hooks). What a car shares is set under the dashboard's Vehicle Access.
 - Routes: `GET /api/v1/projects/property/vehicles/smartcar`,
   `PATCH /api/v1/projects/property/vehicles/smartcar/:id`
   (`src/controllers/propertySmartcar.js`).
 - Nightly `smartcar` step re-reads stale links; chat reads through
   `buildContext` / `get_car_status`.
 - Owner setup: a Smartcar app with redirect
-  `${PUBLIC_API_BASE_URL}/integrations/smartcar/callback`, secrets
-  `SMARTCAR_CLIENT_ID` / `SMARTCAR_CLIENT_SECRET`, `SMARTCAR_MODE=live`.
+  `${PUBLIC_API_BASE_URL}/integrations/smartcar/callback`; Vehicle Access set
+  to vehicle info, VIN, odometer, fuel, battery, lock status and location;
+  secrets `SMARTCAR_CLIENT_ID` / `SMARTCAR_CLIENT_SECRET` (the M2M "client_…"
+  pair) and `SMARTCAR_APPLICATION_ID` (Application details tab);
+  `SMARTCAR_MODE=live` (or `simulated`).
 - Tests: `src/services/connectors/smartcar.test.js`.

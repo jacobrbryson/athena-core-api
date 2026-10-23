@@ -138,6 +138,8 @@ async function finishCallback(provider, callback) {
 
 const callbackFrom = (source) => ({
 	code: source.code,
+	// Smartcar Connect (v3) returns the person as user_id, with no code.
+	userId: source.user_id,
 	state: source.state,
 	error: source.error,
 	errorDescription: source.error_description,

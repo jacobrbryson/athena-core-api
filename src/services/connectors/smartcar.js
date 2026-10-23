@@ -1,5 +1,7 @@
 const pool = require("../../helpers/db");
-const { providerGet } = require("./http");
+const credentials = require("../credentials");
+const { getSecret } = require("../secrets");
+const { getProvider } = require("./registry");
 
 /**
  * Smartcar — read straight from the car (docs/capabilities/smartcar.md,
@@ -7,10 +9,16 @@ const { providerGet } = require("./http");
  * whether it's locked, and — only for a car the person turned it on for —
  * where it is.
  *
- * Read-only by construction: the link asks no control_* scope, and nothing
- * here sends a command. The latest reading per car is kept in
- * athena_smartcar_vehicle so chat and the Vehicles tab don't wake the car on
- * every question; it is re-read when older than STALE_MS, and nightly.
+ * Smartcar v3: there is no per-person token. The app holds one application
+ * token from its machine-to-machine client id and secret (appToken), and each
+ * request names the person with `sc-user-id` — the user_id Connect returned,
+ * kept encrypted as this person's credential (see the registry entry). A
+ * person can only ever be read with their own stored id.
+ *
+ * Read-only by construction: nothing here sends a command. The latest
+ * reading per car is kept in athena_smartcar_vehicle so chat and the Vehicles
+ * tab don't wake the car on every question; it is re-read when older than
+ * STALE_MS, and nightly.
  *
  * A car is tied to one of the person's Property → Vehicles entries by VIN (or
  * their choice), and a linked car's odometer keeps that entry's mileage
@@ -21,6 +29,7 @@ const PROVIDER = "smartcar";
 const LABEL = "Smartcar";
 const STALE_MS = 6 * 3_600_000;
 const KM_PER_MI = 1.609344;
+const TIMEOUT_MS = 20_000;
 
 const KEYWORDS =
 	/\b(smartcar|odometer|mileage|miles on|gas tank|fuel|tank|charge level|battery level|range|locked|unlock(?:ed)?|lock(?:ed)? the car|where(?:'s| is) (?:my|the) (?:car|truck|bmw|suv|van)|my car|the car|bmw)\b/i;
@@ -29,43 +38,129 @@ function matches(message) {
 	return typeof message === "string" && KEYWORDS.test(message);
 }
 
-const READ = { invalidateOnAuthFailure: false };
-const toMi = (km) => (Number.isFinite(km) ? Math.round(km / KM_PER_MI) : null);
-const pct = (v) => (Number.isFinite(v) ? Math.round(v * 100) : null);
-const isId = (id) => typeof id === "string" && /^[A-Za-z0-9-]{8,64}$/.test(id);
+const isId = (id) => typeof id === "string" && /^[A-Za-z0-9_-]{4,64}$/.test(id);
+const fail = (message, status, code) => Object.assign(new Error(message), { status, code });
 
-/** One sub-resource; a car that can't answer it (an EV has no fuel) reads as null. */
-async function part(profileId, id, path) {
-	try {
-		return await providerGet(profileId, PROVIDER, `/vehicles/${encodeURIComponent(id)}${path}`, READ);
-	} catch (err) {
-		if (err?.code === "not_connected" && err.reason !== "revoked") throw err;
-		return null;
-	}
+// ---------------------------------------------------------------------------
+// The application token and the request
+// ---------------------------------------------------------------------------
+
+let cachedToken = null; // { value, expiresAt }
+
+/** One application token for every person, refreshed a minute before it lapses (1 h). */
+async function appToken({ fetchImpl = fetch, now = Date.now() } = {}) {
+	if (cachedToken && cachedToken.expiresAt - 60_000 > now) return cachedToken.value;
+	const [clientId, clientSecret] = await Promise.all([getSecret("SMARTCAR_CLIENT_ID"), getSecret("SMARTCAR_CLIENT_SECRET")]);
+	if (!clientId || !clientSecret) throw fail("Smartcar is not configured on this server", 503, "provider_unconfigured");
+	const res = await fetchImpl(getProvider(PROVIDER).tokenUrl, {
+		method: "POST",
+		headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+		body: new URLSearchParams({ grant_type: "client_credentials", client_id: clientId.trim(), client_secret: clientSecret.trim() }),
+		signal: AbortSignal.timeout(TIMEOUT_MS),
+	});
+	const body = await res.json().catch(() => ({}));
+	if (!res.ok || !body.access_token) throw fail(`Smartcar refused the application credentials (${res.status})`, 502, "provider_error");
+	cachedToken = { value: body.access_token, expiresAt: now + (Number(body.expires_in) || 3600) * 1000 };
+	return cachedToken.value;
 }
 
+/** This person's Smartcar user id, or a not_connected error the callers already handle. */
+async function userIdOf(profileId) {
+	const link = await credentials.get(profileId, PROVIDER, { actor: "athena" });
+	if (!link?.accessToken) throw fail("Smartcar is not connected", 409, "not_connected");
+	return link.accessToken;
+}
+
+/** GET a v3 path for one person. 404/422-style "the car can't say" answers come back as null. */
+async function v3(profileId, path, { userId, fetchImpl = fetch } = {}) {
+	const who = userId || (await userIdOf(profileId));
+	const token = await appToken({ fetchImpl });
+	const res = await fetchImpl(`${getProvider(PROVIDER).apiBase}${path}`, {
+		headers: { Authorization: `Bearer ${token}`, "sc-user-id": who, Accept: "application/json" },
+		signal: AbortSignal.timeout(TIMEOUT_MS),
+	});
+	if (res.status === 401) {
+		cachedToken = null;
+		throw fail("Smartcar refused the request", 502, "provider_error");
+	}
+	if (res.status === 403) throw Object.assign(fail("Smartcar access for this account was removed", 409, "not_connected"), { reason: "revoked" });
+	if (!res.ok) return null;
+	return res.json().catch(() => null);
+}
+
+// ---------------------------------------------------------------------------
+// Reading a car
+// ---------------------------------------------------------------------------
+
+/** The cars this person connected: id plus what Smartcar already knows about each. */
+async function listCars(profileId, { userId, fetchImpl } = {}) {
+	const who = userId || (await userIdOf(profileId));
+	const out = new Map();
+	for (let page = 1; page <= 5; page += 1) {
+		const q = new URLSearchParams({ "filter[userId]": who, "page[number]": String(page), "page[size]": "50" });
+		const data = await v3(profileId, `/connections?${q}`, { userId: who, fetchImpl });
+		const rows = Array.isArray(data?.data) ? data.data : [];
+		for (const c of rows) {
+			const id = c?.relationships?.vehicle?.data?.id;
+			if (isId(id) && !out.has(id)) out.set(id, c.attributes?.vehicle || {});
+		}
+		if (rows.length < 50) break;
+	}
+	return out;
+}
+
+const SIGNALS = {
+	odometer: "odometer-traveleddistance",
+	fuel: "internalcombustionengine-fuellevel",
+	fuelRange: "internalcombustionengine-range",
+	charge: "tractionbattery-stateofcharge",
+	chargeRange: "tractionbattery-range",
+	locked: "closure-islocked",
+	location: "location-preciselocation",
+	vin: "vehicleidentification-vin",
+};
+
+/** The body of one signal, or null when the car can't report it. */
+function bodyOf(data) {
+	const attrs = data?.data?.attributes || data?.attributes || null;
+	if (!attrs) return null;
+	if (attrs.status?.value && attrs.status.value !== "SUCCESS") return null;
+	return attrs.body ?? null;
+}
+
+/** A distance body in miles, whichever unit the car reports in. */
+function miles(body) {
+	const v = Number(body?.value);
+	if (!Number.isFinite(v)) return null;
+	return /^mi/i.test(String(body?.unit || "km")) ? Math.round(v) : Math.round(v / KM_PER_MI);
+}
+const percent = (body) => (Number.isFinite(Number(body?.value)) ? Math.round(Number(body.value)) : null);
+
 /** Everything worth keeping about one car, live. Location only when asked for. */
-async function readCar(profileId, id, { location = false } = {}) {
-	const [info, vin, odometer, fuel, battery, security, where] = await Promise.all([
-		part(profileId, id, ""),
-		part(profileId, id, "/vin"),
-		part(profileId, id, "/odometer"),
-		part(profileId, id, "/fuel"),
-		part(profileId, id, "/battery"),
-		part(profileId, id, "/security"),
-		location ? part(profileId, id, "/location") : Promise.resolve(null),
-	]);
+async function readCar(profileId, id, { location = false, userId, fetchImpl, info = {} } = {}) {
+	const who = userId || (await userIdOf(profileId));
+	const codes = Object.entries(SIGNALS).filter(([k]) => location || k !== "location");
+	const got = {};
+	await Promise.all(codes.map(async ([key, code]) => {
+		got[key] = bodyOf(await v3(profileId, `/vehicles/${encodeURIComponent(id)}/signals/${code}`, { userId: who, fetchImpl }).catch((err) => {
+			if (err?.code === "not_connected") throw err;
+			return null;
+		}));
+	}));
+	const loc = got.location;
+	const fuel = percent(got.fuel);
+	const charge = percent(got.charge);
 	return {
-		make: info?.make || null,
-		model: info?.model || null,
-		year: Number.isInteger(info?.year) ? info.year : null,
-		vin: typeof vin?.vin === "string" ? vin.vin.toUpperCase().slice(0, 17) : null,
-		odometerMi: toMi(odometer?.distance),
-		fuel: fuel ? { percent: pct(fuel.percentRemaining), rangeMi: toMi(fuel.range) } : null,
-		battery: battery ? { percent: pct(battery.percentRemaining), rangeMi: toMi(battery.range) } : null,
-		locked: typeof security?.isLocked === "boolean" ? security.isLocked : null,
-		location: where && Number.isFinite(where.latitude) && Number.isFinite(where.longitude)
-			? { latitude: Math.round(where.latitude * 1e6) / 1e6, longitude: Math.round(where.longitude * 1e6) / 1e6 }
+		make: info.make || null,
+		model: info.model || null,
+		year: Number.isInteger(info.year) ? info.year : null,
+		vin: typeof got.vin?.value === "string" ? got.vin.value.toUpperCase().slice(0, 17) : null,
+		odometerMi: miles(got.odometer),
+		fuel: fuel !== null ? { percent: fuel, rangeMi: miles(got.fuelRange) } : null,
+		battery: charge !== null ? { percent: charge, rangeMi: miles(got.chargeRange) } : null,
+		locked: typeof got.locked?.value === "boolean" ? got.locked.value : typeof got.locked?.isLocked === "boolean" ? got.locked.isLocked : null,
+		location: loc && Number.isFinite(loc.latitude) && Number.isFinite(loc.longitude)
+			? { latitude: Math.round(loc.latitude * 1e6) / 1e6, longitude: Math.round(loc.longitude * 1e6) / 1e6 }
 			: null,
 	};
 }
@@ -86,15 +181,16 @@ function parse(v) {
  * over to a linked vehicle when it is higher than what's on file.
  */
 async function sync(profileId, { now = new Date() } = {}) {
-	const list = await providerGet(profileId, PROVIDER, "/vehicles");
-	const ids = (list?.vehicles || []).filter(isId);
+	const userId = await userIdOf(profileId);
+	const cars = await listCars(profileId, { userId });
+	const ids = [...cars.keys()];
 	const [rows] = await pool.query("SELECT smartcar_id, vehicle_id, location_enabled FROM athena_smartcar_vehicle WHERE profile_id = ?", [profileId]);
 	const byId = new Map(rows.map((r) => [r.smartcar_id, r]));
 	const [mine] = await pool.query("SELECT id, vin, odometer FROM athena_property_vehicle WHERE profile_id = ?", [profileId]);
 	for (const id of ids) {
 		const prev = byId.get(id);
 		const locationOn = !!Number(prev?.location_enabled);
-		const car = await readCar(profileId, id, { location: locationOn });
+		const car = await readCar(profileId, id, { location: locationOn, userId, info: cars.get(id) });
 		let vehicleId = prev?.vehicle_id || null;
 		if (!vehicleId && car.vin) vehicleId = mine.find((v) => v.vin && v.vin === car.vin)?.id || null;
 		await pool.query(
@@ -273,7 +369,11 @@ module.exports = {
 	PROVIDER,
 	LABEL,
 	matches,
+	appToken,
+	listCars,
 	readCar,
+	SIGNALS,
+	_resetToken: () => (cachedToken = null),
 	sync,
 	refreshIfStale,
 	stored,

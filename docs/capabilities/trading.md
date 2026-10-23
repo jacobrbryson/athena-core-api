@@ -13,7 +13,7 @@ triggers: [day trade, day trading, trading, watchlist, what are we watching, set
 
 During market hours I read real market data. That means prices, one- and five-minute candles, quotes, volume and headlines, each with the time it was observed. I tell you whether the market is open and whether the data is real-time, delayed or stale.
 
-From the morning's most active stocks and top gainers, I keep a short watchlist of three to five liquid names you can afford. I filter out penny stocks and wide spreads. For each one I say why it's on the list.
+From the morning's most active stocks and top gainers, I keep a short watchlist of three to five liquid names you can afford. I filter out penny stocks, wide spreads, ETFs, leveraged and inverse funds, warrants and rights. For each one I say why it's on the list.
 
 After 9:45 AM I check each stock against your strategy. That's an opening-range breakout with a VWAP trend. The rules: price above a flat or rising VWAP, higher lows, a closed candle above the 9:30–9:45 high, a pullback that holds that level, volume, an acceptable spread, a stop from the chart structure that fits your risk budget, at least 2:1 reward to risk before the next resistance, and no scheduled event or data problem.
 

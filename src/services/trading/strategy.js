@@ -152,11 +152,12 @@ function evaluate(input) {
 
 	// ---- data quality ------------------------------------------------------
 	const lastBarEnd = last ? last.t + ind.MINUTE : null;
-	const barAge = lastBarEnd ? (asOf - lastBarEnd) / 1000 : null;
+	const barAge = lastBarEnd ? Math.max(0, (asOf - lastBarEnd) / 1000) : null;
 	const quote = input.simulated && last
 		? { bid: last.c * (1 - params.modelSpreadPct / 2), ask: last.c * (1 + params.modelSpreadPct / 2), t: asOf, modelled: true }
 		: input.quote || null;
-	const quoteAge = quote?.t ? (asOf - quote.t) / 1000 : null;
+	// Clocks differ by a second or two; a quote stamped "after" now is as fresh as now, never fresher.
+	const quoteAge = quote?.t ? Math.max(0, (asOf - quote.t) / 1000) : null;
 	const feedCanConfirm = params.confirmFeeds.includes(input.feed);
 	const data = {
 		feed: input.feed,

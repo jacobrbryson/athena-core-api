@@ -134,7 +134,7 @@ async function refreshWatchlist(profileId, date, phase, minutesIn, settledCash, 
 	const manual = existing.filter((w) => w.source === "manual").map((w) => w.symbol);
 	const scan = await scanner.scan({ feed, minutesIn, settledCash, spyChange, extraSymbols: manual });
 	const ranked = await Promise.all(scan.ranked.map(async (r, i) => ({
-		symbol: r.symbol, rank: i + 1, score: r.score, company_name: (await alpaca.assetName(r.symbol)).name,
+		symbol: r.symbol, rank: i + 1, score: r.score, company_name: r.company_name,
 		reasons: [...r.reasons, ...(r.catalyst ? [`News: ${r.catalyst.headline}`] : [])],
 	})));
 	// After the opening range, scanner names already watched stay on (their

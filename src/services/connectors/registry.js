@@ -359,41 +359,65 @@ const PROVIDERS = {
 	// -----------------------------------------------------------------
 	// Smartcar — the car's own odometer, fuel/charge, locks and location
 	// (docs/capabilities/smartcar.md). Added on the owner's instruction,
-	// 2026-10-20. Read-only: no control_* scope is asked, so nothing here can
-	// lock, unlock or start a car. read_location is asked at link time (the
-	// owner chose to include it), but a car's location is only read and stored
+	// 2026-10-20; moved to Smartcar's v3 platform 2026-10-23, because new
+	// Smartcar apps only issue machine-to-machine credentials and v2 retires
+	// on 2026-12-01.
+	//
+	// v3 is not per-person OAuth. Connect is sent the APPLICATION id (not the
+	// M2M client id) with response_type=none and returns the person as
+	// `user_id`; that id is what is stored (kind api_key, encrypted like any
+	// credential). Reads use one application token from the M2M client id and
+	// secret (smartcar.js), naming the person in `sc-user-id`. Read-only:
+	// nothing here sends a command. Which data is shared is set under the
+	// dashboard's Vehicle Access; a car's location is only read and stored
 	// once the person turns it on for that car (smartcar.js, location_enabled).
 	// -----------------------------------------------------------------
 	smartcar: {
 		id: "smartcar",
 		label: "Smartcar",
 		authorizeUrl: env("SMARTCAR_AUTHORIZE_URL", "https://connect.smartcar.com/oauth/authorize"),
-		tokenUrl: env("SMARTCAR_TOKEN_URL", "https://auth.smartcar.com/oauth/token"),
-		// Smartcar disconnects per vehicle through its API, not an OAuth revoke
-		// endpoint; disconnect clears our side and the person can remove access in
-		// Smartcar's own dashboard. Documented in smartcar.md, not silent.
+		tokenUrl: env("SMARTCAR_TOKEN_URL", "https://iam.smartcar.com/oauth2/token"),
+		// Disconnect clears our side; the person removes Smartcar's own access
+		// from Smartcar or their car maker's app. Documented in smartcar.md.
 		revokeUrl: null,
-		scopes: ["read_vehicle_info", "read_vin", "read_odometer", "read_fuel", "read_battery", "read_security", "read_location"],
+		scopes: [],
 		scopeSeparator: " ",
 		clientIdSecret: "SMARTCAR_CLIENT_ID",
 		clientSecretSecret: "SMARTCAR_CLIENT_SECRET",
 		pkce: false,
-		// "live" for real cars; "simulated" exercises the flow with Smartcar's fake vehicles.
-		authorizeParams: { mode: env("SMARTCAR_MODE", "live") },
-		tokenAuth: "basic",
+		authorizeParams: {},
+		tokenAuth: "body",
 		consentType: null,
-		rotatesRefreshToken: true,
-		apiBase: env("SMARTCAR_API_BASE", "https://api.smartcar.com/v2.0"),
+		rotatesRefreshToken: false,
+		apiBase: env("SMARTCAR_API_BASE", "https://vehicle.api.smartcar.com/v3"),
 		identify: null,
-		// Inlined for the same import-cycle reason as Whoop's.
-		identifyAsync: async (_tokens, { accessToken, apiBase }) => {
-			const response = await fetch(`${apiBase}/user`, {
-				headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
-				signal: AbortSignal.timeout(10000),
+		buildAuthorize: async ({ state, redirectUri }) => {
+			const { getSecret } = require("../secrets");
+			const applicationId = await getSecret("SMARTCAR_APPLICATION_ID");
+			if (!applicationId) {
+				throw Object.assign(new Error("Smartcar is not configured on this server (SMARTCAR_APPLICATION_ID)"), {
+					status: 503,
+					code: "provider_unconfigured",
+				});
+			}
+			const params = new URLSearchParams({
+				application_id: applicationId.trim(),
+				response_type: "none",
+				redirect_uri: redirectUri,
+				state,
+				mode: env("SMARTCAR_MODE", "live"),
+				approval_prompt: "force",
 			});
-			if (!response.ok) return null;
-			const data = await response.json();
-			return data?.id ? { externalAccountId: `smartcar:${String(data.id).slice(0, 100)}`, displayName: "Smartcar" } : null;
+			return `${env("SMARTCAR_AUTHORIZE_URL", "https://connect.smartcar.com/oauth/authorize")}?${params}`;
+		},
+		completeLink: async ({ userId }) => {
+			if (typeof userId !== "string" || !/^[A-Za-z0-9_-]{4,100}$/.test(userId)) {
+				throw Object.assign(new Error("Smartcar didn't say which account was connected"), {
+					status: 400,
+					code: "user_missing",
+				});
+			}
+			return { externalAccountId: `smartcar:${userId}`, displayName: "Smartcar", accessToken: userId };
 		},
 	},
 };

@@ -273,6 +273,10 @@ describe('scanner', () => {
     expect(r.score).toBeGreaterThan(0);
     expect(r.reasons.join(' ')).toMatch(/gapped/);
   });
+  test('tells funds, leveraged products and warrants from common stock', () => {
+    for (const n of ['ProShares UltraPro QQQ', 'iShares MSCI Brazil ETF', 'Direxion Daily Semiconductor Bull 3X Shares', 'SPDR S&P 500 ETF Trust', 'Tradr 2X Long SNDK Daily ETF', 'ProShares Short Russell2000', 'Blue Gold Limited Warrant', 'OceanLight Acquisition Corporation Rights', null]) expect([n, scanner.isFundName(n)]).toEqual([n, true]);
+    for (const n of ['Intel Corporation', 'Nokia Oyj', 'SoFi Technologies, Inc.', 'Ford Motor Company', 'Infosys Limited American Depositary Shares', 'Hub Cyber Security Ltd. Ordinary Shares', 'Northern Trust Corporation', 'Ultra Clean Holdings, Inc.', 'Invesco Ltd.']) expect([n, scanner.isFundName(n)]).toEqual([n, false]);
+  });
   test('skips penny stocks, wide spreads, unaffordable shares and decliners', () => {
     const base = { spyChange: 0, minutesIn: 60, settledCash: 423, params: {} };
     expect(scanner.scoreSnapshot(snap({ trade: { p: 3 }, prevDaily: { c: 2.8, v: 5e7 } }), base).skip).toMatch(/price/);
