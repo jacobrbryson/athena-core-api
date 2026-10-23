@@ -138,6 +138,12 @@ async function maintenance({ dryRun }) {
 	await step("vehicleRecalls", () => require("../services/vehicleRecalls").refreshEveryone(), results);
 	await step("smartcar", () => require("../services/connectors/smartcar").syncEveryone(), results);
 	await step("keepGroceries", () => require("../services/connectors/googleKeep").observeEveryone(), results);
+	// Webull's 2FA token has a fixed ~15-day expiry: renew it three nights
+	// ahead so the owner never has to re-run the link script (webull.md).
+	await step("webullToken", () => require("../services/connectors/webull").renewEveryone(), results);
+	// Trading: measure what each day's signals went on to do (outcome columns
+	// only — assessments are never rewritten), refresh daily summaries, prune.
+	await step("tradingOutcomes", () => require("../services/trading/outcomes").nightly(), results);
 	await dreamSteps(results);
 	return results;
 }

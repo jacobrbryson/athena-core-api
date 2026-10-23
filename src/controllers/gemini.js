@@ -8,6 +8,7 @@ const integrationService = require("../services/integration");
 const connectorContext = require("../services/connectors/context");
 const heartRate = require("../services/heartRate");
 const healthPlan = require("../services/healthPlan");
+const tradingContext = require("../services/trading/context");
 const toolIntent = require("../services/toolIntent");
 const webSearch = require("../services/webSearch");
 const travel = require("../services/travel");
@@ -394,6 +395,19 @@ async function processAiResponse(session, message, clients, ctx = {}) {
                 })
                 .catch((e) => {
                   console.warn("[gemini] health plan context failed:", e.message);
+                  return null;
+                })
+            : null,
+          // Day trading (Family → Trading): the rule engine's live watchlist,
+          // signals, sizing and the week's results. Adults only (buildContext
+          // checks); never throws.
+          tradingContext.matches(message)
+            ? tradingContext
+                .buildContext(groundingProfileId, {
+                  audience: groundingAudience,
+                })
+                .catch((e) => {
+                  console.warn("[gemini] trading context failed:", e.message);
                   return null;
                 })
             : null,

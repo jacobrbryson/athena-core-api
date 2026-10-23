@@ -1,0 +1,13 @@
+DROP TABLE IF EXISTS trading_daily_summaries;
+DROP TABLE IF EXISTS trading_alerts;
+DROP TABLE IF EXISTS trading_backtest_runs;
+DROP TABLE IF EXISTS trading_journal;
+DROP TABLE IF EXISTS trading_positions;
+DROP TABLE IF EXISTS trading_signal_events;
+DROP TABLE IF EXISTS trading_signals;
+DROP TABLE IF EXISTS trading_market_snapshots;
+DROP TABLE IF EXISTS trading_candles;
+DROP TABLE IF EXISTS trading_watchlists;
+DROP TABLE IF EXISTS trading_strategy_versions;
+DROP TABLE IF EXISTS trading_cash_ledger;
+DROP TABLE IF EXISTS trading_accounts;

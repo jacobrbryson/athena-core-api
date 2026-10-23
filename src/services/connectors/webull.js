@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const pool = require("../../helpers/db");
 const credentials = require("../credentials");
 
 /**
@@ -12,12 +13,20 @@ const credentials = require("../credentials");
  * needs the person's phone, so it lives in scripts/addWebullLogin.js and is
  * never attempted here.
  *
+ * The approved token has a fixed expiry (about 15 days), so the nightly job
+ * renews it through Webull's refresh call a few days ahead (renewEveryone).
+ * A renewed token is kept only when Webull says it is NORMAL; if Webull wants
+ * a new SMS approval instead, nothing is faked — the old token keeps working
+ * until it lapses, and on the last night before that the link is marked
+ * needs_reauth so the Finance tab says why.
+ *
  * The link is a `webull` api_key credential the owner adds with that script.
  * Its columns are used like this:
  *
  *   external_account_id the App Key
  *   access_token_enc    the App Secret (signs every request; never sent)
  *   refresh_token_enc   the 2FA access token, when the account has 2FA on
+ *   expires_at          when that token lapses, as Webull reported it
  *   token_type          "production" or "sandbox"
  *   display_name        "Webull ····1234", the brokerage account number tail
  *
@@ -31,17 +40,23 @@ const PROVIDER = "webull";
 const LABEL = "Webull";
 const HOW_TO_LINK = "that the owner can link a Webull brokerage account for them — there is no Connect button for it in the app";
 const HOW_TO_RELINK =
-	"Webull refused the saved API key or its sign-in token lapsed (it does after 15 days without use), and the owner re-running the Webull link script is the fix";
+	"Webull refused the saved API key, or its sign-in token lapsed and Webull wanted a new text-message approval to renew it, and the owner re-running the Webull link script is the fix";
 const TIMEOUT_MS = 12000;
 // Webull allows balances/positions/orders 2 requests per 2 seconds per App
 // Key in production. One cached read per five minutes stays far inside it.
 const CACHE_MS = 5 * 60_000;
 const SPACING_MS = 1100;
+// Renew once the token is this close to lapsing: three nightly tries.
+const RENEW_WITHIN_MS = 3 * 86400_000;
+// Closer than this, tonight's run is the last one before it lapses.
+const LAST_NIGHT_MS = 30 * 3600_000;
+// In chat, mention a token that a night's renewal has already missed.
+const WARN_WITHIN_MS = 2 * 86400_000;
 
 const HOSTS = { production: "api.webull.com", sandbox: "api.sandbox.webull.com" };
 
-// The only paths this connector may sign. Reads, plus the two token calls the
-// link script needs.
+// The only paths this connector may sign. Reads, the two token calls the link
+// script needs, and the refresh the nightly renewal uses.
 const READ_PATHS = new Set([
 	"/trading/accounts/list",
 	"/trading/assets/balances/get",
@@ -50,6 +65,7 @@ const READ_PATHS = new Set([
 	"/trading/orders/historical-orders/list",
 	"/auth/tokens/create",
 	"/auth/tokens/check",
+	"/openapi/auth/token/refresh",
 ]);
 
 const KEYWORDS =
@@ -154,7 +170,7 @@ async function request(link, method, path, { query = {}, body } = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// 2FA token (used by the link script only)
+// 2FA token (create/check for the link script, refresh for the nightly job)
 // ---------------------------------------------------------------------------
 
 /** Webull's token reply, with the expiry under whichever name it used. */
@@ -168,6 +184,14 @@ async function createToken(link) {
 
 async function checkToken(link, token) {
 	return tokenOf(await request(link, "POST", "/auth/tokens/check", { body: { token } }));
+}
+
+/**
+ * Webull's token refresh, as the official SDK sends it (RefreshTokenRequest,
+ * v3). The public docs don't describe the reply, so renew() checks it.
+ */
+async function refreshToken(link) {
+	return tokenOf(await request(link, "POST", "/openapi/auth/token/refresh", { body: { token: link.token } }));
 }
 
 // ---------------------------------------------------------------------------
@@ -278,6 +302,7 @@ async function linkFor(profileId) {
 		appKey: credential.externalAccountId,
 		appSecret: credential.accessToken,
 		token: credential.refreshToken || null,
+		tokenExpiresAt: credential.expiresAt ? new Date(credential.expiresAt).getTime() || null : null,
 		environment: credential.tokenType === "sandbox" ? "sandbox" : "production",
 	};
 }
@@ -347,7 +372,7 @@ async function snapshot(profileId, { fresh = false } = {}) {
 			await pause(SPACING_MS);
 			read.push(await readAccount(link, account, { historyDays: 30 }));
 		}
-		return { environment: link.environment, accounts: read };
+		return { environment: link.environment, token_expires_at: link.tokenExpiresAt ? new Date(link.tokenExpiresAt).toISOString() : null, accounts: read };
 	});
 	const totals = summarize(result.accounts);
 	const snap = { ...result, totals, checked_at: new Date().toISOString() };
@@ -379,6 +404,102 @@ function invalidate(profileId) {
 }
 
 // ---------------------------------------------------------------------------
+// Token renewal (nightly)
+// ---------------------------------------------------------------------------
+
+function saveToken(link, token, expiresAt) {
+	return credentials.updateTokens(link.uuid, {
+		accessToken: link.appSecret,
+		refreshToken: token,
+		expiresAt: expiresAt ? new Date(expiresAt) : undefined,
+		actor: "webull-renew",
+	});
+}
+
+/**
+ * Keep one person's 2FA token from lapsing. Does nothing until the token is
+ * within RENEW_WITHIN_MS of its expiry (a link stored without one has it
+ * looked up first). Never asks for an SMS approval: if Webull won't hand back
+ * a NORMAL token, the current one is left alone, and only on the last night
+ * before it lapses is the link marked needs_reauth. (Marking it sooner would
+ * cut reads off early: markNeedsReauth clears the App Secret.)
+ */
+async function renew(profileId, { now = Date.now() } = {}) {
+	const link = await linkFor(profileId);
+	if (!link.token) return { renewed: false, reason: "no_2fa" };
+	let expiresAt = link.tokenExpiresAt;
+	if (!expiresAt) {
+		let current;
+		try {
+			current = await checkToken(link, link.token);
+		} catch (err) {
+			if (err.code !== "auth_rejected") throw err;
+			current = { status: null, detail: err.message };
+		}
+		if (current.status !== "NORMAL") {
+			await credentials.markNeedsReauth(link.uuid, { actor: "webull-renew", detail: current.detail || `Webull says the sign-in token is ${current.status || "unknown"}` });
+			invalidate(profileId);
+			return { renewed: false, reason: "rejected" };
+		}
+		if (!current.expiresAt) return { renewed: false, reason: "no_expiry" };
+		expiresAt = current.expiresAt;
+		await saveToken(link, link.token, expiresAt);
+		if (expiresAt - now > RENEW_WITHIN_MS) return { renewed: false, reason: "not_due", expiresAt };
+		await pause(SPACING_MS);
+	}
+	if (expiresAt - now > RENEW_WITHIN_MS) return { renewed: false, reason: "not_due", expiresAt };
+
+	let why;
+	try {
+		let next = await refreshToken(link);
+		if (next.token && next.status !== "NORMAL") {
+			await pause(SPACING_MS);
+			const checked = await checkToken(link, next.token);
+			next = { token: next.token, status: checked.status, expiresAt: checked.expiresAt || next.expiresAt };
+		}
+		if (next.token && next.status === "NORMAL") {
+			await saveToken(link, next.token, next.expiresAt);
+			invalidate(profileId);
+			return { renewed: true, expiresAt: next.expiresAt };
+		}
+		why = next.status === "PENDING" ? "Webull asked for a new text-message approval" : `Webull returned token status ${next.status || "none"}`;
+	} catch (err) {
+		// A refused refresh doesn't mean the current token is dead; reads will
+		// say so themselves if it is.
+		why = err.message;
+	}
+	const lapses = new Date(expiresAt).toISOString();
+	if (expiresAt - now > LAST_NIGHT_MS) {
+		console.warn(`[webull] token renewal for ${profileId} did not succeed (${why}); it lapses ${lapses}, retrying tomorrow night`);
+		return { renewed: false, reason: "needs_approval", expiresAt };
+	}
+	await credentials.markNeedsReauth(link.uuid, {
+		actor: "webull-renew",
+		detail: `Webull 2FA token lapses ${lapses} and could not be renewed automatically (${why}). The owner re-running scripts/addWebullLogin.js approves a new one.`,
+	});
+	invalidate(profileId);
+	return { renewed: false, reason: "needs_approval", flagged: true, expiresAt };
+}
+
+/** Nightly: every live Webull link. One failure never stops the rest. */
+async function renewEveryone() {
+	const [rows] = await pool.query("SELECT DISTINCT profile_id FROM user_credential WHERE provider = 'webull' AND status = 'active'");
+	let renewed = 0, waiting = 0, flagged = 0, failed = 0;
+	for (const { profile_id: profileId } of rows) {
+		try {
+			const result = await renew(Number(profileId));
+			if (result.renewed) renewed += 1;
+			else if (result.flagged || result.reason === "rejected") flagged += 1;
+			else if (result.reason === "needs_approval") waiting += 1;
+		} catch (err) {
+			failed += 1;
+			console.warn("[webull] nightly token renewal failed:", profileId, err.message);
+		}
+	}
+	return { profiles: rows.length, renewed, waiting, flagged, failed };
+}
+
+// ---------------------------------------------------------------------------
 // Grounding + tools
 // ---------------------------------------------------------------------------
 
@@ -401,11 +522,16 @@ function formatAccount(a) {
 
 async function buildContext(profileId) {
 	const snap = await snapshot(profileId);
-	if (!snap.accounts.length) return `${LABEL}: the linked API key lists no brokerage accounts.`;
+	const lapsing =
+		snap.token_expires_at && Date.parse(snap.token_expires_at) - Date.now() < WARN_WITHIN_MS
+			? `Webull's sign-in approval runs out ${snap.token_expires_at} and the nightly renewal hasn't managed to renew it; if it lapses, the owner re-running the Webull link script fixes it.`
+			: null;
+	if (!snap.accounts.length) return [`${LABEL}: the linked API key lists no brokerage accounts.`, lapsing].filter(Boolean).join("\n");
 	return [
 		`${LABEL} brokerage, read-only (checked ${snap.checked_at}). Figures are Webull's own. You cannot place, change or cancel orders, and you must not give personalized buy/sell advice as if licensed:`,
 		...snap.accounts.map(formatAccount),
-	].join("\n");
+		lapsing,
+	].filter(Boolean).join("\n");
 }
 
 const FUNCTION_DECLARATIONS = [
@@ -437,6 +563,9 @@ module.exports = {
 	request,
 	createToken,
 	checkToken,
+	refreshToken,
+	renew,
+	renewEveryone,
 	normalizeAccount,
 	normalizeBalance,
 	normalizePosition,

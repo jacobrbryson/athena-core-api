@@ -131,6 +131,7 @@ module.exports = (clients) => {
 	router.use("/attention", require('./attention'));
 	router.use("/workouts", require("./workouts"));
 	router.use("/finance", require("./finance"));
+	router.use("/trading", require("./trading"));
 	router.use("/projects", require("./projects"));
 	router.use("/integrations", integrationRouter);
 	router.use("/", companionRouter);

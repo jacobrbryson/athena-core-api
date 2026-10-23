@@ -12,8 +12,9 @@
  * With 2FA on (the default), Webull texts a code to the account's phone and
  * shows an "OpenAPI" prompt in the Webull app (Menu → Messages → OpenAPI
  * Notifications if it doesn't pop up). Enter the code there within five
- * minutes; this script waits for it. The token lapses after 15 days with no
- * API calls, and re-running this script is the fix.
+ * minutes; this script waits for it. The token has a fixed expiry (about 15
+ * days), stored with it; the nightly job renews it ahead of that. Re-running
+ * this script is the fix only if Webull wants a new approval to renew.
  *
  * Then lists the accounts and prints what Athena would see, so a field Webull
  * renamed shows up here rather than as a blank on the Finance tab. Stores the
@@ -39,6 +40,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   if (rows.length !== 1) throw new Error(`Expected exactly one profile for ${account}, found ${rows.length}`);
   const profileId = rows[0].id;
   const link = { appKey, appSecret, token: null, environment };
+  let tokenExpiresAt = null;
   console.log(`Webull ${environment}, signing with ${process.env.WEBULL_SIGNATURE_ALGORITHM === 'HMAC-SHA1' ? 'HMAC-SHA1' : 'HMAC-SHA256'}.`);
 
   if (twoFactor) {
@@ -62,6 +64,7 @@ Update the Webull app on your phone, sign in with notifications on, then run thi
     }
     if (t.status !== 'NORMAL') throw new Error(`Token was not approved (status ${t.status}). Run the script again.`);
     link.token = t.token;
+    tokenExpiresAt = t.expiresAt;
     console.log(`Token approved${t.expiresAt ? `, Webull says it expires ${new Date(t.expiresAt).toISOString()}` : ''}.`);
   }
 
@@ -88,6 +91,7 @@ Update the Webull app on your phone, sign in with notifications on, then run thi
     profileId, provider: 'webull', kind: 'api_key',
     externalAccountId: appKey, displayName: tail ? `Webull ····${tail}` : 'Webull',
     accessToken: appSecret, refreshToken: link.token || undefined,
+    expiresAt: tokenExpiresAt ? new Date(tokenExpiresAt) : undefined,
     tokenType: environment, actor: 'owner-script',
   });
   console.log(`\nStored Webull credential (${saved.status}) for ${account}`);
