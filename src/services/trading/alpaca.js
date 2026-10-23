@@ -32,7 +32,7 @@ async function credentials() {
 	const [key, secret, feed] = await Promise.all([
 		secrets.getSecret("ALPACA_API_KEY_ID").catch(() => null),
 		secrets.getSecret("ALPACA_API_SECRET_KEY").catch(() => null),
-		secrets.getSecret("ALPACA_DATA_FEED").catch(() => null),
+		secrets.getSecret("ALPACA_DATA_FEED", { optional: true }).catch(() => null),
 	]);
 	if (!key || !secret) throw fail("Market data isn't configured (no Alpaca key).", "not_configured");
 	const f = String(feed || "iex").toLowerCase();

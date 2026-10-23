@@ -24,7 +24,7 @@ async function extraEvents() {
 	if (Date.now() - extraCache.at < 10 * 60_000) return extraCache.list;
 	let list = [];
 	try {
-		const raw = await secrets.getSecret("TRADING_EXTRA_EVENTS").catch(() => null);
+		const raw = await secrets.getSecret("TRADING_EXTRA_EVENTS", { optional: true }).catch(() => null);
 		const parsed = raw ? JSON.parse(raw) : [];
 		list = (Array.isArray(parsed) ? parsed : [])
 			.filter((e) => /^\d{4}-\d{2}-\d{2}$/.test(e?.date) && /^\d{1,2}:\d{2}$/.test(e?.time) && e?.name)

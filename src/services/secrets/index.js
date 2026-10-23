@@ -108,7 +108,10 @@ async function getSecret(name, opts = {}) {
 	if (typeof name !== "string" || !name.trim()) {
 		throw new Error("getSecret() requires a secret name");
 	}
-	const { forceRefresh = false, version = "latest" } = opts;
+	// `optional`: a setting with a default (ALPACA_DATA_FEED, TRADING_EXTRA_EVENTS).
+	// Its absence is the normal state, so NOT_FOUND is cached for the full TTL
+	// and not logged. Every other failure still warns.
+	const { forceRefresh = false, version = "latest", optional = false } = opts;
 
 	// Env always wins, and is never cached — process.env is already the cache,
 	// and tests mutate it between cases.
@@ -137,8 +140,9 @@ async function getSecret(name, opts = {}) {
 			// next call retry immediately.
 			const code = err?.code;
 			if (code === 5 || code === 7) {
-				cache.set(name, { value: null, expiresAt: Date.now() + MISS_TTL_MS });
+				cache.set(name, { value: null, expiresAt: Date.now() + (optional && code === 5 ? ttl() : MISS_TTL_MS) });
 			}
+			if (optional && code === 5) return null;
 			console.warn(
 				`[secrets] Could not read ${name} from Secret Manager:`,
 				err?.message || err

@@ -101,6 +101,15 @@ describe("getSecret", () => {
 		expect(mockAccess).toHaveBeenCalledTimes(1);
 	});
 
+	it("stays quiet about a missing optional secret, but not about other failures", async () => {
+		mockAccess.mockRejectedValue(notFound());
+		expect(await secrets.getSecret("TEST_SECRET", { optional: true })).toBeNull();
+		expect(console.warn).not.toHaveBeenCalled();
+		mockAccess.mockRejectedValue(Object.assign(new Error("PERMISSION_DENIED"), { code: 7 }));
+		expect(await secrets.getSecret("OTHER_SECRET", { optional: true })).toBeNull();
+		expect(console.warn).toHaveBeenCalledTimes(1);
+	});
+
 	it("retries immediately after a transient failure", async () => {
 		mockAccess.mockRejectedValueOnce(
 			Object.assign(new Error("UNAVAILABLE"), { code: 14 })
