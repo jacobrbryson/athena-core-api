@@ -1,24 +1,38 @@
 ---
 id: android-companion
-title: Android Companion dashboard
-summary: I have an Android dashboard build that shares Companion's screens and links the phone after Google sign-in.
+title: Android app
+summary: My Android app has the same screens as Companion, signs in with Google, and adds what only a phone can do — notifications, hands-free, live heart rate.
 where: Athena Android app → Continue with Google → Home
-status: planned
+status: partial
 surfaces: [companion]
 audiences: [adult]
-triggers: [android, phone app, apk, google sign-in, unity scene, phone pairing]
+triggers: [android, android app, phone app, apk, google sign-in, phone pairing, on my phone, the app]
 ---
 
 ## What I can do
 
-I use the same Home, calendar, health, family, work, projects, news, chat,
-memories, photos, connected apps, and approval screens as Companion. I keep the
-mobile layout, landscape artwork, icons, and navigation shared with the web app.
-I keep the dashboard above Android's navigation controls and on-screen keyboard.
-Google sign-in selects your account on the phone. After the server verifies your
-identity and access, I register this phone without asking you to copy a pairing
-code. Sign-out attempts to remove that registration and clears the phone's
-stored identity and session even if the server is unreachable.
+The app has the same Home, calendar, health, family, work, projects, news, chat,
+memories, photos, connected apps and approval screens as Companion, in its
+mobile layout, and I'm there as the avatar. Google sign-in picks your account on
+the phone. Once the server has checked who you are and that you have access, I
+register the phone myself, so you don't have to copy a pairing code. Signing out
+removes that registration and clears what the phone stored, even when the
+server can't be reached.
+
+The phone also does things the website can't:
+
+- **Notifications.** Nudges, reminders and emergency alerts arrive as phone
+  notifications, each with **Acknowledge** and **Remind me in 15**.
+- **Hands-free.** Say my name with the screen off and just talk (see
+  `hands-free.md`).
+- **Live heart rate** from your WHOOP or a heart-rate strap, with limits spoken
+  out loud (see `heart-rate.md`).
+- **Location**, if you share it: "Where am I?", travel distances from where you
+  are, and place reminders when you arrive somewhere (see `location-context.md`
+  and `place-reminders.md`).
+- **Nearby 911 calls** read from PulsePoint's notifications (see
+  `nearby-incidents.md`).
+- **Conversation mode**, turn by turn: I listen whenever I'm not speaking.
 
 ## Where to find it
 
@@ -38,22 +52,32 @@ available and shows a retry message. Update Android System WebView if prompted.
 
 ## Limits
 
-Signed-in people can download it from Phone & car (see `devices.md`) once the
-owner has published a release-signed build; until then that panel says none is
-published. Google sign-in still
-requires existing Athena access. The dashboard and avatar assets are packaged,
-but data, chat, sign-in, voice generation, and provider connections need the
-online backend. This scene does not run the legacy native offline model,
-Android Auto messaging, or background push-registration services. A phone
-registration alone does not enable notifications or initiative. Local-server
-handoff opens the system browser; this Android shell is pinned to cloud Companion.
-If I cannot reach the server during sign-out, an inactive phone entry may remain
-in Phone & car until you remove it there.
+- You get the app from **Phone & car** (see `devices.md`): a QR code or a
+  Download button, and the same panel in the app tells you when a newer version
+  is out. It's Android only; there's no iPhone app.
+- The screens are built into the app. A change to the website reaches your
+  phone only once the owner publishes a new build of the app.
+- Signing in with Google still needs existing Athena access. Data, chat,
+  sign-in, my voice and connected apps all need the online server; nothing
+  works offline.
+- Registering a phone doesn't turn on notifications or my speaking first. You
+  choose those yourself, and Android asks for permission.
+- No Android Auto messaging. A local Athena server opens in the system browser,
+  because the app always talks to the cloud Companion.
+- If I can't reach the server when you sign out, an inactive phone entry may
+  stay in Phone & car until you remove it there.
 
 ## Under the hood
 
 - Shared UI: `../../../companion/src/App.tsx` and `../../../companion/src/native/`.
 - Android plugin and scene source: `../../../native-runtime/AndroidCompanion~/`.
+  Push (FCM data-only, device-token-authenticated registration) is
+  `AthenaDashboard.androidlib/java/com/orcwood/athena/dashboard/AthenaPushService.java`
+  and `PushRegistrar.java`. Hands-free, heart rate, geofences and the PulsePoint
+  listener sit beside them.
+- The UI is bundled into the APK (`DashboardActivity.shouldInterceptRequest`),
+  so a Companion deploy needs an APK rebuild to reach the phone. Releases are
+  published by `../../../native-runtime/Tools/publish-android.mjs`.
 - Installer: `../../../native-runtime/Tools/Install-AndroidCompanion.ps1`.
 - Registration tests: `../../../companion/scripts/androidRegistration.test.mjs`.
 - Uses existing Google session, access, profile, pairing-code, redemption and

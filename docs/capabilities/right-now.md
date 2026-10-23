@@ -2,8 +2,8 @@
 id: right-now
 title: What To Do Right Now
 summary: I can look at the hours in front of you and tell you one thing worth doing with them — the trails if they're open, or something at home if they're not.
-where: the Dashboard — it sits above your cards, and "Places & projects" opens the lists behind it
-status: planned
+where: the Dashboard → the Right Now figure in the stat strip (shown only when timely); Places at the foot of the Dashboard
+status: live
 surfaces: [companion]
 audiences: [adult]
 triggers: [what should i do, free afternoon, is the park open, park hours, trails open, mountain bike, go for a ride, nothing to do, bored, what do you think i should do, spare time, is it open, hiking, kill some time]
@@ -12,9 +12,10 @@ triggers: [what should i do, free afternoon, is the park open, park hours, trail
 ## What I can do
 
 I take the gap in front of you — the time until your next appointment — and
-weigh it against the places you've told me you go and the projects waiting at
-home, and I put **one** suggestion at the top of your dashboard, with a second
-one of a different kind underneath it.
+weigh it against the places you've told me you go, the house projects on your
+Projects page, goals you've mentioned to me, the Jira ticket you're on, and
+whether a low recovery or a short night means you should rest. I pick **one**
+suggestion, with a second one of a different kind as the alternative.
 
 While your Working location in Google Calendar covers the moment, "your next
 appointment" means the next one on your work calendar — a family calendar's
@@ -34,18 +35,20 @@ rank your own lists and tell you so.
 
 ## Where to find it
 
-It's the first block on your Dashboard, above the cards, when there's
-something worth it. The **Places & projects** button on it — always at the
-bottom of the dashboard — opens the two lists:
+It's the **Right Now** figure in the row of numbers near the top of your
+Dashboard, when there's something worth it. It shows what's in progress, how
+soon the next thing starts, or how much free time you have. Click it and a side
+panel opens with my suggestion, the reasons and evidence behind it, the
+alternative, **Talk it through** (which takes it to chat) and **Places &
+projects**.
 
-- **Places**: paste the address of a park, a pool, a trailhead, say what it's
-  for ("mountain biking") and roughly how far it is. I read the page once
-  straight away and then on my own schedule, about twice a day.
-- **Projects**: the work around the house. Hours and indoors-or-out are the two
-  details that matter most — one decides what fits your afternoon, the other
-  decides what I suggest when it rains. If your list is in a spreadsheet,
-  "Bring in a spreadsheet" takes a paste of it and shows you what it made of
-  your columns before anything is saved.
+- **Places**: also the **Places** button at the foot of the Dashboard. Paste
+  the address of a park, a pool or a trailhead, say what it's for ("mountain
+  biking") and roughly how far it is. I read the page once straight away and
+  then on my own schedule, about twice a day.
+- **Projects**: the house projects come from your Projects page. Hours and
+  indoors-or-out are the two details that matter most: one decides what fits
+  your afternoon, the other decides what I suggest when it rains.
 
 ## When it doesn't work
 

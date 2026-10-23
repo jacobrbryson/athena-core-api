@@ -1,5 +1,7 @@
 # Capability ledger
 
+- 2026-10-23 — Catalog correction: Right Now and the Android app were still marked planned, so Athena never mentioned them, although both have shipped. Right Now is now live and describes today's stat-strip figure and side panel (house projects now come from the Projects page). The Android app is now partial and lists what only the phone does: notifications, hands-free, live heart rate, location and place reminders, PulsePoint and conversation mode. Its old "no push services" limit is gone — `right-now.md` (status: live), `android-companion.md` (status: partial)
+
 - 2026-10-23 — Smartcar moved to Smartcar's v3 platform: Connect returns a user id, and Athena reads each car with one application token (new Smartcar apps only issue machine-to-machine credentials, and v2 retires 2026-12-01). Needs `SMARTCAR_APPLICATION_ID` — `smartcar.md` (status: partial)
 
 - 2026-10-23 — Day-trading desk on Family → Trading: live market overview, a scanned 3–5 stock watchlist, the opening-range/VWAP rule engine with a pass/fail/pending checklist, whole-share sizing within your risk and settled cash, candlestick charts, an alert list, a trade journal with good-faith-violation warnings, a paper forward test, performance history and signal replay, and chat answers from the same figures. Analysis only, no orders; needs migration 0092 and the owner's Alpaca key; the strategy isn't validated yet — `trading.md` (status: partial)
