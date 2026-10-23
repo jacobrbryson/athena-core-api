@@ -42,7 +42,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   console.log(`Webull ${environment}, signing with ${process.env.WEBULL_SIGNATURE_ALGORITHM === 'HMAC-SHA1' ? 'HMAC-SHA1' : 'HMAC-SHA256'}.`);
 
   if (twoFactor) {
-    let t = await webull.createToken(link);
+    let t;
+    try {
+      t = await webull.createToken(link);
+    } catch (err) {
+      // Webull refuses to start 2FA until the phone app is new enough to show the OpenAPI prompt.
+      if (/latest Webull app/i.test(err.message)) throw new Error(`${err.message}
+Update the Webull app on your phone, sign in with notifications on, then run this again.`);
+      throw err;
+    }
     console.log(`Token created: ${t.status}.`);
     if (t.status !== 'NORMAL') {
       console.log('Open the Webull app and enter the SMS code in the OpenAPI prompt (5 minutes)…');
