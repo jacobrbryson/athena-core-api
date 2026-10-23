@@ -296,8 +296,16 @@ async function fetch(profileId, needs, { audience, timeZone, onRead } = {}) {
 						return { block: await heartRate.buildContext(profileId, { message: "", audience, force: true }) };
 					case "weather":
 						return { block: await weatherBlock(profileId, need, { timeZone }) };
-					case "sightings":
-						return { block: await require("./sightings").chatBlock(need.query, { timeZone }) };
+					case "sightings": {
+						const block = await require("./sightings").chatBlock(need.query, { timeZone });
+						// Packages: what the porch watch saw, and what their email says is coming.
+						if (!/package|parcel|deliver|box|order|porch/i.test(need.query || "")) return { block };
+						const extra = await Promise.all([
+							require("./packageWatch").chatLines({ timeZone }).catch(() => null),
+							require("./deliveries").promptBlock(profileId, { timeZone }).catch(() => null),
+						]);
+						return { block: [block, ...extra.filter(Boolean)].join("\n\n") };
+					}
 					case "web": {
 						if (!(await mayLeave(profileId, need.query))) {
 							console.info("[needs] web query held back as private");

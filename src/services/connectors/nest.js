@@ -1,6 +1,7 @@
 const pool = require("../../helpers/db");
 const { providerGet, providerRequest } = require("./http");
 const { DEFAULT_TZ } = require("../clock");
+const history = require("../nestHistory");
 
 /**
  * Google Nest — the devices a person shared through Device Access, read
@@ -21,6 +22,9 @@ const { DEFAULT_TZ } = require("../clock");
  *
  * The initiative trigger (initiative/triggers.js, nest_offline) reads only
  * the stored rows, so evaluating it costs no API call.
+ *
+ * Both writers also hand the readings to nestHistory.record(), which keeps a
+ * thinned history (athena_nest_reading) for the sleep and heating checks.
  */
 
 const PROVIDER = "nest";
@@ -207,6 +211,7 @@ async function sync(profileId, { now = new Date() } = {}) {
 			[profileId, d.name, d.displayName, d.room, d.type, next.connectivity, next.offline_since, next.online_since,
 				JSON.stringify(seen.readings), now, now]
 		);
+		await history.record(profileId, d.name, seen.readings, now);
 	}
 	const keep = devices.map((d) => d.name);
 	await pool.query(
@@ -333,6 +338,7 @@ async function recordEvent(event, { project = projectId() } = {}) {
 		);
 		if (!result.affectedRows) continue;
 		applied += 1;
+		await history.record(Number(row.profile_id), name, seen.readings, at);
 		if (next.connectivity === "OFFLINE" && row.connectivity !== "OFFLINE") wentOffline.push(Number(row.profile_id));
 	}
 	return { applied, wentOffline: [...new Set(wentOffline)], resync: [] };
@@ -362,16 +368,38 @@ function publicRow(r) {
 		onlineSince: r.online_since ? new Date(r.online_since).toISOString() : null,
 		readings,
 		notReporting,
+		sleepDevice: Boolean(Number(r.sleep_device)),
 	};
 }
 
 async function storedDevices(profileId) {
 	const [rows] = await pool.query(
-		`SELECT device_name, display_name, room, device_type, connectivity, offline_since, online_since, readings
+		`SELECT device_name, display_name, room, device_type, connectivity, offline_since, online_since, readings, sleep_device
 		 FROM athena_nest_device WHERE profile_id = ? ORDER BY room, display_name, device_name`,
 		[profileId]
 	);
 	return rows.map(publicRow);
+}
+
+/**
+ * Mark the one thermostat a person sleeps near (or none, with null). Only
+ * their own stored device can be chosen; the rest are cleared in the same
+ * statement so there is never more than one.
+ */
+async function setSleepDevice(profileId, deviceName) {
+	if (deviceName !== null && !isDeviceName(deviceName)) throw failure("Not a Nest device in this project", 400, "bad_device");
+	if (deviceName !== null) {
+		const [own] = await pool.query(
+			"SELECT 1 FROM athena_nest_device WHERE profile_id = ? AND device_name = ? LIMIT 1",
+			[profileId, deviceName]
+		);
+		if (!own.length) throw failure("That thermostat is no longer shared with Athena", 404, "not_shared");
+	}
+	await pool.query(
+		"UPDATE athena_nest_device SET sleep_device = (device_name = ?) WHERE profile_id = ?",
+		[deviceName ?? "", profileId]
+	);
+	return true;
 }
 
 async function offlineDevices(profileId) {
@@ -433,7 +461,13 @@ async function buildContext(profileId) {
 	}
 	const devices = await storedDevices(profileId);
 	if (!devices.length) return `Google Nest: no devices are shared with Athena${note}.`;
-	return [`Google Nest devices${note}:`, ...devices.map(formatDevice)].join("\n");
+	const lines = [`Google Nest devices${note}:`, ...devices.map(formatDevice)];
+	// Required here, not at the top: these two read this module.
+	const bedroom = await require("../sleepClimate").promptLine(profileId);
+	if (bedroom) lines.push(bedroom);
+	const heating = await require("../hvacHealth").promptLine(profileId);
+	if (heating) lines.push(heating);
+	return lines.join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -482,6 +516,7 @@ module.exports = {
 	COMMANDS,
 	storedDevices,
 	offlineDevices,
+	setSleepDevice,
 	deviceTitle,
 	clockTime,
 	formatDevice,

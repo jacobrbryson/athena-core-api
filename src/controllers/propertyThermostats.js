@@ -32,4 +32,37 @@ async function list(req, res) {
   }
 }
 
-module.exports = { list, FRESH_MS };
+// "Use for sleep": which thermostat the bedroom-vs-sleep comparison reads
+// (docs/capabilities/sleep-climate.md). The caller's own device or none.
+async function setSleepDevice(req, res) {
+  res.set('Cache-Control', 'no-store');
+  const actor = await requireAdultActor(req, res);
+  if (!actor) return;
+  const device = req.body?.device;
+  if (device !== null && typeof device !== 'string') return res.status(400).json({ message: 'Choose a thermostat, or none.' });
+  try {
+    await nest.setSleepDevice(actor.profileId, device);
+    require('../services/sleepClimate').forget(actor.profileId);
+    return res.json({ devices: await nest.storedDevices(actor.profileId) });
+  } catch (err) {
+    if (err?.status === 400 || err?.status === 404) return res.status(err.status).json({ message: err.message });
+    console.error('[thermostats] sleep device failed', { code: err?.code || null, message: err?.message });
+    return res.status(503).json({ message: 'Could not save that right now. Please try again.' });
+  }
+}
+
+// The Health page's Bedroom & sleep panel.
+async function sleepClimate(req, res) {
+  res.set('Cache-Control', 'no-store');
+  const actor = await requireAdultActor(req, res);
+  if (!actor) return;
+  try {
+    return res.json(await require('../services/sleepClimate').analyze(actor.profileId, { fresh: req.query.fresh === '1' }));
+  } catch (err) {
+    if (err?.code === 'not_connected') return res.json({ status: 'not_linked' });
+    console.error('[sleep climate] failed', { code: err?.code || null, message: err?.message });
+    return res.status(503).json({ message: 'Bedroom and sleep are unavailable right now.' });
+  }
+}
+
+module.exports = { list, setSleepDevice, sleepClimate, FRESH_MS };

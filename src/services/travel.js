@@ -206,7 +206,7 @@ async function homeOf(profileId) {
 /** The newest sample the phone sent within the last `sinceSeconds`, if it is fresh. */
 async function latestFix(profileId, sinceSeconds) {
 	const [rows] = await pool.query(
-		`SELECT latitude, longitude FROM athena_location_sample
+		`SELECT latitude, longitude, accuracy_m, speed_mps FROM athena_location_sample
 		 WHERE profile_id = ? AND received_at >= NOW() - INTERVAL ? SECOND
 		   AND observed_at >= NOW() - INTERVAL ? SECOND
 		 ORDER BY observed_at DESC LIMIT 1`,
@@ -215,6 +215,10 @@ async function latestFix(profileId, sinceSeconds) {
 	const row = rows[0];
 	if (!row) return null;
 	const point = { latitude: Number(row.latitude), longitude: Number(row.longitude) };
+	// How sure the phone was and whether it was moving, for "where am I?"
+	// (services/whereabouts); the distance lookup ignores both.
+	if (row.accuracy_m != null) point.accuracyMeters = Number(row.accuracy_m);
+	if (row.speed_mps != null) point.speedMps = Number(row.speed_mps);
 	return geo.isPoint(point) ? point : null;
 }
 
@@ -372,4 +376,4 @@ function reset() {
 	pending.clear();
 }
 
-module.exports = { matches, destinationOf, namedOrigin, followUpChoice, buildContext, currentFix, homeOf, locate, reset };
+module.exports = { matches, destinationOf, namedOrigin, followUpChoice, buildContext, currentFix, homeOf, locate, mapsPost: post, reset };

@@ -1,12 +1,12 @@
 ---
 id: nest
 title: Google Nest thermostats
-summary: With Google Nest linked, I can see whether each thermostat is online, the temperature inside and what it's set to — and tell you when one goes offline.
+summary: With Google Nest linked, I see each thermostat's state, warn when one goes offline or the heat isn't keeping up, and on freezing nights.
 where: Property → Utilities → Thermostats (or ⋯ menu → Connected apps → Google Nest); the alert itself through Initiative
 status: partial
 surfaces: [companion]
 audiences: [adult]
-triggers: [nest, thermostat, thermostats, hvac, furnace, heating, heat pump, air conditioning, a/c, house temperature, indoor temperature, humidity, offline, thermostat offline, downstairs thermostat, upstairs thermostat]
+triggers: [heat not working, heat isn't keeping up, furnace not working, frozen pipes, freeze, nest, thermostat, thermostats, hvac, furnace, heating, heat pump, air conditioning, a/c, house temperature, indoor temperature, humidity, offline, thermostat offline, downstairs thermostat, upstairs thermostat]
 ---
 
 ## What I can do
@@ -21,6 +21,12 @@ me. For each one I know:
 
 Ask "is the downstairs thermostat online?" or "what's it set to upstairs?" and
 I'll read it live.
+
+With Initiative on, I also tell you when the **heat or cooling isn't keeping
+up** (a long run that's barely moved the room, or two days of much slower
+runs than usual), and — even in your quiet hours — when it's **forecast to
+freeze tonight and the house may not be heating** (a thermostat offline, off,
+or already at 50 °F or below).
 
 **I can change one, too — with your OK each time.** Ask me to turn the heat up,
 cool the den to 74, switch upstairs to heat-cool, or put a thermostat in eco,
@@ -78,6 +84,18 @@ During your quiet hours the alert is held and comes through when they end.
 
 ## Limits
 
+- **I keep a history now, from the day this shipped.** Every ten minutes or
+  so, and whenever the heat or cooling starts or stops, I note what each
+  thermostat read — that's what "it's not keeping up" and the bedroom-vs-sleep
+  comparison ([sleep-climate.md](sleep-climate.md)) are measured from. Kept
+  120 days. I can't see anything from before it started.
+- **"Not keeping up" is a measurement, not a diagnosis.** I can say the heat
+  ran 90 minutes and the room moved half a degree; I can't say whether that's
+  a filter, a door left open or the furnace. I don't record outdoor
+  temperature over time, so a hard cold snap can look like slower heating.
+- **The freeze warning needs a home place.** It reads the forecast at your
+  home on Community → Watched places; without one I can't tell it's freezing.
+
 - **Every change is a card you approve.** I can't change a thermostat on my
   own, there's no "don't ask me again" for it, and I won't send a change to
   one that's offline or not reporting — Google couldn't deliver it.
@@ -96,6 +114,15 @@ During your quiet hours the alert is held and comes through when they end.
   who wants them links Nest on their own account.
 
 ## Under the hood
+
+- History: `src/services/nestHistory.js` (athena_nest_reading, migration
+  0087) — written from `recordEvent` and `sync`, thinned to one row per 10
+  minutes plus every hvac/mode/setpoint change, pruned at 120 days by the
+  nightly `nestReadingsPrune` step.
+- Heating check: `src/services/hvacHealth.js` (runs from history; trigger
+  `hvac_struggling`). Freeze: trigger `freeze_risk` in
+  `src/services/initiative/triggers.js`, the only `piercesQuiet` trigger
+  (owner, 2026-10-20), home place from `weatherAlerts.homePlace`.
 
 - Connector: `src/services/connectors/nest.js` — SDM device list, stored state
   in `athena_nest_device`, `transition()` is the one place connectivity moves,

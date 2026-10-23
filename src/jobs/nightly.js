@@ -132,6 +132,11 @@ async function maintenance({ dryRun }) {
 	// Keep never dates items; this read is how "bought" gets a time at all.
 	// Camera sightings and their frames are kept 30 days (owner, 2026-10-18).
 	await step("sightingsPrune", () => require("../services/sightings").prune(), results);
+	await step("nestReadingsPrune", () => require("../services/nestHistory").prune(), results);
+	await step("packageWatch", () => require("../services/packageWatch").maintain(), results);
+	await step("deliveriesPrune", () => require("../services/deliveries").prune(), results);
+	await step("vehicleRecalls", () => require("../services/vehicleRecalls").refreshEveryone(), results);
+	await step("smartcar", () => require("../services/connectors/smartcar").syncEveryone(), results);
 	await step("keepGroceries", () => require("../services/connectors/googleKeep").observeEveryone(), results);
 	await dreamSteps(results);
 	return results;

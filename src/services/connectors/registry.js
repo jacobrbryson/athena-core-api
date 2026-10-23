@@ -355,6 +355,47 @@ const PROVIDERS = {
 			};
 		},
 	},
+
+	// -----------------------------------------------------------------
+	// Smartcar — the car's own odometer, fuel/charge, locks and location
+	// (docs/capabilities/smartcar.md). Added on the owner's instruction,
+	// 2026-10-20. Read-only: no control_* scope is asked, so nothing here can
+	// lock, unlock or start a car. read_location is asked at link time (the
+	// owner chose to include it), but a car's location is only read and stored
+	// once the person turns it on for that car (smartcar.js, location_enabled).
+	// -----------------------------------------------------------------
+	smartcar: {
+		id: "smartcar",
+		label: "Smartcar",
+		authorizeUrl: env("SMARTCAR_AUTHORIZE_URL", "https://connect.smartcar.com/oauth/authorize"),
+		tokenUrl: env("SMARTCAR_TOKEN_URL", "https://auth.smartcar.com/oauth/token"),
+		// Smartcar disconnects per vehicle through its API, not an OAuth revoke
+		// endpoint; disconnect clears our side and the person can remove access in
+		// Smartcar's own dashboard. Documented in smartcar.md, not silent.
+		revokeUrl: null,
+		scopes: ["read_vehicle_info", "read_vin", "read_odometer", "read_fuel", "read_battery", "read_security", "read_location"],
+		scopeSeparator: " ",
+		clientIdSecret: "SMARTCAR_CLIENT_ID",
+		clientSecretSecret: "SMARTCAR_CLIENT_SECRET",
+		pkce: false,
+		// "live" for real cars; "simulated" exercises the flow with Smartcar's fake vehicles.
+		authorizeParams: { mode: env("SMARTCAR_MODE", "live") },
+		tokenAuth: "basic",
+		consentType: null,
+		rotatesRefreshToken: true,
+		apiBase: env("SMARTCAR_API_BASE", "https://api.smartcar.com/v2.0"),
+		identify: null,
+		// Inlined for the same import-cycle reason as Whoop's.
+		identifyAsync: async (_tokens, { accessToken, apiBase }) => {
+			const response = await fetch(`${apiBase}/user`, {
+				headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+				signal: AbortSignal.timeout(10000),
+			});
+			if (!response.ok) return null;
+			const data = await response.json();
+			return data?.id ? { externalAccountId: `smartcar:${String(data.id).slice(0, 100)}`, displayName: "Smartcar" } : null;
+		},
+	},
 };
 
 /** Every provider this build can link. */

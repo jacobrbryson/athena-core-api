@@ -27,7 +27,9 @@
  *   id           stored in athena_nudge.trigger_id
  *   label        how the settings panel names it
  *   sources      which links must be live for this to be worth evaluating
- *   urgency      low | normal | high — feeds the budget's gap rules
+ *   urgency      low | normal | high — orders a pass's nudges
+ *   piercesQuiet true only where the owner chose it (freeze_risk): the push
+ *                goes out during quiet hours instead of being held
 
  *   ttlMs        how long the observation stays worth saying
  *   describe     one line for the settings panel
@@ -337,6 +339,118 @@ const TRIGGERS = [
 	},
 
 	{
+		id: "hvac_struggling",
+		label: "The heating or cooling isn't keeping up",
+		// Added on the owner's instruction (2026-10-20). Measured from the
+		// person's own thermostat history (services/hvacHealth.js): a long run
+		// that has barely moved the room, or runs far slower than that
+		// thermostat's own usual. What was seen, never a diagnosis. The source
+		// is their Nest link; opt-in, mutes, dedupe and quiet hours apply as
+		// for every trigger.
+		sources: ["nest"],
+		urgency: "normal",
+		ttlMs: 6 * 60 * MINUTE,
+		describe: "Tell me when the heat or air conditioning runs without moving the temperature like it should.",
+
+		async evaluate(profileId, { now = new Date() } = {}) {
+			const hvacHealth = require("../hvacHealth");
+			const issues = await hvacHealth.assess(profileId, { now });
+			if (!issues.length) return null;
+			return {
+				// Per device, per kind, per day the problem started: a heating run
+				// that stays stuck all evening is one occurrence; the same thing
+				// starting again tomorrow is another.
+				dedupeKey: `hvac:${createHash("sha1").update(issues.map((i) => `${i.device}:${i.kind}:${String(i.since).slice(0, 10)}`).sort().join("|")).digest("hex")}`,
+				facts: { issues: issues.map((i) => ({ title: i.title, room: i.room, kind: i.kind, hvac: i.hvac, text: hvacHealth.describe(i) })) },
+			};
+		},
+
+		brief(f) {
+			return (
+				`${f.issues.map((i) => i.text).join(" ")} Say what was measured and don't guess a cause — ` +
+				`a filter, a door left open or the system itself are all possible. Offer to help report it on the Property page.`
+			);
+		},
+	},
+
+	{
+		id: "freeze_risk",
+		label: "Pipes could freeze tonight",
+		// Added on the owner's instruction (2026-10-20). A freeze or hard freeze
+		// forecast at home tonight AND a reason the house may not be heated: a
+		// thermostat offline or not reporting, set to off, or already reading
+		// 50°F or below. The owner chose to let this one push through quiet
+		// hours (piercesQuiet, read in index.js) — frozen pipes happen
+		// overnight, and a held push is delivered after the damage. Opt-in,
+		// mutes, dedupe and TTL apply exactly as for every trigger.
+		sources: ["nest"],
+		urgency: "high",
+		piercesQuiet: true,
+		ttlMs: 6 * 60 * MINUTE,
+		describe: "Wake me if it's freezing tonight and the house may not be heating.",
+
+		async evaluate(profileId, { now = new Date() } = {}) {
+			await nest.refreshIfStale(profileId, { now }).catch((err) =>
+				console.warn("[initiative] nest refresh failed:", err.message));
+			const devices = await nest.storedDevices(profileId);
+			if (!devices.length) return null;
+			const reasons = [];
+			for (const d of devices) {
+				const r = d.readings || {};
+				const title = nest.deviceTitle(d);
+				if (d.connectivity === "OFFLINE") reasons.push({ key: `${d.name}:offline`, title, why: d.notReporting ? "not reporting" : "offline" });
+				else if (r.mode === "OFF") reasons.push({ key: `${d.name}:off`, title, why: "set to off" });
+				else if (Number.isFinite(r.temperatureC) && (r.temperatureC * 9) / 5 + 32 <= 50) {
+					reasons.push({ key: `${d.name}:cold`, title, why: `reading ${Math.round((r.temperatureC * 9) / 5 + 32)}°F inside` });
+				}
+			}
+			if (!reasons.length) return null;
+
+			const weatherAlerts = require("../weatherAlerts");
+			const weather = require("../weather");
+			const place = await weatherAlerts.homePlace(profileId).catch(() => null);
+			if (!place) return null;
+			const rows = await weather.hourlyRows(place.latitude, place.longitude).catch(() => null);
+			if (!rows?.hours?.length) return null;
+			const horizon = now.getTime() + 18 * 60 * MINUTE;
+			const upcoming = rows.hours.filter((h) => {
+				const t = Date.parse(h.start);
+				return Number.isFinite(t) && t >= now.getTime() - 60 * MINUTE && t <= horizon;
+			});
+			const night = weather.nightsOf(upcoming)
+				.filter((n) => n.risk === "freeze" || n.risk === "hard_freeze")
+				.sort((a, b) => a.lowF - b.lowF)[0];
+			if (!night) return null;
+			// The server runs in UTC; say the time in the person's own zone.
+			const [prefRows] = await require("../../helpers/db")
+				.query("SELECT timezone FROM athena_initiative_pref WHERE profile_id = ?", [profileId])
+				.catch(() => [[]]);
+			const timeZone = prefRows[0]?.timezone || undefined;
+			return {
+				// The night and the reasons: one push for "the den is offline on a
+				// hard-freeze night", and a new one if a second reason appears.
+				dedupeKey: `freeze:${night.night}:${createHash("sha1").update(reasons.map((r) => r.key).sort().join("|")).digest("hex")}`,
+				facts: {
+					place: place.name,
+					lowF: night.lowF,
+					risk: night.risk,
+					coldestAt: clockTime(night.at, timeZone),
+					reasons: reasons.map(({ title, why }) => ({ title, why })),
+				},
+			};
+		},
+
+		brief(f) {
+			const why = f.reasons.map((r) => `the ${r.title} is ${r.why}`).join(" and ");
+			return (
+				`It's forecast to drop to ${f.lowF}°F at ${f.place} tonight (${f.risk === "hard_freeze" ? "a hard freeze" : "a freeze"}, coldest around ${f.coldestAt}), ` +
+				`and ${why}. If the house isn't heating, pipes can freeze. Say it plainly and urgently, ` +
+				`suggest checking the heat now, and don't guess why the thermostat is in that state.`
+			);
+		},
+	},
+
+	{
 		id: "dream_question",
 		label: "A question after dreaming",
 		// Added on the owner's instruction (2026-09-26): questions she couldn't
@@ -422,6 +536,162 @@ const TRIGGERS = [
 		},
 	},
 ];
+
+/** The person's own "package" alert rules — the only thing that turns the porch triggers on. */
+async function packageRules(profileId) {
+	const [rules] = await require("../../helpers/db").query(
+		"SELECT * FROM athena_sighting_rule WHERE profile_id = ? AND enabled = 1 AND label = 'package'",
+		[profileId]
+	);
+	return rules;
+}
+
+async function prefTimeZone(profileId) {
+	const [prefRows] = await require("../../helpers/db")
+		.query("SELECT timezone FROM athena_initiative_pref WHERE profile_id = ?", [profileId])
+		.catch(() => [[]]);
+	return prefRows[0]?.timezone || undefined;
+}
+
+TRIGGERS.push(
+	{
+		id: "package_waiting",
+		label: "A package is still at the door",
+		// Added on the owner's instruction (2026-10-20). A package the cameras saw
+		// left at the door (sightings kind "package") is looked at again with a
+		// fresh frame (services/packageWatch.js); this speaks once a re-check
+		// finds it still there. Only for someone who set a "package" alert under
+		// Property → Security — no rule, no evaluation — and only for the camera
+		// and zone that rule names. Opt-in, mutes, dedupe and the quiet-hours
+		// hold apply exactly as for every trigger.
+		sources: [],
+		urgency: "normal",
+		ttlMs: 4 * 60 * MINUTE,
+		describe: "Tell me when a package left at the door is still sitting there.",
+
+		async evaluate(profileId, { now = new Date() } = {}) {
+			const rules = await packageRules(profileId);
+			if (!rules.length) return null;
+			const sightings = require("../sightings");
+			const packageWatch = require("../packageWatch");
+			const deliveries = require("../deliveries");
+			const waiting = (await packageWatch.stillThere({ now })).filter((w) =>
+				rules.some((r) => sightings.matches(r, { label: "package", device_serial: w.device_serial, zone: w.zone })));
+			if (!waiting.length) return null;
+			const timeZone = await prefTimeZone(profileId);
+			const packages = [];
+			for (const w of waiting) {
+				const order = await deliveries.forPackage(profileId, w.first_seen_at).catch(() => null);
+				packages.push({
+					camera: w.device_name,
+					where: w.where_text,
+					zone: w.zone,
+					at: clockTime(new Date(w.first_seen_at).toISOString(), timeZone),
+					order: order ? order.merchant || order.carrier || null : null,
+					items: order?.items_summary || null,
+				});
+			}
+			return {
+				// One alert per package: each watch is its own occurrence.
+				dedupeKey: `package:${createHash("sha1").update(waiting.map((w) => w.uuid).sort().join("|")).digest("hex")}`,
+				facts: { packages },
+			};
+		},
+
+		brief(f) {
+			const list = f.packages.map((p) =>
+				`${p.order ? `the ${p.order} delivery${p.items ? ` (${p.items})` : ""}` : "a package"} left at ${p.at}` +
+				`${p.camera ? ` on the ${p.camera} camera` : ""}${p.where ? `, ${p.where}` : ""}`).join("; ");
+			return `${list.charAt(0).toUpperCase()}${list.slice(1)} — a fresh look from the camera shows it's still there. Say it briefly; don't guess when someone will get it.`;
+		},
+	},
+
+	{
+		id: "delivery_not_seen",
+		label: "A delivery email with nothing on camera",
+		// Added on the owner's instruction (2026-10-20). Their own Gmail says an
+		// order was delivered 2-8 hours ago and no camera saw a package around
+		// then (services/deliveries.js). Only for someone with a "package" alert
+		// set, so it never speaks for a household without porch cameras. Says
+		// what was and wasn't seen — not that anything was stolen.
+		sources: ["gmail"],
+		urgency: "normal",
+		ttlMs: 6 * 60 * MINUTE,
+		describe: "Tell me when an email says something was delivered but the cameras didn't see a package.",
+
+		async evaluate(profileId, { now = new Date() } = {}) {
+			if (!(await packageRules(profileId)).length) return null;
+			const deliveries = require("../deliveries");
+			const packageWatch = require("../packageWatch");
+			const missing = await deliveries.unseen(profileId, { now, sightingsNear: (at) => packageWatch.sightingsNear(at) });
+			if (!missing.length) return null;
+			const timeZone = await prefTimeZone(profileId);
+			return {
+				dedupeKey: `undelivered:${createHash("sha1").update(missing.map((d) => d.uuid).sort().join("|")).digest("hex")}`,
+				facts: {
+					orders: missing.map((d) => ({
+						from: d.merchant || d.carrier || "An order",
+						items: d.items_summary || null,
+						at: clockTime(new Date(d.delivered_at).toISOString(), timeZone),
+					})),
+				},
+			};
+		},
+
+		brief(f) {
+			const list = f.orders.map((o) => `${o.from}${o.items ? ` (${o.items})` : ""}, marked delivered at ${o.at}`).join("; ");
+			return (
+				`Their email says ${list}, but the door cameras didn't see a package around then. ` +
+				`Say exactly that. It may have been left somewhere the cameras don't cover, or at the wrong house — don't suggest it was stolen.`
+			);
+		},
+	},
+);
+
+TRIGGERS.push({
+	id: "vehicle_recall",
+	label: "A safety recall for one of your vehicles",
+	// Added on the owner's instruction (2026-10-20). NHTSA's public recalls
+	// for a vehicle on Property → Vehicles (services/vehicleRecalls.js), new in
+	// the last two weeks and not yet marked done or not applicable. The first
+	// lookup for a car finds every recall for its model year; they arrive as
+	// one occurrence, not one push each. A "don't drive" or "park outside"
+	// recall is high urgency. Opt-in, mutes, dedupe and quiet hours as always.
+	sources: [],
+	urgency: "normal",
+	ttlMs: 6 * 60 * MINUTE,
+	describe: "Tell me when NHTSA lists a safety recall for one of my vehicles.",
+
+	async evaluate(profileId) {
+		const rows = await require("../vehicleRecalls").recentOpen(profileId).catch(() => []);
+		if (!rows.length) return null;
+		const urgent = rows.some((r) => r.park_it || r.park_outside);
+		return {
+			dedupeKey: `recall:${createHash("sha1").update(rows.map((r) => `${r.vehicle_uuid}:${r.campaign}`).sort().join("|")).digest("hex")}`,
+			urgency: urgent ? "high" : "normal",
+			facts: {
+				recalls: rows.slice(0, 6).map((r) => ({
+					vehicle: r.vehicle_name,
+					campaign: r.campaign,
+					component: r.component,
+					summary: String(r.summary || "").slice(0, 300),
+					parkIt: !!r.park_it,
+					parkOutside: !!r.park_outside,
+				})),
+				more: Math.max(0, rows.length - 6),
+			},
+		};
+	},
+
+	brief(f) {
+		const list = f.recalls.map((r) =>
+			`${r.vehicle}: ${r.component || "recall"} (${r.campaign})${r.parkIt ? " — NHTSA says not to drive it until it's fixed" : r.parkOutside ? " — NHTSA says to park it outside, away from buildings" : ""}`).join("; ");
+		return (
+			`NHTSA lists ${f.recalls.length + f.more === 1 ? "a safety recall" : `${f.recalls.length + f.more} safety recalls`} for their vehicle model year: ${list}${f.more ? ` and ${f.more} more` : ""}. ` +
+			`These are recalls for the model year, not proof this car hasn't been repaired — suggest checking with a dealer and marking each done on Property → Vehicles.`
+		);
+	},
+});
 
 const BY_ID = new Map(TRIGGERS.map((t) => [t.id, t]));
 

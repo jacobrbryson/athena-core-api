@@ -333,6 +333,12 @@ async function triageMessages(profileId, ids) {
 		rows.push(row);
 	}
 	await insertRows(rows);
+	// Shipping and delivery notices get one more read for the porch watch
+	// (services/deliveries.js). Best-effort: a miss never touches triage.
+	const deliveries = require("./deliveries");
+	for (const item of classified) {
+		if (deliveries.looksLikeDelivery(item)) await deliveries.fromEmail(profileId, item);
+	}
 	return { scanned: metas.length, rows };
 }
 

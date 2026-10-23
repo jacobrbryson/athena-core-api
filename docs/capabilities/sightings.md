@@ -61,6 +61,10 @@ each camera sees.
 
 ## Limits
 
+- **Packages are logged too, but never named.** A box or mailer left at the
+  door is a "package"; the cameras can't learn one. See
+  [packages.md](packages.md) for what happens next.
+
 Only authorized adults in the household can see sightings or the gallery, and
 only they can ask me about them. Sightings and their frames are kept 30 days,
 then deleted. Removing someone from the gallery deletes all their sightings

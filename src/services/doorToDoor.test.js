@@ -108,3 +108,31 @@ describe("addDoor", () => {
 		await expect(doors.addDoor(1, "r", "the blue house")).rejects.toMatchObject({ status: 400 });
 	});
 });
+
+describe("houseAt", () => {
+	const at = (n, lat, lon, tags = {}) => ({ type: "way", center: { lat, lon }, tags: { "addr:housenumber": String(n), "addr:street": "Rushing Water Lane", ...tags } });
+
+	test("finds the house under a tap and sends only the ~1 km square around it", async () => {
+		const fetchImpl = osm(at(148, 35.67412, -80.90731, { "addr:city": "Troutman", "addr:state": "NC", "addr:postcode": "28166" }), at(152, 35.6748, -80.9081));
+		const out = await doors.houseAt(1, { latitude: 35.674135, longitude: -80.907305 }, fetchImpl);
+		expect(out).toMatchObject({ address: "148 Rushing Water Lane, Troutman, NC 28166", latitude: 35.67412, longitude: -80.90731, street: "Rushing Water Lane", household: null });
+		const sent = decodeURIComponent(fetchImpl.mock.calls[0][1].body);
+		expect(sent).not.toContain("35.6741");
+		expect(sent).toContain("35.6685,-80.9115,35.6815,-80.8985");
+	});
+
+	test("a tap away from any address keeps the tap and offers the nearest street", async () => {
+		const out = await doors.houseAt(1, { latitude: 35.6141, longitude: -80.8073 }, osm(at(9, 35.6150, -80.8073)));
+		expect(out).toMatchObject({ address: null, latitude: 35.6141, longitude: -80.8073, street: "Rushing Water Lane" });
+	});
+
+	test("says when the house is already one of the person's neighbors", async () => {
+		community.listNeighbors.mockResolvedValue([{ uuid: "n-1", name: "The Hendersons", address: "150 Rushing Water Ln, Troutman, NC" }]);
+		const out = await doors.houseAt(1, { latitude: 35.5141, longitude: -80.7073 }, osm(at(150, 35.5141, -80.7073)));
+		expect(out.household).toEqual({ uuid: "n-1", label: "The Hendersons" });
+	});
+
+	test("needs a real point", async () => {
+		await expect(doors.houseAt(1, { latitude: "x", longitude: -80 }, osm())).rejects.toMatchObject({ status: 400 });
+	});
+});

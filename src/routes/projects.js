@@ -26,6 +26,7 @@ router.post('/property/issues/:uuid/notes', json, issues.addNote);
 router.delete('/property/issues/:uuid/notes/:noteUuid', issues.removeNote);
 // Google Nest thermostats, read-only (docs/capabilities/nest.md).
 router.get('/property/thermostats', require('../controllers/propertyThermostats').list);
+router.put('/property/thermostats/sleep-device', json, require('../controllers/propertyThermostats').setSleepDevice);
 const security = require('../controllers/propertySecurity');
 router.get('/property/security', security.list);
 router.get('/property/security/devices/:serial/snapshot', security.snapshot);
@@ -51,12 +52,17 @@ router.delete('/property/security/rules/:id', security.removeRule);
 // Vehicle photos are one 1.5 MB JPEG data URL; the same 8 MB parser covers them.
 const vehicles = require('../controllers/propertyVehicles');
 router.get('/property/vehicles', vehicles.list);
+// Cars read through Smartcar (docs/capabilities/smartcar.md). Before /:uuid.
+const smartcarCars = require('../controllers/propertySmartcar');
+router.get('/property/vehicles/smartcar', smartcarCars.list);
+router.patch('/property/vehicles/smartcar/:id', json, smartcarCars.update);
 router.post('/property/vehicles', express.json({ limit: '4mb' }), vehicles.create);
 router.patch('/property/vehicles/:uuid', express.json({ limit: '4mb' }), vehicles.update);
 router.delete('/property/vehicles/:uuid', vehicles.remove);
 router.get('/property/vehicles/:uuid/photo', vehicles.getPhoto);
 router.post('/property/vehicles/:uuid/service', json, vehicles.addService);
 router.delete('/property/vehicles/:uuid/service/:serviceUuid', vehicles.removeService);
+router.patch('/property/vehicles/:uuid/recalls/:campaign', json, vehicles.setRecall);
 
 router.post('/concerns', json, c.createConcern);
 router.patch('/concerns/:uuid', json, c.updateConcern);

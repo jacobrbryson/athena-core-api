@@ -6,7 +6,7 @@ where: Companion → Community (sidebar; on the phone, Dashboard → Community c
 status: live
 surfaces: [companion]
 audiences: [adult]
-triggers: [community, google contact, link contact, neighbor, neighbors, neighbour, next door, neighborhood, church, town, local event, ham day, festival, fair, parade, point of interest, points of interest, watched places, add a place, place picture, place photo, my town, school event, local news]
+triggers: [community, add resident, who lives there, google contact, link contact, neighbor, neighbors, neighbour, next door, neighborhood, church, town, local event, ham day, festival, fair, parade, point of interest, points of interest, watched places, add a place, place picture, place photo, my town, school event, local news]
 ---
 
 ## What I can do
@@ -39,6 +39,15 @@ all of it in mind whenever we talk:
   green square, so you can see which house is which. A neighbor appears once
   they have a location, which Find gives them; if some don't, the line under
   the map offers to place them from their addresses.
+- **Filling in your street from the map** — zoom in until you can see the
+  houses, tap one, and choose **Add resident**. I read that house's address
+  from OpenStreetMap and open the neighbor form right under the map with the
+  address and town filled in (and "Near" set to your closest place), so you
+  can add who lives there and go on to the next house. If the map has no
+  house number there (common on rural roads), the form opens empty, tells you
+  the street if it knows it, and puts the house where you tapped once you
+  type the address. Tapping a house you already have — or **Edit household**
+  on its marker — opens that household instead.
 
 - **Local events** — church suppers, school fairs, town days like Ham Day: the
   day (or days), a time, where, a link and notes. Mark one "happens every year"
@@ -113,6 +122,10 @@ happening near your places, local news, and **Emergency alerts on this phone**
 - **An event disappeared from "Coming up":** a one-off moves to "Recently" once
   it's over. A yearly one moves to next year's date two weeks after.
 
+- **"Add resident" didn't fill the address:** OpenStreetMap has no house
+  number at that spot, or the map data was busy. Type the address; the house
+  still goes where you tapped.
+
 ## Limits
 
 - I don't search the web for local news or events; local news is only what's
@@ -169,6 +182,14 @@ happening near your places, local news, and **Emergency alerts on this phone**
   `../../../companion/src/components/CommunityPage.tsx` (overview and place row),
   `../../../companion/src/components/Dashboard.tsx` (CommunityPage),
   `../../../companion/src/components/EmergencyAlertSetup.tsx`.
-- Tests: `../../src/services/community.test.js`.
+- Add resident: `houseAt()` in `../../src/services/doorToDoor.js`,
+  `GET /api/v1/dashboard/community/house-at?lat=&lon=`. Sends Overpass only the
+  0.01° (~1 km) square containing the tap (padded ~150 m), cached an hour;
+  picks the nearest `addr:housenumber` point within 45 m (street hint within
+  200 m) and reports an existing household at that `streetKey`. Map side:
+  `../../../companion/src/components/NeighborMap.tsx` (pin + menu at zoom ≥ 17)
+  and `CommunityMap` in `Community.tsx` (inline `NeighborForm`, `pin` fallback
+  coordinates).
+- Tests: `../../src/services/community.test.js`, `../../src/services/doorToDoor.test.js` (houseAt).
 - History: replaced the "Watched places" drawer in the profile menu
   (owner, 2026-10-04).

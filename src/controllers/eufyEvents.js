@@ -2,6 +2,7 @@ const { timingSafeEqual } = require('node:crypto');
 const pool = require('../helpers/db');
 const access = require('../security/access');
 const sightings = require('../services/sightings');
+const packageWatch = require('../services/packageWatch');
 const initiative = require('../services/initiative');
 
 /**
@@ -40,9 +41,25 @@ async function evaluateFor(profileId) {
   return access.context.run({ identity }, () => initiative.evaluateProfile(profileId));
 }
 
-async function receive(req, res, { record = sightings.record } = {}) {
+/**
+ * A re-check the bridge sends for a package watch (services/packageWatch.js):
+ * one fresh frame from the camera the package was seen on. The answer says
+ * whether to send another, and when — the bridge keeps that timer.
+ */
+async function recheck(req, res, { recheckWith = packageWatch.recheck } = {}) {
+  try {
+    const next = await asOwner(() => recheckWith({ event: req.body?.event, frame: req.body?.frame || null }));
+    return res.status(200).json({ recheck: next });
+  } catch (error) {
+    console.error('[eufy events] package recheck failed', { code: error?.code || null, message: error?.message });
+    return res.status(503).json({ message: 'Recheck could not be recorded' });
+  }
+}
+
+async function receive(req, res, { record = sightings.record, recheckWith, watch = packageWatch.onSightings } = {}) {
   res.set('Cache-Control', 'no-store');
   if (!authorized(req)) return res.status(401).json({ message: 'Unauthorized' });
+  if (req.body?.event?.kind === 'recheck') return recheck(req, res, recheckWith ? { recheckWith } : {});
   let written;
   try {
     written = await asOwner(() => record({ event: req.body?.event, frame: req.body?.frame || null }));
@@ -61,7 +78,14 @@ async function receive(req, res, { record = sightings.record } = {}) {
   } catch (error) {
     console.warn('[eufy events] rule check failed', { message: error?.message });
   }
-  return res.status(200).json({ sightings: written.length });
+  // A package opens a porch watch; the bridge is asked to look again later.
+  let asks = [];
+  try {
+    asks = await watch(written);
+  } catch (error) {
+    console.warn('[eufy events] package watch failed', { message: error?.message });
+  }
+  return res.status(200).json({ sightings: written.length, ...(asks.length ? { recheck: asks } : {}) });
 }
 
 module.exports = { receive: (req, res) => receive(req, res), receiveWith: receive, authorized };

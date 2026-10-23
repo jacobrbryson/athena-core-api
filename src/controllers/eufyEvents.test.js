@@ -1,6 +1,7 @@
 jest.mock('../helpers/db', () => ({ query: jest.fn() }));
 jest.mock('../services/sightings', () => ({ record: jest.fn(), profilesToAlert: jest.fn() }));
 jest.mock('../services/initiative', () => ({ evaluateProfile: jest.fn() }));
+jest.mock('../services/packageWatch', () => ({ onSightings: jest.fn().mockResolvedValue([]), recheck: jest.fn() }));
 const pool = require('../helpers/db');
 const sightings = require('../services/sightings');
 const initiative = require('../services/initiative');
@@ -49,4 +50,28 @@ test('an alert failure does not fail the recorded event', async () => {
   const r = res();
   await controller.receive(req({ authorization: `Bearer ${TOKEN}` }), r);
   expect(r.status).toHaveBeenCalledWith(200);
+});
+
+test('a package sighting asks the bridge to look again later', async () => {
+  const packageWatch = require('../services/packageWatch');
+  packageWatch.onSightings.mockResolvedValueOnce([{ deviceSn: 'T8213', watch: 'w-1', afterSeconds: 3600 }]);
+  const r = res();
+  await controller.receive(req({ authorization: `Bearer ${TOKEN}` }), r);
+  expect(r.json).toHaveBeenCalledWith({ sightings: 1, recheck: [{ deviceSn: 'T8213', watch: 'w-1', afterSeconds: 3600 }] });
+});
+
+test('a recheck goes to the package watch, never the sightings log, and still needs the bridge token', async () => {
+  const packageWatch = require('../services/packageWatch');
+  packageWatch.recheck.mockResolvedValueOnce([]);
+  const body = { event: { kind: 'recheck', deviceSn: 'T8213', watch: 'w-1' }, frame: 'x' };
+  const denied = res();
+  await controller.receive(req({}, body), denied);
+  expect(denied.status).toHaveBeenCalledWith(401);
+  expect(packageWatch.recheck).not.toHaveBeenCalled();
+
+  const r = res();
+  await controller.receive(req({ authorization: `Bearer ${TOKEN}` }, body), r);
+  expect(packageWatch.recheck).toHaveBeenCalledWith({ event: body.event, frame: 'x' });
+  expect(sightings.record).not.toHaveBeenCalled();
+  expect(r.json).toHaveBeenCalledWith({ recheck: [] });
 });

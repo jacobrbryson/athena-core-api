@@ -6,6 +6,7 @@ jest.mock("./connectors/gmail", () => ({
 	plainTextBody: jest.fn(() => ""),
 }));
 jest.mock("./llm", () => ({ generateJson: jest.fn() }));
+jest.mock("./deliveries", () => ({ looksLikeDelivery: jest.fn(() => false), fromEmail: jest.fn() }));
 const pool = require("../helpers/db");
 const gmail = require("./connectors/gmail");
 const llm = require("./llm");

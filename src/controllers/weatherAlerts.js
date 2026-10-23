@@ -1,7 +1,6 @@
 const { requireAdultActor } = require('../helpers/actor');
 const weatherAlerts = require('../services/weatherAlerts');
 const weather = require('../services/weather');
-const watch = require('../services/pulsepoint/watch');
 
 /**
  * The Weather panel on Community: the longer forecast at a watched place, and
@@ -26,9 +25,8 @@ function handler(run) {
 
 /** Seven days, two days by the hour, and a frost read per night, at home or `?place=`. */
 async function outlook(profileId, req) {
-  const places = (await watch.listPlaces(profileId)).filter((p) => p.enabled && Number.isFinite(p.latitude) && Number.isFinite(p.longitude));
   const wanted = typeof req.query.place === 'string' ? req.query.place : null;
-  const place = (wanted && places.find((p) => p.uuid === wanted)) || places.find((p) => p.kind === 'home') || places[0];
+  const place = await weatherAlerts.homePlace(profileId, wanted);
   if (!place) return { status: 'no_place', place: null, outlook: null };
   const sky = await weather.outlook(place.latitude, place.longitude);
   return { status: sky ? 'ready' : 'unavailable', place: { uuid: place.uuid, name: place.name }, outlook: sky };

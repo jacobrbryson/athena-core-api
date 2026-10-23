@@ -1,6 +1,7 @@
 const { randomUUID } = require('node:crypto');
 const pool = require('../helpers/db');
 const { requireAdultActor } = require('../helpers/actor');
+const recalls = require('../services/vehicleRecalls');
 
 // Vehicles (docs/capabilities/vehicles.md): the cars kept at a property, with
 // what comes due and what was done. Adult-only, profile-scoped, and every
@@ -91,13 +92,14 @@ const COLUMNS = `id, uuid, property_uuid, name, year, make, model, color, plate,
   DATE_FORMAT(odometer_on, '%Y-%m-%d') AS odometer_on, DATE_FORMAT(registration_due, '%Y-%m-%d') AS registration_due,
   DATE_FORMAT(inspection_due, '%Y-%m-%d') AS inspection_due, DATE_FORMAT(insurance_due, '%Y-%m-%d') AS insurance_due,
   DATE_FORMAT(service_due, '%Y-%m-%d') AS service_due, service_due_miles, notes, photo IS NOT NULL AS has_photo, created_at, updated_at`;
-const toVehicle = (r, log) => ({
+const toVehicle = (r, log, recallLog = new Map()) => ({
   uuid: r.uuid, propertyUuid: r.property_uuid, name: r.name, year: r.year, make: r.make, model: r.model, color: r.color,
   plate: r.plate, vin: r.vin, odometer: r.odometer, odometerOn: r.odometer_on,
   registrationDue: r.registration_due, inspectionDue: r.inspection_due, insuranceDue: r.insurance_due,
   serviceDue: r.service_due, serviceDueMiles: r.service_due_miles, notes: r.notes, hasPhoto: !!r.has_photo,
   createdAt: iso(r.created_at), updatedAt: iso(r.updated_at),
   service: log.get(r.id) || [],
+  recalls: recallLog.get(r.id) || [],
 });
 const existingOf = r => ({
   propertyUuid: r.property_uuid, name: r.name, year: r.year, make: r.make, model: r.model, color: r.color, plate: r.plate, vin: r.vin,
@@ -118,8 +120,16 @@ async function serviceFor(ids) {
 
 async function all(profileId) {
   const [rows] = await pool.query(`SELECT ${COLUMNS} FROM athena_property_vehicle WHERE profile_id = ? ORDER BY created_at, id`, [profileId]);
-  const log = await serviceFor(rows.map(r => r.id));
-  return rows.map(r => toVehicle(r, log));
+  const ids = rows.map(r => r.id);
+  const [log, recallLog] = await Promise.all([serviceFor(ids), recalls.forVehicles(ids)]);
+  return rows.map(r => toVehicle(r, log, recallLog));
+}
+
+// Recalls are looked up from NHTSA when a vehicle is added or what it is
+// changes. The answer to the save doesn't wait on NHTSA; the nightly step and
+// the next list load pick the result up.
+function lookUpRecalls(profileId, uuid) {
+  recalls.refreshByUuid(profileId, uuid).catch(err => console.warn('[vehicles] recall lookup failed:', err.message));
 }
 
 async function owned(profileId, uuid) {
@@ -163,9 +173,11 @@ const create = handler(async (profileId, req) => {
   f.propertyUuid = await propertyFor(profileId, f.propertyUuid);
   const [[{ n }]] = await pool.query('SELECT COUNT(*) AS n FROM athena_property_vehicle WHERE profile_id = ?', [profileId]);
   if (n >= MAX_VEHICLES) throw bad(`That is already ${MAX_VEHICLES} vehicles; remove one you no longer have first.`);
+  const uuid = randomUUID();
   await pool.query(
     `INSERT INTO athena_property_vehicle (uuid, profile_id, ${FIELDS.join(', ')}, photo) VALUES (?, ?, ${FIELDS.map(() => '?').join(', ')}, ?)`,
-    [randomUUID(), profileId, ...values(f), f.photo ?? null]);
+    [uuid, profileId, ...values(f), f.photo ?? null]);
+  lookUpRecalls(profileId, uuid);
   return { vehicles: await all(profileId) };
 });
 
@@ -176,6 +188,7 @@ const update = handler(async (profileId, req) => {
   await pool.query(
     `UPDATE athena_property_vehicle SET ${FIELDS.map(c => `${c}=?`).join(', ')}${f.photo !== undefined ? ', photo=?' : ''} WHERE id = ? AND profile_id = ?`,
     [...values(f), ...(f.photo !== undefined ? [f.photo] : []), row.id, profileId]);
+  if (f.vin !== row.vin || f.year !== row.year || f.make !== row.make || f.model !== row.model) lookUpRecalls(profileId, row.uuid);
   return { vehicles: await all(profileId) };
 });
 
@@ -212,18 +225,25 @@ const removeService = handler(async (profileId, req) => {
   return { vehicles: await all(profileId) };
 });
 
+// Done / doesn't apply / open again, on one of the person's own recalls.
+const setRecall = handler(async (profileId, req) => {
+  await recalls.setStatus(profileId, req.params.uuid, req.params.campaign, req.body?.status);
+  return { vehicles: await all(profileId) };
+});
+
 /** Vehicles for Athena's prompt, with what is due and the latest service. Read-only; never throws. */
 async function promptVehicles(profileId, limit = 6) {
   try {
     const [rows] = await pool.query(`SELECT ${COLUMNS} FROM athena_property_vehicle WHERE profile_id = ? ORDER BY created_at, id LIMIT ?`, [profileId, limit]);
-    const log = await serviceFor(rows.map(r => r.id));
+    const ids = rows.map(r => r.id);
+    const [log, recallLog] = await Promise.all([serviceFor(ids), recalls.forVehicles(ids).catch(() => new Map())]);
     return rows.map(r => {
-      const v = toVehicle(r, log);
-      return { ...v, service: v.service.slice(0, 2) };
+      const v = toVehicle(r, log, recallLog);
+      return { ...v, service: v.service.slice(0, 2), recalls: v.recalls.filter(x => x.status === 'open').slice(0, 4) };
     });
   } catch {
     return [];
   }
 }
 
-module.exports = { list, create, update, remove, getPhoto, addService, removeService, normalize, service, promptVehicles };
+module.exports = { list, create, update, remove, getPhoto, addService, removeService, setRecall, normalize, service, promptVehicles };

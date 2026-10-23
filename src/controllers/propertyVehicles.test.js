@@ -1,5 +1,6 @@
 jest.mock('../helpers/db', () => ({ query: jest.fn() }));
 jest.mock('../helpers/actor', () => ({ requireAdultActor: jest.fn() }));
+jest.mock('../services/vehicleRecalls', () => ({ forVehicles: jest.fn(async () => new Map()), refreshByUuid: jest.fn(async () => ({})), setStatus: jest.fn() }));
 const db = require('../helpers/db');
 const { requireAdultActor } = require('../helpers/actor');
 const { normalize, service, list, create, update, remove, getPhoto, addService, removeService, promptVehicles } = require('./propertyVehicles');
@@ -137,4 +138,12 @@ test('removing a service entry is scoped to the vehicle', async () => {
 test('the prompt read never throws', async () => {
   db.query.mockRejectedValueOnce(Object.assign(new Error('no table'), { code: 'ER_NO_SUCH_TABLE' }));
   await expect(promptVehicles(42)).resolves.toEqual([]);
+});
+
+test('recalls ride along with each vehicle, and only open ones reach the prompt', async () => {
+  const recalls = require('../services/vehicleRecalls');
+  recalls.forVehicles.mockResolvedValueOnce(new Map([[7, [{ campaign: 'A', status: 'open' }, { campaign: 'B', status: 'done' }]]]));
+  db.query.mockResolvedValueOnce([[row]]).mockResolvedValueOnce([[]]);
+  const [v] = await promptVehicles(42);
+  expect(v.recalls.map(r => r.campaign)).toEqual(['A']);
 });

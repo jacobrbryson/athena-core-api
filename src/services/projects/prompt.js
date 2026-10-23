@@ -34,6 +34,9 @@ function vehicleLine(v) {
 		v.odometer !== null ? `${v.odometer} mi as of ${v.odometerOn}` : null,
 		due.length ? `due: ${due.join(", ")}` : null,
 		v.service.length ? `latest work: ${v.service.map((s) => `${s.doneOn} ${s.what.slice(0, 120)}${s.odometer !== null ? ` at ${s.odometer} mi` : ""}`).join("; ")}` : null,
+		(v.recalls || []).length
+			? `open NHTSA recalls for this model year (not confirmed unrepaired on this car): ${v.recalls.map((r) => `${r.campaign} ${r.component || ""}${r.parkIt ? " — NHTSA says don't drive it" : r.parkOutside ? " — NHTSA says park outside" : ""}`.trim()).join("; ")}`
+			: null,
 	].filter(Boolean);
 	return `- "${v.name}"${bits.length ? ` (${bits.join("; ")})` : ""}${v.notes ? ` Their note: ${v.notes.slice(0, 200)}` : ""}`;
 }

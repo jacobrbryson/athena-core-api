@@ -1,12 +1,12 @@
 ---
 id: vehicles
 title: Vehicles
-summary: I keep track of the vehicles at your property — mileage, registration, inspection, insurance and service due dates, and a service history.
+summary: I track the vehicles at your property — mileage, due dates, service history — and check each one for NHTSA safety recalls.
 where: the left menu → Property → the Vehicles tab → Add vehicle
 status: live
 surfaces: [companion]
 audiences: [adult]
-triggers: [vehicle, vehicles, my car, our cars, truck, van, oil change, registration, inspection, odometer, mileage, tire rotation, service history, car maintenance, vin, license plate, car insurance]
+triggers: [recall, recalls, safety recall, nhtsa, vehicle, vehicles, my car, our cars, truck, van, oil change, registration, inspection, odometer, mileage, tire rotation, service history, car maintenance, vin, license plate, car insurance]
 ---
 
 ## What I can do
@@ -25,6 +25,16 @@ green when further out.
 **Service history** is a dated log of work done — an oil change, new tires, a
 repair — with the mileage and the shop if you like. Logging service with a
 mileage higher than the odometer on file updates the odometer too.
+
+**Safety recalls.** For each vehicle I look up NHTSA's public recall list —
+by its VIN when you've saved one, otherwise its year, make and model — when
+you add it and again every night. A vehicle's details show each recall with
+what's wrong, the risk and the fix, and you mark each one **Done** or
+**Doesn't apply**. NHTSA's "don't drive it" and "park it outside" warnings are
+shown first. With Initiative on, I tell you when a new one appears.
+
+If you link the car itself through **Smartcar**, its odometer keeps the
+mileage here current — see [smartcar.md](smartcar.md).
 
 I see your vehicles, what's coming due and the latest work on each whenever
 we talk, so you can just ask "when is the BMW's registration due?" or "what
@@ -50,8 +60,12 @@ Vehicles need a property: if you haven't added one, add it from the
 ## Limits
 
 I can't change your vehicles from a conversation — add and edit them on the
-Vehicles tab. I don't connect to your car or its maker's app, so mileage is
-whatever you last entered or logged; I don't read it from the car. Logging a
+Vehicles tab. Unless the car is linked through Smartcar, mileage is
+whatever you last entered or logged. **Recalls are for the model year, not
+this car:** NHTSA's list says a recall exists, not whether yours was already
+repaired — a dealer can tell you that from the VIN, and you mark it done. I
+only send the VIN (to identify the car) and the year, make and model to
+NHTSA. Logging a
 service doesn't move the next-service date or mileage for you — update those
 with **Edit**. I don't send reminders when something comes due; I show it on
 the tab and know it when you ask. I don't renew registration, book service or
@@ -59,6 +73,12 @@ buy insurance — I can help you find out how. Vehicles stay off the main
 dashboard; they belong to the Property page. Up to 20 vehicles per person.
 
 ## Under the hood
+
+- Recalls: `src/services/vehicleRecalls.js` (athena_vehicle_recall, migration
+  0090) — vPIC VIN decode, then `api.nhtsa.gov/recalls/recallsByVehicle`;
+  refreshed on create/VIN change and by the nightly `vehicleRecalls` step;
+  `PATCH /api/v1/projects/property/vehicles/:uuid/recalls/:campaign`;
+  trigger `vehicle_recall` in `src/services/initiative/triggers.js`.
 
 - UI: `../../../companion/src/components/PropertyVehicles.tsx` (list, add/edit drawer, details drawer with service log), `../../../companion/src/components/propertyVehicles.css`; tab entry in `../../../companion/src/components/Property.tsx` (`property-vehicles`), rendered in `HomePage` in `../../../companion/src/components/Dashboard.tsx`. Due-date tones: `dueItems()` in `../../../companion/src/api/propertyVehicles.ts`.
 - Mock: `../../../companion/mock/projects.ts`.

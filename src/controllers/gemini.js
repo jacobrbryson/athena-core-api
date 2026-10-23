@@ -11,6 +11,7 @@ const healthPlan = require("../services/healthPlan");
 const toolIntent = require("../services/toolIntent");
 const webSearch = require("../services/webSearch");
 const travel = require("../services/travel");
+const whereabouts = require("../services/whereabouts");
 const monologue = require("../services/monologue");
 const codeAgents = require("../services/codeAgents");
 const missionService = require("../services/mission");
@@ -183,11 +184,13 @@ async function groundedFromGuess(profileId, message, audience, early, onRead) {
         ...extra.providers,
         ...(extra.heartRate ? ["heart_rate"] : []),
         ...(extra.web ? ["web"] : []),
+        ...(extra.location ? ["location"] : []),
       ].join(", "),
     );
     // The web search runs on its own path (webGroundingFor) so its sources
-    // can reach the reply; only the connector and heart-rate reads are here.
-    if (!extra.providers.length && !extra.heartRate) return null;
+    // can reach the reply; the connector, heart-rate and location reads are here.
+    if (!extra.providers.length && !extra.heartRate && !extra.location)
+      return null;
     const blocks = await Promise.all([
       extra.providers.length
         ? connectorContext.buildContext(profileId, {
@@ -199,6 +202,12 @@ async function groundedFromGuess(profileId, message, audience, early, onRead) {
         : null,
       extra.heartRate
         ? heartRate.buildContext(profileId, { message, audience, force: true })
+        : null,
+      extra.location
+        ? whereabouts.buildContext(profileId, message, {
+            audience,
+            force: true,
+          })
         : null,
     ]);
     return blocks.filter(Boolean).join("\n\n") || null;
@@ -394,6 +403,14 @@ async function processAiResponse(session, message, clients, ctx = {}) {
           travel.matches(message) ||
           travel.followUpChoice(groundingProfileId, message)
             ? travel.buildContext(groundingProfileId, message, {
+                audience: groundingAudience,
+              })
+            : null,
+          // "Where am I?" / "Where's my phone?" — asks the phone for a fresh
+          // position, names the place, and checks it against what's on their
+          // calendar now. Adults only (buildContext checks); never throws.
+          whereabouts.matches(message)
+            ? whereabouts.buildContext(groundingProfileId, message, {
                 audience: groundingAudience,
               })
             : null,

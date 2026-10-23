@@ -29,6 +29,10 @@ The doorbell press and Backyard E30 motion events were received. Motion from the
 
 ## Under the hood
 
+- Package re-checks: the bridge schedules a fresh frame when the webhook's
+  answer asks for one (`recheck`), and posts it as event kind `recheck`; see
+  `packages.md`. Needs a bridge rebuild to take effect.
+
 - Bridge: `../../../eufy-bridge/server.mjs`, `../../../eufy-bridge/login.mjs`.
 - Backend: `src/controllers/propertySecurity.js`; authenticated adult profile allowlist and media access audit. `src/services/securityMedia.js` keeps media in the bucket `athena-security-media` (env `SECURITY_MEDIA_BUCKET`) with rows in `athena_security_media` (migration 0082).
 - Frontend: `../../../companion/src/components/PropertySecurity.tsx`, `../../../companion/src/api/propertySecurity.ts`.

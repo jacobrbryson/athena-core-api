@@ -27,6 +27,13 @@ const securityMedia = require("./securityMedia");
 
 const BUCKET = () => process.env.SECURITY_MEDIA_BUCKET || "athena-security-media";
 const KINDS = ["person", "animal", "vehicle"];
+/**
+ * What a frame may report. A package is logged like anything else but is never
+ * a gallery subject — every one is "package" — and it opens a porch watch
+ * (services/packageWatch.js). Added on the owner's instruction, 2026-10-20.
+ */
+const FRAME_KINDS = [...KINDS, "package"];
+const PACKAGE = "package";
 const RETENTION_DAYS = 30;
 const MAX_PHOTOS_PER_SUBJECT = 3;
 const MAX_SUBJECTS_IN_PROMPT = 24;
@@ -222,7 +229,7 @@ const FRAME_SCHEMA = {
 				type: "object",
 				properties: {
 					name: { type: "string" },
-					kind: { type: "string", enum: KINDS },
+					kind: { type: "string", enum: FRAME_KINDS },
 					label: { type: "string" },
 					zone: { type: "string" },
 					where: { type: "string" },
@@ -260,20 +267,20 @@ async function identify({ frameBase64, deviceName, gallery, zones }) {
 		parts.push({ text: `Reference for "${s.name}":` }, ...refs.map((data) => ({ inlineData: { mimeType: "image/jpeg", data } })));
 	}
 	const prompt = `You are looking at one frame from a home security camera called "${deviceName || "camera"}".
-List every living thing (people, dogs, cats, deer, birds big enough to notice) and every vehicle you can see in the LAST image.
+List every living thing (people, dogs, cats, deer, birds big enough to notice), every vehicle, and every package left on the ground (a box, padded mailer, bag or envelope sitting on a porch, step, doormat or driveway) you can see in the LAST image.
 
 Known subjects:
 ${lines.length ? lines.join("\n") : "(none yet)"}
 
 For each subject in the frame:
 - name: the known subject's exact name, ONLY when it clearly matches its reference photos or description; otherwise "".
-- kind: person, animal or vehicle.
-- label: the name if matched; otherwise a short generic label — "stranger" for any person who is not a known subject, else e.g. "unknown dog", "deer", "white pickup".
+- kind: person, animal, vehicle or package.
+- label: the name if matched; otherwise a short generic label — "stranger" for any person who is not a known subject, "package" for any package, else e.g. "unknown dog", "deer", "white pickup".
 - zone: ${zones.length ? `exactly one of ${zones.map((z) => `"${z.name}"${z.description ? ` (${z.description})` : ""}`).join(", ")}, or "" if unsure` : `""`}.
-- where: a few words on where in the scene, e.g. "by the back fence", "on the driveway".
+- where: a few words on where in the scene, e.g. "by the back fence", "on the driveway"; for a package, what it looks like and where, e.g. "small brown box on the doormat".
 - confidence: 0 to 1, how sure you are of the name (or of the label if unnamed).
 Never guess a name from a partial view, darkness or distance — use the generic label instead. Don't describe people beyond that.
-If nothing alive and no vehicle is visible, return an empty list.
+A package being carried counts only once it has been put down. If nothing alive, no vehicle and no package is visible, return an empty list.
 Return ONLY JSON matching: ${JSON.stringify(FRAME_SCHEMA)}`;
 	const { data } = await llm.generateJson({
 		task: "vision",
@@ -290,7 +297,20 @@ function cleanSubjects(raw, gallery, zones) {
 	const zoneBy = new Map(zones.map((z) => [z.name.toLowerCase(), z.name]));
 	const out = [];
 	for (const s of (raw || []).slice(0, MAX_PER_FRAME)) {
-		if (!s || !KINDS.includes(s.kind)) continue;
+		if (!s || !FRAME_KINDS.includes(s.kind)) continue;
+		if (s.kind === PACKAGE) {
+			// Never named, never matched: "package" is the label rules look for.
+			const confidence = Number(s.confidence);
+			out.push({
+				subject: null,
+				label: PACKAGE,
+				kind: PACKAGE,
+				zone: zoneBy.get(String(s.zone || "").trim().toLowerCase()) || null,
+				where: clip(s.where, 200),
+				confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, Math.round(confidence * 100) / 100)) : null,
+			});
+			continue;
+		}
 		const match = byName.get(String(s.name || "").trim().toLowerCase()) || byName.get(String(s.label || "").trim().toLowerCase());
 		const subject = match && match.kind === s.kind ? match : null;
 		let label = subject ? subject.name : clip(s.label, 60) || (s.kind === "person" ? "stranger" : `unknown ${s.kind}`);
@@ -393,8 +413,8 @@ async function list({ label = null, limit = 50, offset = 0, subjectId = null } =
 
 async function page({ filter = "all", page = 1 } = {}) {
 	const current = Math.max(1, Math.min(Number.parseInt(page, 10) || 1, 10000));
-	const label = filter === "stranger" ? "stranger" : null;
-	const subjectId = filter !== "all" && filter !== "stranger" ? String(filter) : null;
+	const label = filter === "stranger" || filter === PACKAGE ? filter : null;
+	const subjectId = filter !== "all" && !label ? String(filter) : null;
 	if (subjectId && !/^[0-9a-f-]{36}$/i.test(subjectId)) throw bad("Invalid sighting filter.");
 	const where = subjectId ? "WHERE j.uuid = ?" : label ? "WHERE s.label = ?" : "";
 	const args = subjectId ? [subjectId] : label ? [label] : [];
@@ -433,6 +453,7 @@ async function teachFromSighting(profileId, sightingUuid, body = {}) {
 	const sighting = rows[0];
 	if (!sighting) throw bad("That sighting is gone.", 404);
 	if (sighting.subject_id) throw bad("That sighting already has a name.", 409);
+	if (sighting.kind === PACKAGE) throw bad("A package isn't someone the cameras can learn.");
 
 	const alsoIds = [...new Set(Array.isArray(body.alsoIds) ? body.alsoIds.map(String) : [])].filter((id) => id !== sightingUuid);
 	if (alsoIds.length > MAX_ALSO) throw bad(`Up to ${MAX_ALSO} other sightings at once.`);
@@ -532,7 +553,7 @@ async function chatBlock(query, { timeZone } = {}) {
 	const q = String(query || "").trim().slice(0, 60);
 	const gallery = await listSubjects();
 	const subject = q ? gallery.find((s) => s.name.toLowerCase() === q.toLowerCase()) || gallery.find((s) => q.toLowerCase().includes(s.name.toLowerCase())) : null;
-	const label = subject ? subject.name : /stranger/i.test(q) ? "stranger" : null;
+	const label = subject ? subject.name : /stranger/i.test(q) ? "stranger" : /package|parcel|delivery|deliveries|box/i.test(q) ? PACKAGE : null;
 	const rows = await list({ label, limit: label ? 8 : 20 });
 	const names = gallery.map((s) => `${s.name} (${s.kind})`).join(", ") || "nobody yet";
 	const head = [`# Home camera sightings (last ${RETENTION_DAYS} days kept)`, `Known to the cameras: ${names}.`];
@@ -564,7 +585,8 @@ async function createRule(profileId, body) {
 	let label = null;
 	if (body.subjectId) subjectId = (await subjectRow(body.subjectId)).id;
 	else if (body.label === "stranger") label = "stranger";
-	else throw bad("Pick someone from the gallery, or strangers.");
+	else if (body.label === PACKAGE) label = PACKAGE;
+	else throw bad("Pick someone from the gallery, strangers, or packages.");
 	const serial = body.deviceSerial ? String(body.deviceSerial) : null;
 	if (serial && !/^[A-Za-z0-9_-]{4,40}$/.test(serial)) throw bad("Unknown camera.");
 	const uuid = randomUUID();
@@ -638,6 +660,6 @@ module.exports = {
 	listZones, setZones,
 	identify, cleanSubjects, record, list, page, openFrame, chatBlock, teachFromSighting, addEntityFromSighting,
 	listRules, createRule, removeRule, profilesToAlert, activeAlerts, matches,
-	prune, RETENTION_DAYS, KINDS,
+	prune, RETENTION_DAYS, KINDS, FRAME_KINDS, PACKAGE, storage: () => storage(), BUCKET,
 	_setStorage: (s) => (storageClient = s),
 };

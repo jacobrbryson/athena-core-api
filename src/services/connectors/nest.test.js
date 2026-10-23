@@ -1,5 +1,6 @@
 jest.mock('../../helpers/db', () => ({ query: jest.fn() }));
 jest.mock('./http', () => ({ providerGet: jest.fn(), providerRequest: jest.fn() }));
+jest.mock('../nestHistory', () => ({ record: jest.fn().mockResolvedValue(false) }));
 const pool = require('../../helpers/db');
 const { providerGet, providerRequest } = require('./http');
 const nest = require('./nest');
@@ -195,4 +196,26 @@ test('commands go only to the person\'s own stored device, only from the allowli
   await nest.executeCommands(7, NAME, [cmd]);
   expect(providerRequest).toHaveBeenCalledWith(7, 'nest', `/${NAME}:executeCommand`, expect.objectContaining({ method: 'POST', body: cmd, invalidateOnAuthFailure: false }));
   expect(providerGet).toHaveBeenCalled();
+});
+
+test('each applied event also goes to the reading history; a dropped one does not', async () => {
+  const history = require('../nestHistory');
+  pool.query
+    .mockResolvedValueOnce([[{ id: 1, profile_id: 7, connectivity: 'ONLINE', readings: '{"temperatureC":20}', event_at: at('2026-10-16T13:00:00Z') }]])
+    .mockResolvedValueOnce([{ affectedRows: 1 }]);
+  await nest.recordEvent({
+    timestamp: '2026-10-16T14:00:00Z',
+    resourceUpdate: { name: NAME, traits: { 'sdm.devices.traits.ThermostatHvac': { status: 'HEATING' } } },
+  }, { project: P });
+  expect(history.record).toHaveBeenCalledWith(7, NAME, expect.objectContaining({ temperatureC: 20, hvac: 'HEATING' }), at('2026-10-16T14:00:00Z'));
+
+  history.record.mockClear();
+  pool.query
+    .mockResolvedValueOnce([[{ id: 1, profile_id: 7, connectivity: 'ONLINE', readings: '{}', event_at: at('2026-10-16T13:00:00Z') }]])
+    .mockResolvedValueOnce([{ affectedRows: 0 }]);
+  await nest.recordEvent({
+    timestamp: '2026-10-16T14:00:00Z',
+    resourceUpdate: { name: NAME, traits: { 'sdm.devices.traits.ThermostatHvac': { status: 'OFF' } } },
+  }, { project: P });
+  expect(history.record).not.toHaveBeenCalled();
 });

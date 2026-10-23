@@ -29,4 +29,5 @@ module.exports = {
   sync: handler(async (profileId, req) => ({ round: await doors.applyMarks(profileId, req.params.uuid, req.body?.updates) })),
   close: handler(async (profileId, req) => ({ round: await doors.closeRound(profileId, req.params.uuid, req.body?.closed !== false) })),
   remove: handler(async (profileId, req) => ({ rounds: await doors.removeRound(profileId, req.params.uuid) })),
+  houseAt: handler(async (profileId, req) => doors.houseAt(profileId, { latitude: req.query.lat, longitude: req.query.lon })),
 };

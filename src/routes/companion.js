@@ -100,6 +100,8 @@ router.post('/dashboard/community/door-rounds/:uuid/doors', requireAuth, express
 router.post('/dashboard/community/door-rounds/:uuid/sync', requireAuth, express.json({ limit: '256kb' }), require('../controllers/doorToDoor').sync);
 router.post('/dashboard/community/door-rounds/:uuid/close', requireAuth, express.json({ limit: '1kb' }), require('../controllers/doorToDoor').close);
 router.delete('/dashboard/community/door-rounds/:uuid', requireAuth, require('../controllers/doorToDoor').remove);
+// The address of the house under a tap on the Community map, for "Add resident".
+router.get('/dashboard/community/house-at', requireAuth, require('../controllers/doorToDoor').houseAt);
 router.post('/dashboard/community/events', requireAuth, express.json({ limit: '4kb' }), require('../controllers/community').saveEvent);
 router.patch('/dashboard/community/events/:uuid', requireAuth, express.json({ limit: '4kb' }), require('../controllers/community').updateEvent);
 router.delete('/dashboard/community/events/:uuid', requireAuth, require('../controllers/community').removeEvent);
@@ -144,6 +146,8 @@ router.delete('/dashboard/health/body/calibration/:uuid', requireAuth, require('
 // and what they ate — the two things no connected device can see.
 const healthPlan = require('../controllers/healthPlan');
 router.get('/dashboard/health/plan', requireAuth, healthPlan.overview);
+// Bedroom temperature against WHOOP sleep (docs/capabilities/sleep-climate.md).
+router.get('/dashboard/health/sleep-climate', requireAuth, require('../controllers/propertyThermostats').sleepClimate);
 router.put('/dashboard/health/program', requireAuth, express.json({ limit: '16kb' }), healthPlan.saveProgram);
 router.delete('/dashboard/health/program', requireAuth, healthPlan.endProgram);
 router.put('/dashboard/health/program/sessions/:uuid/mark', requireAuth, express.json({ limit: '1kb' }), healthPlan.markSession);

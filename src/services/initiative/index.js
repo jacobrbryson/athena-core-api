@@ -53,6 +53,10 @@
  * quiet window ends. A nudge whose own TTL expires overnight still expires —
  * that is the trigger's statement about its own shelf life, not a budget.
  *
+ * One exception, chosen by the owner on 2026-10-20: a trigger marked
+ * `piercesQuiet` (only freeze_risk) is pushed during quiet hours, because the
+ * harm it warns of happens overnight. Nothing learned can set that flag.
+ *
  * Setting quiet_from === quiet_to turns the window off entirely.
  *
  * ## The feedback loop still runs, but it no longer silences
@@ -519,28 +523,30 @@ async function evaluateProfile(profileId, { now = new Date() } = {}) {
 			deduped += 1;
 			continue;
 		}
-		written.push({ uuid, trigger_id: trigger.id, text });
+		written.push({ uuid, trigger_id: trigger.id, text, piercesQuiet: trigger.piercesQuiet === true });
 	}
 
 	if (!written.length) {
 		return { skipped: deduped ? "already said (deduped)" : "nothing to say", nudges: [] };
 	}
 
+	// Quiet hours hold every push except a trigger the owner chose to let
+	// through (piercesQuiet — only freeze_risk, 2026-10-20): frozen pipes
+	// happen overnight, and a push held until morning arrives after them.
 	let pushed = 0;
-	if (!quiet) {
-		for (const nudge of written) {
-			// Best-effort by design: a nudge that was written and could not be
-			// pushed is still a nudge, and they will see it next time they open
-			// the app — exactly as before push existed.
-			const delivery = await push.deliverNudge(profileId, nudge).catch((err) => {
-				console.warn("[initiative] push failed:", err.message);
-				return { sent: 0 };
-			});
-			if (delivery.sent > 0) pushed += 1;
-		}
+	const due = quiet ? written.filter((n) => n.piercesQuiet) : written;
+	for (const { piercesQuiet, ...nudge } of due) {
+		// Best-effort by design: a nudge that was written and could not be
+		// pushed is still a nudge, and they will see it next time they open
+		// the app — exactly as before push existed.
+		const delivery = await push.deliverNudge(profileId, nudge).catch((err) => {
+			console.warn("[initiative] push failed:", err.message);
+			return { sent: 0 };
+		});
+		if (delivery.sent > 0) pushed += 1;
 	}
 
-	return { nudges: written, pushed, held: quiet ? written.length : 0 };
+	return { nudges: written.map(({ piercesQuiet, ...n }) => n), pushed, held: written.length - due.length };
 }
 
 /**

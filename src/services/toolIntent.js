@@ -28,6 +28,8 @@ const jev = require("./llm/adapters/jev");
 const connectorContext = require("./connectors/context");
 const heartRate = require("./heartRate");
 const webSearch = require("./webSearch");
+const location = require("./location");
+const whereabouts = require("./whereabouts");
 
 const FETCH_AT = 0.35;
 const SPEAK_AT = 0.7;
@@ -92,10 +94,25 @@ const SOURCES = [
 			"weather, schedules, opening hours, releases, or any fact about the world " +
 			"that may have changed recently or that a person would look up?",
 	},
+	{
+		// Not a connector: the paired phone, only with location context switched
+		// on (services/location). Reading it wakes the phone with a silent push
+		// and spends a Places lookup, so like the web it needs more confidence
+		// than a cached connector read — see LOCATION_FETCH_AT.
+		id: "location",
+		provider: null,
+		location: true,
+		say: "where your phone is",
+		question:
+			"Would answering this need where the person or their phone is right now — " +
+			"their current location, what place, town or road they're at, or what's near them?",
+	},
 ];
 
 // A wrong web guess spends a search; a wrong connector guess spends a cached read.
 const WEB_FETCH_AT = 0.6;
+// A wrong location guess wakes their phone for nothing.
+const LOCATION_FETCH_AT = 0.6;
 
 /** What stretch of time the question is about, and how many days to read. */
 const WINDOWS = {
@@ -114,8 +131,12 @@ async function availableSources(profileId, { audience } = {}) {
 		audience === "adult"
 			? await heartRate.getPref(profileId).then((p) => p.enabled).catch(() => false)
 			: false;
+	const locationOn =
+		audience === "adult"
+			? await location.getPref(profileId).then((p) => p.enabled).catch(() => false)
+			: false;
 	return SOURCES.filter((s) =>
-		s.web ? audience === "adult" : s.provider ? linked.has(s.provider) : heartOn
+		s.web ? audience === "adult" : s.location ? locationOn : s.provider ? linked.has(s.provider) : heartOn
 	);
 }
 
@@ -212,7 +233,7 @@ async function guess(message, { profileId, audience, sources } = {}) {
 		scores[source.id] = Math.max(noul(source.id), source.also ? noul(`${source.id}_also`) : 0);
 	}
 	const fetch = pool
-		.filter((s) => scores[s.id] >= (s.web ? WEB_FETCH_AT : FETCH_AT))
+		.filter((s) => scores[s.id] >= (s.web ? WEB_FETCH_AT : s.location ? LOCATION_FETCH_AT : FETCH_AT))
 		.map((s) => s.id);
 	// At most two named sources in the line (the likeliest), plus the heart-rate
 	// clause: "let me check your calendar, your email, WHOOP and heart rate" is not
@@ -241,7 +262,7 @@ async function guess(message, { profileId, audience, sources } = {}) {
 /**
  * What the guess adds beyond the keyword gates, for the grounding step:
  *   { providers: ["google_calendar"], daysByProvider: { google_calendar: 1 },
- *     heartRate: false, web: false }
+ *     heartRate: false, web: false, location: false }
  * Sources a keyword gate already caught are left out — they are being fetched
  * already, and fetching them twice would put two copies in the prompt.
  * Returns null when there is nothing to add.
@@ -254,13 +275,14 @@ function extraGrounding(guessed, message) {
 	).map((s) => s.provider);
 	const heart = guessed.fetch.includes("heart_rate") && !heartRate.matches(message);
 	const web = guessed.fetch.includes("web") && !webSearch.matches(message);
-	if (!providers.length && !heart && !web) return null;
+	const here = guessed.fetch.includes("location") && !whereabouts.matches(message);
+	if (!providers.length && !heart && !web && !here) return null;
 	// Only the calendar is about the future; the guess's window means nothing
 	// to WHOOP history, which keeps its own default.
 	const daysByProvider = providers.includes("google_calendar")
 		? { google_calendar: guessed.days }
 		: {};
-	return { providers, daysByProvider, heartRate: heart, web };
+	return { providers, daysByProvider, heartRate: heart, web, location: here };
 }
 
 module.exports = {

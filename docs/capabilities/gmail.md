@@ -66,6 +66,11 @@ the Mail card on the dashboard. Tap any email to see it and what I propose to do
 
 ## Limits
 
+- **Shipping notices get one more read.** For a shipping or delivery email I
+  note the order's state — shipped, out for delivery, delivered — so I can
+  match it to a package on the door camera ([packages.md](packages.md)). I
+  don't track the package with the carrier.
+
 - I never send email — replies are saved as Gmail drafts for you to send —
   and nothing moves, gets labeled, trashed, unsubscribed or logged without
   your approval of that specific card.

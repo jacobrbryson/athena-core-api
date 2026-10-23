@@ -58,6 +58,23 @@ function walkOrder(a, b) {
 
 const lookupCache = new Map();
 
+/** One Overpass query; an unreachable or busy map is a friendly 503. */
+async function overpass(query, fetchImpl) {
+	let res;
+	try {
+		res = await fetchImpl(OVERPASS_URL, {
+			method: "POST",
+			headers: { "User-Agent": USER_AGENT, Accept: "*/*", "Content-Type": "application/x-www-form-urlencoded" },
+			body: `data=${encodeURIComponent(query)}`,
+			signal: AbortSignal.timeout(30_000),
+		});
+	} catch (err) {
+		throw Object.assign(new Error("I couldn't reach the map data just now. Try again in a minute, or type the address."), { status: 503, cause: err });
+	}
+	if (!res.ok) throw Object.assign(new Error("The map data is busy right now. Try again in a minute, or type the address."), { status: 503 });
+	return res.json();
+}
+
 /**
  * House numbers on a street from OpenStreetMap. `fetchImpl` is injectable for
  * tests. Returns [{ address, latitude, longitude }] in walking order.
@@ -74,20 +91,7 @@ async function lookupStreet({ street, latitude, longitude }, fetchImpl = fetch) 
 	if (hit && Date.now() - hit.at < LOOKUP_TTL_MS) return hit.doors.map((d) => ({ ...d }));
 
 	const re = `^${escapeRe(core)}`;
-	const query = `[out:json][timeout:25];(node["addr:housenumber"]["addr:street"~"${re}",i](around:${SEARCH_RADIUS_M},${lat},${lon});way["addr:housenumber"]["addr:street"~"${re}",i](around:${SEARCH_RADIUS_M},${lat},${lon}););out tags center;`;
-	let res;
-	try {
-		res = await fetchImpl(OVERPASS_URL, {
-			method: "POST",
-			headers: { "User-Agent": USER_AGENT, Accept: "*/*", "Content-Type": "application/x-www-form-urlencoded" },
-			body: `data=${encodeURIComponent(query)}`,
-			signal: AbortSignal.timeout(30_000),
-		});
-	} catch (err) {
-		throw Object.assign(new Error("I couldn't reach the map data just now. Try again in a minute, or add the houses by hand."), { status: 503, cause: err });
-	}
-	if (!res.ok) throw Object.assign(new Error("The map data is busy right now. Try again in a minute, or add the houses by hand."), { status: 503 });
-	const body = await res.json();
+	const body = await overpass(`[out:json][timeout:25];(node["addr:housenumber"]["addr:street"~"${re}",i](around:${SEARCH_RADIUS_M},${lat},${lon});way["addr:housenumber"]["addr:street"~"${re}",i](around:${SEARCH_RADIUS_M},${lat},${lon}););out tags center;`, fetchImpl);
 
 	const found = new Map();
 	for (const el of body.elements || []) {
@@ -104,6 +108,85 @@ async function lookupStreet({ street, latitude, longitude }, fetchImpl = fetch) 
 	lookupCache.set(key, { at: Date.now(), doors });
 	if (lookupCache.size > 50) lookupCache.delete(lookupCache.keys().next().value);
 	return doors.map((d) => ({ ...d }));
+}
+
+// --- The house under a tap on the map ---------------------------------------
+
+/** ~1.1 km squares: what is sent to Overpass, so the exact tap never leaves. */
+const CELL = 0.01;
+// Each square is fetched with a margin, so a house on its edge is still found.
+const CELL_PAD = 0.0015;
+// A tap this close to an address point is that house; a little further, its street.
+const HOUSE_M = 45;
+const STREET_M = 200;
+const cellCache = new Map();
+
+function metersBetween(aLat, aLon, bLat, bLon) {
+	const rad = Math.PI / 180;
+	const x = (bLon - aLon) * rad * Math.cos(((aLat + bLat) / 2) * rad);
+	const y = (bLat - aLat) * rad;
+	return Math.sqrt(x * x + y * y) * 6371000;
+}
+
+/** Every OpenStreetMap address point in the ~1 km square around a point, cached an hour. */
+async function addressesInCell(latitude, longitude, fetchImpl) {
+	const south = Math.floor(latitude / CELL) * CELL;
+	const west = Math.floor(longitude / CELL) * CELL;
+	const key = `${south.toFixed(2)}|${west.toFixed(2)}`;
+	const hit = cellCache.get(key);
+	if (hit && Date.now() - hit.at < LOOKUP_TTL_MS) return hit.points;
+	const box = [south - CELL_PAD, west - CELL_PAD, south + CELL + CELL_PAD, west + CELL + CELL_PAD].map((n) => n.toFixed(4)).join(",");
+	const body = await overpass(`[out:json][timeout:25];(node["addr:housenumber"]["addr:street"](${box});way["addr:housenumber"]["addr:street"](${box}););out tags center;`, fetchImpl);
+	const points = [];
+	for (const el of body.elements || []) {
+		const number = trim(el.tags?.["addr:housenumber"], 20);
+		const street = trim(el.tags?.["addr:street"], 120);
+		const at = el.center || el;
+		if (!number || !street || !Number.isFinite(at.lat) || !Number.isFinite(at.lon)) continue;
+		const city = trim(el.tags["addr:city"], 60);
+		const state = trim(el.tags["addr:state"], 20);
+		const zip = trim(el.tags["addr:postcode"], 10);
+		const tail = city && state ? `, ${city}, ${state}${zip ? ` ${zip}` : ""}` : "";
+		points.push({ address: `${number} ${street}${tail}`, street, latitude: at.lat, longitude: at.lon });
+	}
+	cellCache.set(key, { at: Date.now(), points });
+	if (cellCache.size > 50) cellCache.delete(cellCache.keys().next().value);
+	return points;
+}
+
+/**
+ * The address of the house under a tap on the Community map, so the person
+ * can add who lives there. From OpenStreetMap's address points only — nobody
+ * is named or looked up — and only a ~1 km square is sent, never the tap.
+ * `address` is null when no address point is close enough (common outside
+ * towns); `street` is then the nearest street, as a hint for typing it.
+ * `household` is the person's own neighbour already at that address.
+ */
+async function houseAt(profileId, { latitude, longitude }, fetchImpl = fetch) {
+	const lat = Number(latitude);
+	const lon = Number(longitude);
+	if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 85 || Math.abs(lon) > 180) throw bad("Tap a house on the map.");
+	const points = await addressesInCell(lat, lon, fetchImpl);
+	let near = null;
+	let best = Infinity;
+	for (const p of points) {
+		const d = metersBetween(lat, lon, p.latitude, p.longitude);
+		if (d < best) { best = d; near = p; }
+	}
+	const house = near && best <= HOUSE_M ? near : null;
+	const street = near && best <= STREET_M ? near.street : null;
+	let household = null;
+	if (house) {
+		const n = (await householdsByKey(profileId)).get(community.streetKey(house.address));
+		if (n) household = { uuid: n.uuid, label: n.name || null };
+	}
+	return {
+		address: house?.address || null,
+		latitude: house ? house.latitude : lat,
+		longitude: house ? house.longitude : lon,
+		street,
+		household,
+	};
 }
 
 const toDoor = (row, household) => ({
@@ -266,4 +349,4 @@ async function removeRound(profileId, uuid) {
 	return listRounds(profileId);
 }
 
-module.exports = { lookupStreet, streetOf, streetCore, walkOrder, listRounds, startRound, getRound, addDoor, applyMarks, closeRound, removeRound, STATUSES };
+module.exports = { lookupStreet, houseAt, streetOf, streetCore, walkOrder, listRounds, startRound, getRound, addDoor, applyMarks, closeRound, removeRound, STATUSES };

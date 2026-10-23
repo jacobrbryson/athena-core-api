@@ -390,4 +390,17 @@ async function promptBlock(profileId) {
 	return lines.join("\n");
 }
 
-module.exports = { list, save, remove, checkDue, promptBlock, occurrences, wording, normalize, describe, whenText, heldForNight, KINDS, TRIGGER_ID };
+/**
+ * The place a person's home weather is read for: the one they asked for, else
+ * their watched place marked home, else their first. Null when they have none
+ * with coordinates. Shared by the Weather panel and the freeze-risk trigger.
+ */
+async function homePlace(profileId, wanted = null) {
+	const watch = require("./pulsepoint/watch");
+	const places = (await watch.listPlaces(profileId)).filter(
+		(p) => p.enabled && Number.isFinite(p.latitude) && Number.isFinite(p.longitude)
+	);
+	return (wanted && places.find((p) => p.uuid === wanted)) || places.find((p) => p.kind === "home") || places[0] || null;
+}
+
+module.exports = { homePlace, list, save, remove, checkDue, promptBlock, occurrences, wording, normalize, describe, whenText, heldForNight, KINDS, TRIGGER_ID };

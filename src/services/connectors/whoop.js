@@ -65,14 +65,47 @@ async function listRecovery(profileId, { days = 7, limit } = {}) {
 		...COLLECTION_READ,
 		query: { start: since(days), limit: limitOf(limit) },
 	});
-	return (data?.records || []).map((r) => ({
+	return (data?.records || []).map(recoveryOf);
+}
+
+/**
+ * Every record in a collection over `days`, following nextToken — for the
+ * few readers that compare weeks (sleepClimate.js), not for a prompt. Capped
+ * at `maxPages` of 25 so a long lookback can't turn into an unbounded crawl.
+ */
+async function collectAll(profileId, path, { days = 60, maxPages = 4 } = {}) {
+	const records = [];
+	let nextToken = null;
+	for (let page = 0; page < maxPages; page += 1) {
+		const query = { start: since(days), limit: MAX_LIMIT };
+		if (nextToken) query.nextToken = nextToken;
+		const data = await providerGet(profileId, PROVIDER, path, { ...COLLECTION_READ, query });
+		records.push(...(data?.records || []));
+		nextToken = data?.next_token || data?.nextToken || null;
+		if (!nextToken) break;
+	}
+	return records;
+}
+
+function recoveryOf(r) {
+	return {
 		date: String(r.created_at || "").slice(0, 10),
+		sleep_id: r.sleep_id ?? null,
 		recovery_score: r.score?.recovery_score ?? null,
 		resting_heart_rate: r.score?.resting_heart_rate ?? null,
 		hrv_ms: r.score?.hrv_rmssd_milli ?? null,
 		spo2_percent: r.score?.spo2_percentage ?? null,
 		state: r.score_state || null,
-	}));
+	};
+}
+
+/** Sleep and recovery over weeks, paged (see collectAll). */
+async function sleepHistory(profileId, { days = 60 } = {}) {
+	const [sleeps, recoveries] = await Promise.all([
+		collectAll(profileId, "/v2/activity/sleep", { days }),
+		collectAll(profileId, "/v2/recovery", { days }),
+	]);
+	return { sleep: sleeps.map(sleepOf), recovery: recoveries.map(recoveryOf) };
 }
 
 /** Sleep sessions with duration and efficiency. */
@@ -81,20 +114,25 @@ async function listSleep(profileId, { days = 7, limit } = {}) {
 		...COLLECTION_READ,
 		query: { start: since(days), limit: limitOf(limit) },
 	});
-	return (data?.records || []).map((r) => {
-		const stage = r.score?.stage_summary || {};
-		const inBedMs = Number(stage.total_in_bed_time_milli) || 0;
-		const awakeMs = Number(stage.total_awake_time_milli) || 0;
-		return {
-			date: String(r.end || r.start || "").slice(0, 10),
-			nap: r.nap === true,
-			hours_in_bed: Number((inBedMs / 3_600_000).toFixed(2)),
-			hours_asleep: Number(((inBedMs - awakeMs) / 3_600_000).toFixed(2)),
-			sleep_performance_percent: r.score?.sleep_performance_percentage ?? null,
-			sleep_efficiency_percent: r.score?.sleep_efficiency_percentage ?? null,
-			respiratory_rate: r.score?.respiratory_rate ?? null,
-		};
-	});
+	return (data?.records || []).map(sleepOf);
+}
+
+function sleepOf(r) {
+	const stage = r.score?.stage_summary || {};
+	const inBedMs = Number(stage.total_in_bed_time_milli) || 0;
+	const awakeMs = Number(stage.total_awake_time_milli) || 0;
+	return {
+		id: r.id ?? null,
+		date: String(r.end || r.start || "").slice(0, 10),
+		start: r.start || null,
+		end: r.end || null,
+		nap: r.nap === true,
+		hours_in_bed: Number((inBedMs / 3_600_000).toFixed(2)),
+		hours_asleep: Number(((inBedMs - awakeMs) / 3_600_000).toFixed(2)),
+		sleep_performance_percent: r.score?.sleep_performance_percentage ?? null,
+		sleep_efficiency_percent: r.score?.sleep_efficiency_percentage ?? null,
+		respiratory_rate: r.score?.respiratory_rate ?? null,
+	};
 }
 
 /** Workouts as Whoop scores them — strain, not distance. */
@@ -229,6 +267,9 @@ async function buildContext(profileId, { days = 7 } = {}) {
 	}
 	const interpretations = await require('../attention').promptBlock(profileId).catch(() => null);
 	if (interpretations) lines.push(interpretations);
+	// Required here, not at the top: sleepClimate reads this module.
+	const bedroom = await require("../sleepClimate").promptLine(profileId);
+	if (bedroom) lines.push(bedroom);
 	if (lines.length === 1) return `Whoop: no data recorded in the last ${days} days.`;
 	return lines.join("\n");
 }
@@ -339,6 +380,7 @@ module.exports = {
 	getProfile,
 	listRecovery,
 	listSleep,
+	sleepHistory,
 	listWorkouts,
 	listCycles,
 	buildContext,

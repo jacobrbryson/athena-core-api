@@ -23,6 +23,21 @@ If you turn it on, I'll say something when there's a real reason to:
   time to do something about it.
 - **A thermostat went offline.** If you've linked Google Nest, I tell you
   within moments of a thermostat losing its connection — once per outage.
+- **The heat or air conditioning isn't keeping up.** If you've linked Google
+  Nest, I notice when a thermostat has been heating (or cooling) for 45
+  minutes or more and the room has barely moved, or when it's been moving the
+  room at half its usual pace for two days. I say what I measured, not why.
+- **Pipes could freeze tonight.** When it's forecast to freeze at home tonight
+  *and* a thermostat is offline, not reporting, switched off or already at
+  50 °F or below. This is the one thing I'll send during your quiet hours —
+  you chose that, because frozen pipes happen overnight.
+- **A safety recall for one of your vehicles.** When NHTSA lists a recall
+  for a vehicle on Property → Vehicles that you haven't marked done — sooner
+  if it's a "don't drive" or "park outside" one.
+- **A package is still at the door.** If you've set a package alert, I take
+  a fresh look from the camera about an hour after a package is left and tell
+  you if it's still there. If Gmail is linked, I also tell you when an email
+  says something was delivered but the cameras didn't see a package.
 - **Someone or something you asked about is on the cameras.** If you've set a
   sighting alert under Property → Security (say, Wynter outside the back
   fence), I tell you when the cameras see it — once per occurrence.
@@ -118,7 +133,8 @@ each one landed.
 ## Limits
 
 - **Quiet hours delay me, they don't silence me.** Anything I notice inside
-  that window is waiting for you when it ends. The exception is something
+  that window is waiting for you when it ends — except a freeze risk, which
+  comes straight through. The exception is something
   that stops being true first — "your 2pm is in fifteen minutes" isn't worth
   handing you at four o'clock.
 - **Without a paired phone set up for notifications, I can't reach you when
@@ -144,8 +160,10 @@ each one landed.
 - **I don't use a daily interruption ceiling or spacing rule.** If several
   things are worth saying, I record each one. Your opt-in, mutes, quiet hours,
   each trigger's own shelf life, and one-per-occurrence dedupe still apply.
-- **Only three things to watch for**, and two of them need Google Calendar
-  connected. The third also needs Whoop.
+- **Only the things listed above.** The calendar ones need Google Calendar,
+  the recovery one also needs Whoop, and the thermostat, heating and freeze
+  ones need Google Nest (the freeze one also needs a home place on Community
+  for the forecast).
 - **I'm not watching for anything else.** Not your email, not your messages.
   From the home cameras, only the sighting alerts you set yourself. If it
   isn't in the list, I won't raise it.

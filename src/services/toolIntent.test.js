@@ -2,10 +2,14 @@ jest.mock("./llm", () => ({ decide: jest.fn() }));
 jest.mock("./connectors/context", () => ({ linkedProviders: jest.fn(), relevantConnectors: jest.fn() }));
 jest.mock("./llm/adapters/jev", () => ({ configured: jest.fn(async () => true) }));
 jest.mock("./heartRate", () => ({ getPref: jest.fn(), matches: jest.fn() }));
+jest.mock("./location", () => ({ getPref: jest.fn() }));
+jest.mock("./whereabouts", () => ({ matches: jest.fn() }));
 
 const llm = require("./llm");
 const connectorContext = require("./connectors/context");
 const heartRate = require("./heartRate");
+const location = require("./location");
+const whereabouts = require("./whereabouts");
 const intent = require("./toolIntent");
 
 const PROFILE = 7;
@@ -22,6 +26,8 @@ beforeEach(() => {
 	heartRate.getPref.mockResolvedValue({ enabled: true });
 	connectorContext.relevantConnectors.mockReturnValue([]);
 	heartRate.matches.mockReturnValue(false);
+	location.getPref.mockResolvedValue({ enabled: false });
+	whereabouts.matches.mockReturnValue(false);
 });
 
 describe("guess", () => {
@@ -145,6 +151,7 @@ describe("extraGrounding", () => {
 			daysByProvider: { google_calendar: 1 },
 			heartRate: false,
 			web: false,
+			location: false,
 		});
 	});
 
@@ -167,11 +174,45 @@ describe("extraGrounding", () => {
 			daysByProvider: {},
 			heartRate: false,
 			web: true,
+			location: false,
 		});
 	});
 
 	it("is null with no guess", () => {
 		expect(intent.extraGrounding(null, "hi")).toBeNull();
 		expect(intent.extraGrounding(guessed([]), "hi")).toBeNull();
+	});
+});
+
+describe("location", () => {
+	it("is only asked about when location context is on, and only for adults", async () => {
+		llm.decide.mockResolvedValue(answers({}));
+		await intent.guess("what town is this?", { profileId: PROFILE, audience: "adult" });
+		expect(llm.decide.mock.calls[0][0].questions).not.toHaveProperty("location");
+
+		location.getPref.mockResolvedValue({ enabled: true });
+		await intent.guess("what town is this?", { profileId: PROFILE, audience: "adult" });
+		expect(llm.decide.mock.calls[1][0].questions).toHaveProperty("location");
+
+		await intent.guess("what town is this?", { profileId: PROFILE, audience: "child" });
+		expect(llm.decide.mock.calls[2]?.[0]?.questions || {}).not.toHaveProperty("location");
+	});
+
+	it("needs more confidence than a connector read, and announces the phone", async () => {
+		location.getPref.mockResolvedValue({ enabled: true });
+		llm.decide.mockResolvedValue(answers({ location: 0.5 }));
+		expect((await intent.guess("hmm", { profileId: PROFILE, audience: "adult" })).fetch).not.toContain("location");
+
+		llm.decide.mockResolvedValue(answers({ location: 0.9 }));
+		const g = await intent.guess("what town is this?", { profileId: PROFILE, audience: "adult" });
+		expect(g.fetch).toContain("location");
+		expect(g.filler.text).toBe("Let me check where your phone is, hmm…");
+		expect(intent.extraGrounding(g, "what town is this?").location).toBe(true);
+	});
+
+	it("adds nothing when the where-am-I pattern already caught it", () => {
+		whereabouts.matches.mockReturnValue(true);
+		const g = { fetch: ["location"], days: 1 };
+		expect(intent.extraGrounding(g, "where am I?")).toBe(null);
 	});
 });

@@ -19,6 +19,18 @@ const gallery = [
 const zones = [{ name: "outside the back fence" }, { name: "inside the fence" }];
 
 describe("cleanSubjects", () => {
+	test("a package is always just 'package', never a gallery name, and keeps what it looks like", () => {
+		const out = sightings.cleanSubjects([
+			{ name: "Wynter", kind: "package", label: "Amazon box", where: "small brown box on the doormat", zone: "inside the fence", confidence: 0.8 },
+		], gallery, zones);
+		expect(out).toEqual([{ subject: null, label: "package", kind: "package", zone: "inside the fence", where: "small brown box on the doormat", confidence: 0.8 }]);
+	});
+	test("an alert rule can be set for packages", async () => {
+		pool.query.mockResolvedValueOnce([{ affectedRows: 1 }]);
+		await sightings.createRule(1, { label: "package" });
+		expect(pool.query.mock.calls[0][1][0]).toEqual(expect.objectContaining({ label: "package", subject_id: null }));
+		await expect(sightings.createRule(1, { label: "anything" })).rejects.toThrow(/packages/);
+	});
 	test("a known name is believed only for the same kind", () => {
 		const out = sightings.cleanSubjects([{ name: "Wynter", kind: "animal", label: "Wynter", where: "by the fence", zone: "Outside the back fence", confidence: 0.92 }], gallery, zones);
 		expect(out[0]).toEqual(expect.objectContaining({ label: "Wynter", zone: "outside the back fence", confidence: 0.92 }));
