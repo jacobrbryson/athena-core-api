@@ -62,6 +62,15 @@ It needs three things switched on, once:
 - **I got there and nothing came.** Check the three switches above — the
   Place reminders list says so when location sharing is off. The phone also
   needs the latest Athena app, and Android needs location turned on.
+- **None of them fire, anywhere.** Usually Android has taken back "Allow all
+  the time" for Athena's location — it can after an app reinstall, or when it
+  resets permissions for apps it thinks are unused — or location is switched
+  off. The phone now tells me when it can't watch your places, and I'll say so
+  (and the Community page shows it on **Watched Places** and **Reminders**). I
+  also notice when the phone stops checking in for its reminders. Fix: Settings
+  → Apps → Athena → Permissions → Location → **Allow all the time**, then open
+  the app once. A phone on an Athena app older than 2026-10-24 doesn't report,
+  so there I only notice it after an hour or more of not checking in.
 - **It came a few minutes late.** I wait until you've been there about two
   minutes so driving past doesn't count, and Android's location check can add
   a few more.
@@ -111,6 +120,19 @@ action layer; the arrival check and the wording are code.
   name/uuid, else Census geocode), `create`, `list`, `cancel`, `geofences`,
   `arrived` (server-side distance check, one fire per 8-hour visit, next-visit
   ones marked done only once a push was accepted), `promptBlock`.
+- Phone fence health (2026-10-24, after the owner's phone held no fences from
+  10-08 to 10-24 unnoticed): `athena_place_fence_status` (migration 0094), one row
+  per device. `POST /place-reminders/phone-status` (device token) records the
+  phone's own word — `ok` / `no_background_location` / `no_location_permission`
+  / `location_off` / `register_failed`, a fence count, no position — sent by
+  `PlaceGeofences.report` on a change or every 6 h. `geofences()` notes each
+  fetch (`synced_at`), which catches apps that never report. `phoneStatus()`
+  adds `not_syncing` (armed reminders, no fetch in 12 h, or none an hour after
+  setting one) and `no_phone`; its sentence (`PHONE_PROBLEMS`) goes to the
+  Community page via `GET /place-reminders` (`phone`) and into `promptBlock`.
+  Returns null (unknown) until 0094 is applied. Tests:
+  `src/services/placeReminderPhone.test.js`. No push is sent for it: a push
+  would be Athena speaking first, which is Initiative's (protected) business.
 - Action: `remind_at_place` in `../../src/services/actions/registry.js`
   (async `normalize`, which is why `../../src/services/actions/index.js` awaits it and passes the
   caller's `profileId` in ctx). Coordinates are never taken from the model.

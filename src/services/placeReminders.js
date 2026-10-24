@@ -229,7 +229,8 @@ async function cancel(profileId, uuid) {
  * What the phone should watch for. Empty while location sharing is off, so
  * turning it off also stops the phone holding any fences on the next sync.
  */
-async function geofences(profileId) {
+async function geofences(profileId, deviceId = null) {
+	await noteSync(profileId, deviceId);
 	const pref = await location.getPref(profileId);
 	if (!pref.enabled) return { enabled: false, fences: [] };
 	const [rows] = await pool.query(
@@ -416,6 +417,111 @@ async function expireDue({ now = new Date() } = {}) {
 	return { asked };
 }
 
+// --- Can the phone hold its fences? ------------------------------------------
+//
+// From 2026-10-08 to 10-24 the owner's phone lost "Allow all the time" and
+// quietly held no fences: every reminder was armed here and none could fire,
+// and nothing said so. Now the phone reports what it can do (recordPhoneStatus)
+// and every fence fetch is noted (geofences), so a phone that stops asking —
+// an older app that never reports included — is noticed too.
+
+/** What the phone may report. Anything else is refused. */
+const PHONE_STATES = new Set(["ok", "no_background_location", "no_location_permission", "location_off", "register_failed"]);
+/** The phone fetches its fences every 30 minutes and on every open; Doze can stretch that, but not this far. */
+const SYNC_STALE_MS = 12 * 3600_000;
+/** A reminder set this recently may not have reached a working phone yet. */
+const SYNC_GRACE_MS = 60 * 60_000;
+
+/** One sentence per problem, in the person's terms; the page and her prompt both use it. */
+const PHONE_PROBLEMS = {
+	no_background_location:
+		"Your phone isn't letting Athena use location in the background, so place reminders can't fire. On the phone: Settings → Apps → Athena → Permissions → Location → Allow all the time.",
+	no_location_permission:
+		"Athena doesn't have location permission on your phone, so place reminders can't fire. On the phone: Settings → Apps → Athena → Permissions → Location → Allow all the time.",
+	location_off:
+		"Location is switched off on your phone (or Google location accuracy is), so place reminders can't fire until it's back on.",
+	register_failed: "Your phone couldn't set up the places to watch, so place reminders may not fire. Opening Athena on the phone retries.",
+	not_syncing:
+		"Your phone hasn't picked up its place reminders lately, so they may not fire. Open Athena on the phone; if this stays, check Settings → Apps → Athena → Permissions → Location → Allow all the time.",
+	no_phone: "No phone is paired with Athena, so place reminders can't fire. Pair your phone from the Android app.",
+};
+
+const missingTable = (err) => err?.code === "ER_NO_SUCH_TABLE";
+
+/** The phone fetched its fences (GET /geofences). Quiet when migration 0094 isn't applied yet. */
+async function noteSync(profileId, deviceId) {
+	if (!deviceId) return;
+	await pool
+		.query(
+			`INSERT INTO athena_place_fence_status (device_id, profile_id, synced_at) VALUES (?, ?, NOW())
+			 ON DUPLICATE KEY UPDATE profile_id = VALUES(profile_id), synced_at = NOW()`,
+			[deviceId, profileId]
+		)
+		.catch((err) => {
+			if (!missingTable(err)) console.warn("[place-reminders] could not note a fence sync:", err.message);
+		});
+}
+
+/** POST /place-reminders/phone-status: what the phone says it can do. No position. */
+async function recordPhoneStatus(profileId, deviceId, body = {}) {
+	const state = String(body.state || "");
+	if (!PHONE_STATES.has(state)) throw bad("Unknown fence state");
+	const fences = Math.min(Math.max(Math.trunc(Number(body.fences) || 0), 0), 200);
+	const detail = trim(body.detail, 120);
+	await pool.query(
+		`INSERT INTO athena_place_fence_status (device_id, profile_id, state, fences, detail, reported_at, synced_at)
+		 VALUES (?, ?, ?, ?, ?, NOW(), IF(? = 'ok', NOW(), NULL))
+		 ON DUPLICATE KEY UPDATE profile_id = VALUES(profile_id), state = VALUES(state), fences = VALUES(fences),
+		   detail = VALUES(detail), reported_at = NOW(), synced_at = IF(VALUES(state) = 'ok', NOW(), synced_at)`,
+		[deviceId, profileId, state, fences, detail, state]
+	);
+	return { recorded: true };
+}
+
+/**
+ * Whether place reminders can fire on the person's phone: `problem` is null
+ * when they can (or nothing is armed and the phone hasn't said otherwise), or
+ * a PHONE_PROBLEMS key with its `message`. Null overall when it can't be told
+ * (migration 0094 not applied).
+ */
+async function phoneStatus(profileId, { now = Date.now() } = {}) {
+	let rows;
+	try {
+		[rows] = await pool.query(
+			`SELECT d.id, d.name, d.last_seen_at, s.state, s.fences, s.detail, s.reported_at, s.synced_at,
+			   (SELECT COUNT(*) FROM athena_place_reminder r WHERE r.profile_id = ? AND r.status IN ('armed', 'waiting')) AS armed,
+			   (SELECT MIN(created_at) FROM athena_place_reminder r WHERE r.profile_id = ? AND r.status IN ('armed', 'waiting')) AS oldest
+			 FROM (SELECT 1) one
+			 LEFT JOIN paired_device d ON d.profile_id = ? AND d.platform = 'android' AND d.revoked_at IS NULL AND d.token_hash IS NOT NULL
+			 LEFT JOIN athena_place_fence_status s ON s.device_id = d.id
+			 ORDER BY d.last_seen_at IS NULL, d.last_seen_at DESC LIMIT 1`,
+			[profileId, profileId, profileId]
+		);
+	} catch (err) {
+		if (missingTable(err)) return null;
+		throw err;
+	}
+	const row = rows[0] || {};
+	const armed = Number(row.armed || 0);
+	const at = (value) => (value ? new Date(value).toISOString() : null);
+	const result = (problem) => ({
+		problem,
+		message: problem ? PHONE_PROBLEMS[problem] : null,
+		armed,
+		fences: row.fences == null ? null : Number(row.fences),
+		reportedAt: at(row.reported_at),
+		syncedAt: at(row.synced_at),
+		phone: row.name || null,
+	});
+	if (!row.id) return result(armed ? "no_phone" : null);
+	if (row.state && row.state !== "ok") return result(row.state);
+	if (!armed) return result(null);
+	const synced = row.synced_at ? new Date(row.synced_at).getTime() : null;
+	const waitingSince = row.oldest ? new Date(row.oldest).getTime() : now;
+	if (synced === null ? now - waitingSince > SYNC_GRACE_MS : now - synced > SYNC_STALE_MS) return result("not_syncing");
+	return result(null);
+}
+
 /**
  * What she has set, for her own prompt — so "what did I ask you to remind me
  * at Missy's?" has an answer, and so she says so when location sharing is off
@@ -423,7 +529,7 @@ async function expireDue({ now = new Date() } = {}) {
  */
 async function promptBlock(profileId) {
 	if (!profileId) return null;
-	const [[rows], pref] = await Promise.all([
+	const [[rows], pref, phone] = await Promise.all([
 		pool.query(
 			`SELECT place_name, address, text, repeats, status, after_kind, after_label, expires_at
 			 FROM athena_place_reminder
@@ -433,6 +539,7 @@ async function promptBlock(profileId) {
 			[profileId]
 		),
 		location.getPref(profileId).catch(() => ({ enabled: false })),
+		phoneStatus(profileId).catch(() => null),
 	]);
 	const lines = [];
 	if (rows.length) {
@@ -455,6 +562,14 @@ async function promptBlock(profileId) {
 			"needs location sharing on (⋯ menu → Initiative → location context) and Athena allowed location \"all the time\" on the phone."
 		);
 	}
+	// Only while sharing is on: with it off, the lines above already say why nothing can fire.
+	if (pref.enabled && phone?.problem) {
+		if (!lines.length) lines.push("# Place reminders", "");
+		lines.push(
+			`PHONE PROBLEM — place reminders cannot fire right now: ${phone.message}`,
+			"Tell them this plainly the next time place reminders come up, and before promising one. Never say a reminder is set without saying it can't fire yet."
+		);
+	}
 	return lines.length ? lines.join("\n") : null;
 }
 
@@ -470,5 +585,8 @@ module.exports = {
 	cancel,
 	geofences,
 	arrived,
+	recordPhoneStatus,
+	phoneStatus,
+	PHONE_PROBLEMS,
 	promptBlock,
 };

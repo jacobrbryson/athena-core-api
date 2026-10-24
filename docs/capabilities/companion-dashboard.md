@@ -17,6 +17,12 @@ projects options. It still appears only when there is a timely suggestion or
 an ongoing or imminent event, outside working hours. Close the drawer with
 Escape, the close button or the backdrop.
 
+The top strip shows your latest WHOOP sleep duration and, when available, the
+percentage of the sleep your body asked for. It is separate from Recovery, so
+you can see both how long you slept and how ready your body is. Tap it to open
+Health & Performance. Missing or disconnected sleep data stays clearly marked;
+I do not estimate it.
+
 I populate the cards from connected sources: Google Calendar events for the next
 seven days; dated WHOOP recovery, sleep and strain;
 the linked Family Chores player's chores for today — everything still open and due today or earlier, overdue ones included, plus what was finished today, with a View all link to Family Chores; saved family and work

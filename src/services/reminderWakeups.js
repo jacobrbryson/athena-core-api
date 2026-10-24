@@ -86,4 +86,6 @@ async function wakeAt(at) {
 	}
 }
 
-module.exports = { wakeAt, _reset: () => (auth = null) };
+// projectId/serviceAccount/authOf are shared with guardianEngine/dispatch.js,
+// which books its wake-ups on the same queue.
+module.exports = { wakeAt, projectId, serviceAccount, authOf, QUEUE, REGION, _reset: () => (auth = null) };

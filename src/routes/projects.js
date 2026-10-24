@@ -49,6 +49,15 @@ router.delete('/property/security/subjects/:id/photos/:mediaId', security.remove
 router.put('/property/security/zones/:serial', json, security.setZones);
 router.post('/property/security/rules', json, security.createRule);
 router.delete('/property/security/rules/:id', security.removeRule);
+// Guardian Engine: nightly sweep, storm umbrella watch, incidents (docs/architecture/guardian-engine.md).
+const guardian = require('../controllers/guardian');
+router.get('/property/security/guardian', guardian.overview);
+router.put('/property/security/guardian/protocols/:id', json, guardian.saveProtocol);
+router.post('/property/security/guardian/protocols/:id/run', json, guardian.runNow);
+router.post('/property/security/guardian/incidents/:id/recheck', guardian.recheck);
+router.post('/property/security/guardian/incidents/:id/acknowledge', guardian.acknowledge);
+router.post('/property/security/guardian/incidents/:id/dismiss', json, guardian.dismiss);
+router.put('/property/security/guardian/incidents/:id/assignee', json, guardian.assign);
 // Vehicle photos are one 1.5 MB JPEG data URL; the same 8 MB parser covers them.
 const vehicles = require('../controllers/propertyVehicles');
 router.get('/property/vehicles', vehicles.list);

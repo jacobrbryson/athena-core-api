@@ -1,29 +1,17 @@
 const pool = require('../helpers/db');
 const { requireAdultActor } = require('../helpers/actor');
-const { ProxyAgent } = require('undici');
 const media = require('../services/securityMedia');
 const sightings = require('../services/sightings');
+// The bridge client is shared with the Guardian Engine (services/guardianEngine).
+const { configured, allowed, bridge } = require('../services/eufyBridge');
 
 const BASE = '/api/v1/projects/property/security';
-const configured = () => Boolean(process.env.EUFY_BRIDGE_URL && process.env.EUFY_BRIDGE_TOKEN);
-const allowed = profileId => new Set((process.env.EUFY_AUTHORIZED_PROFILE_IDS || '').split(',').map(s => s.trim()).filter(Boolean)).has(String(profileId));
-let tailnetProxy;
 // Names from the last status read, so a kept image says which camera took it
 // without trusting a name sent by the app.
 const deviceNames = new Map();
 const SERIAL = /^[A-Za-z0-9_-]{4,40}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const audit = (actor, action) => pool.query('INSERT INTO athena_access_audit (subject, action) VALUES (?, ?)', [String(actor.profileId), action]);
-
-function bridgeDispatcher(root) {
-  const proxy = process.env.EUFY_TAILSCALE_HTTP_PROXY;
-  if (!proxy) return undefined;
-  // The proxy is local to the Cloud Run container. Keep its use scoped to the
-  // one HTTPS tailnet destination, never to other provider or model traffic.
-  if (root.protocol !== 'https:' || !root.hostname.endsWith('.ts.net') || proxy !== 'http://127.0.0.1:1055') throw new Error('invalid_tailnet_config');
-  if (!tailnetProxy) tailnetProxy = new ProxyAgent(proxy);
-  return tailnetProxy;
-}
 
 async function actorFor(req, res) {
   res.set('Cache-Control', 'no-store');
@@ -36,17 +24,6 @@ async function actorFor(req, res) {
     return null;
   }
   return actor;
-}
-async function bridge(path, timeoutMs = 25_000) {
-  const base = process.env.EUFY_BRIDGE_URL;
-  if (!base || !process.env.EUFY_BRIDGE_TOKEN) throw new Error('unconfigured');
-  const root = new URL(base);
-  // The operator configures this fixed private endpoint. No request URL or
-  // model-provided address may select a network destination.
-  if (!['http:', 'https:'].includes(root.protocol) || root.username || root.password || root.search || root.hash) throw new Error('invalid_bridge_config');
-  const url = new URL(path, root);
-  if (url.origin !== root.origin) throw new Error('invalid_bridge_path');
-  return fetch(url, { headers: { Authorization: `Bearer ${process.env.EUFY_BRIDGE_TOKEN}` }, signal: AbortSignal.timeout(timeoutMs), dispatcher: bridgeDispatcher(root) });
 }
 
 async function list(req, res) {
@@ -220,5 +197,5 @@ const sightingFrame = guarded(async (req, res, actor) => {
   return stream.pipe(res);
 });
 
-module.exports = { list, snapshot, clip, listMedia, getMedia, updateMedia, removeMedia, BASE,
+module.exports = { list, snapshot, clip, listMedia, getMedia, updateMedia, removeMedia, BASE, actorFor,
   sightingsOverview, createSubject, updateSubject, linkSubjectPerson, removeSubject, addSubjectPhoto, removeSubjectPhoto, setZones, createRule, removeRule, sightingFrame, teachSighting, addSightingEntity };

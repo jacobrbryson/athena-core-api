@@ -18,6 +18,10 @@ app.post('/webhooks/whoop', express.raw({ type: 'application/json', limit: '32kb
 app.post('/webhooks/nest', express.json({ limit: '96kb' }), require('./controllers/nestWebhook').receive);
 // Household Eufy bridge: motion/doorbell/person events with one frame (base64) each.
 app.post('/webhooks/eufy', express.json({ limit: '8mb' }), require('./controllers/eufyEvents').receive);
+// Guardian Engine dispatch from the athena-incidents job and Cloud Tasks: the
+// controller verifies a Google ID token for an allowed service account, and
+// the body carries nothing the engine reads (docs/architecture/guardian-engine.md).
+app.post('/internal/guardian/dispatch', express.json({ limit: '4kb' }), require('./controllers/guardian').dispatch);
 // Image-bearing routes (photo memories, camera keyframes, project photos) get a larger body
 // limit; everything else keeps the 100kb default. body-parser skips a body
 // that is already parsed, so the global parser below is a no-op for these.

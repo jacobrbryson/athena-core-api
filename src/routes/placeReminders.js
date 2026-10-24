@@ -9,4 +9,5 @@ router.get("/", requireAuth, controller.list);
 router.delete("/:uuid", requireAuth, controller.cancel);
 router.get("/geofences", requireAuthOrDevice, controller.geofences);
 router.post("/arrived", requireAuthOrDevice, express.json({ limit: "4kb" }), controller.arrived);
+router.post("/phone-status", requireAuthOrDevice, express.json({ limit: "2kb" }), controller.phoneStatus);
 module.exports = router;

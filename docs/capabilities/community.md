@@ -79,22 +79,32 @@ conversation, I'll suggest adding it on the Community page so I keep it.
 Dashboard). The top of the page is an overview over a Lake Norman photo: your
 town and my one-line read, four tiles (watched places, neighbors, local events
 in the next 7 days, active alerts), the map (switch **Map** / **Satellite**)
-beside **Watched Places** and **Nearby People**, then **Local Alerts**, **Local
-Weather** (now, today's high and low, and every three hours — the National
-Weather Service forecast at your home point of interest, or your first watched
-place if none is marked home; **Forecast & alerts** jumps to the full Weather
-panel), **Coming Up Nearby** and **Recent Local
-Updates**. Every **Manage**, **View all** and **Add** there scrolls down to
-**The detail**, where the lists are edited. Each list has its own **Add** button; every entry has **Edit** and
-**Remove**. Tap a watched place in the overview to open its editor in **The detail**. There you can change its name, kind, address, watch radius, watching switch, notes, and picture. Choose a new address with **Find address** before saving; the picture appears beside the place on this page and on your other devices. **Add a household** starts with the address (**Find** standardizes
+beside **Watched Places** and **Local Weather** (now, today's high and low, and
+every three hours — the National Weather Service forecast at your home point of
+interest, or your first watched place if none is marked home; **Forecast &
+alerts** jumps to the full Weather panel), then **Local Alerts**, **Coming Up
+Nearby** and **Recent Local Updates**. There is no Nearby People card any more;
+neighbors are under the **Neighbors** tile and in **The detail**. Every **View
+all** there scrolls down to **The detail**, where the lists are edited. Each list
+has its own **Add** button; every entry has **Edit** and **Remove**.
+
+Watched places work differently: tapping one in **Watched Places** opens a side
+drawer to edit it, and **Add a place to watch** opens the same drawer empty. In
+the drawer you can change its name, kind, address (**Find**, or **or use my
+current location** when adding), watch radius, the watching switch, notes and a
+picture, see the ring on a small map, and **Remove** the place. A changed address
+must be found before saving. **Manage**, the **Watched places** tile and "N more"
+open the full list on its own page, **Community → Points of interest**
+(/community/points-of-interest), where each place has its radius and **watching /
+paused** switch inline and **Edit** opens the same drawer. Addresses that came
+back from the address lookup in capitals are shown in normal casing, and saving
+a watched place stores them that way. **Add a household** starts with the address (**Find** standardizes
 it). Under **Who lives here**, contacts at that address are offered first; the
 **Add someone from your Google contacts** box finds anyone else by name, email
 or phone. **Unlink** takes a person off the house. A contact can only live at
 one house — one already linked elsewhere says where. If Google Contacts isn't
 connected, the same spot offers **Connect Google Contacts**, which opens
-Connected apps. Points of interest are added by street address (Find) or **or use
-my current location**, with a radius and a preview of the ring. The radius and
-the **watching / paused** switch sit on each place. The same page shows what's
+Connected apps. The same page shows what's
 happening near your places, local news, and **Emergency alerts on this phone**
 (PulsePoint access, location, and the test alerts).
 

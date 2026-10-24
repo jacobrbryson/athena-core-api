@@ -24,8 +24,8 @@ function fail(res, err) {
 async function list(req, res) {
 	const id = await profileId(req, res); if (!id) return;
 	try {
-		const [reminders, times] = await Promise.all([placeReminders.list(id), timeReminders.list(id).catch(() => [])]);
-		return res.json({ reminders, timeReminders: times });
+		const [reminders, times, phone] = await Promise.all([placeReminders.list(id), timeReminders.list(id).catch(() => []), placeReminders.phoneStatus(id).catch(() => null)]);
+		return res.json({ reminders, timeReminders: times, phone });
 	} catch (err) { return fail(res, err); }
 }
 
@@ -49,7 +49,7 @@ async function cancel(req, res) {
 /** The phone's sync: which fences to hold. */
 async function geofences(req, res) {
 	if (req.user?.kind !== "device") return res.status(403).json({ success: false, message: "Device token required" });
-	try { return res.json(await placeReminders.geofences(req.user.profileId)); } catch (err) { return fail(res, err); }
+	try { return res.json(await placeReminders.geofences(req.user.profileId, req.user.deviceId)); } catch (err) { return fail(res, err); }
 }
 
 /** The phone has been inside a fence for a couple of minutes. */
@@ -58,4 +58,10 @@ async function arrived(req, res) {
 	try { return res.json(await placeReminders.arrived(req.user.profileId, req.user.deviceId, req.body || {})); } catch (err) { return fail(res, err); }
 }
 
-module.exports = { list, cancel, geofences, arrived };
+/** The phone says whether it can hold its fences (no position). */
+async function phoneStatus(req, res) {
+	if (req.user?.kind !== "device") return res.status(403).json({ success: false, message: "Device token required" });
+	try { return res.json(await placeReminders.recordPhoneStatus(req.user.profileId, req.user.deviceId, req.body || {})); } catch (err) { return fail(res, err); }
+}
+
+module.exports = { list, cancel, geofences, arrived, phoneStatus };

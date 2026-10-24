@@ -91,10 +91,33 @@ async function weatherAlertPass() {
 	}
 }
 
+/**
+ * The Guardian Engine's planner (services/guardianEngine): books tonight's
+ * sweep, starts a storm umbrella watch when the weather turns, books
+ * rechecks, escalates, retries notifications and reports missed runs. This
+ * job can't reach the cameras, so anything due to be looked at is handed to
+ * the core service (POST /internal/guardian/dispatch). Never fails the pass.
+ */
+async function guardianPass() {
+	if (args.status || args.dryRun) return;
+	try {
+		const guardian = require("../services/guardianEngine");
+		const planned = await guardian.plan();
+		if (planned.scheduled.length || planned.storm?.created) log(`guardian: scheduled ${planned.scheduled.length}${planned.storm?.created ? ", storm watch started" : ""}`);
+		if (planned.due) {
+			const sent = await require("../services/guardianEngine/dispatch").dispatchNow({ reason: "incidents job" });
+			log(`guardian: ${planned.due} due — dispatch ${sent.ok ? `ran ${sent.body?.ran ?? "?"}` : `not delivered (${sent.skipped || sent.status || sent.error})`}`);
+		}
+	} catch (error) {
+		log("guardian failed:", error.message);
+	}
+}
+
 async function pass() {
 	if (args.status) return status();
 	await reminderBackstop();
 	await weatherAlertPass();
+	await guardianPass();
 	const out = await watch.runOnce({ dryRun: args.dryRun, force: args.force });
 	const { results } = out;
 	if (out.skipped) return log(`not due (every ${minutes(out.everyMs)}, ${out.why}); next in ${minutes(out.nextInMs)}`);

@@ -74,8 +74,21 @@ const NUDGE_TTL_S = 3 * 60 * 60;
 
 /** What a point of interest is to the person. Labels and icons live in the app. */
 const PLACE_KINDS = new Set(["home", "family", "neighborhood", "church", "school", "town", "work", "business", "park", "other"]);
+const US_STATE_CODES = new Set("AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC".split(" "));
 
 const bad = (message) => Object.assign(new Error(message), { status: 400 });
+
+/** Persist all-caps imports in readable casing and keep postal state codes uppercase. */
+function normalizePlaceAddress(value) {
+	if (typeof value !== "string" || !value.trim()) return null;
+	let address = value.trim().slice(0, 255);
+	const letters = address.match(/[A-Za-z]/g) || [];
+	if (letters.length && letters.every((letter) => letter === letter.toUpperCase())) {
+		address = address.toLowerCase().replace(/(^|[\s,-])([a-z])/g, (_match, separator, letter) => separator + letter.toUpperCase());
+	}
+	return address.split(",").map((part) => part.replace(/^(\s*)([A-Za-z]{2})(?=(?:\s+\d{5}(?:-\d{4})?)?\s*$)/, (match, before, code) =>
+		US_STATE_CODES.has(code.toUpperCase()) ? `${before}${code.toUpperCase()}` : match)).join(",");
+}
 
 function toPlace(row) {
 	return {
@@ -114,7 +127,7 @@ async function updatePlace(profileId, uuid, input = {}) {
 	const radius = Number(input.radiusMiles);
 	if (!Number.isFinite(radius) || radius <= 0 || radius > 50) throw bad('Radius must be between 0 and 50 miles.');
 	if (!PLACE_KINDS.has(input.kind)) throw bad('Choose what kind of place this is.');
-	const address = typeof input.address === 'string' && input.address.trim() ? input.address.trim().slice(0, 255) : null;
+	const address = normalizePlaceAddress(input.address);
 	const notes = typeof input.notes === 'string' && input.notes.trim() ? input.notes.trim().slice(0, 500) : null;
 	if (input.photoBase64 !== undefined && input.photoBase64 !== null) {
 		const encoded = input.photoBase64;
@@ -152,7 +165,7 @@ async function savePlace(profileId, input = {}) {
 	if (!geo.isPoint(point)) throw bad("That place needs a real latitude and longitude.");
 	const radius = input.radiusMiles === undefined ? DEFAULT_RADIUS_MILES : Number(input.radiusMiles);
 	if (!Number.isFinite(radius) || radius <= 0 || radius > 50) throw bad("Radius must be between 0 and 50 miles.");
-	const address = typeof input.address === "string" && input.address.trim() ? input.address.trim().slice(0, 255) : null;
+	const address = normalizePlaceAddress(input.address);
 	const enabled = input.enabled === false ? 0 : 1;
 	// What the place is to the person. Left out, an existing place keeps its
 	// kind and notes — a radius change from the list must not wipe them.
