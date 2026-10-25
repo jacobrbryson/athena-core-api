@@ -3,8 +3,10 @@
  * read market data → evaluate each watched symbol with strategy.evaluate() →
  * persist the decision trail → raise deduplicated alerts → run the paper
  * forward test. Evaluations happen while the dashboard (or a chat question)
- * asks for them, at most every 15 s per person; nothing runs on a timer, and
- * nothing here can place an order.
+ * asks for them, or when the market-hours monitor ticks (monitor.js), at most
+ * every 15 s per person. After each one, notifications.process() derives and
+ * delivers push notifications from what was stored. Nothing here can place an
+ * order.
  */
 
 const alpaca = require("./alpaca");
@@ -18,6 +20,7 @@ const cashMath = require("./cash");
 const { riskBudget, estimateFees } = require("./risk");
 const ind = require("./indicators");
 const analytics = require("./analytics");
+const notifications = require("./notifications");
 
 const SECTORS = {
 	XLK: "Technology", XLF: "Financials", XLE: "Energy", XLV: "Health care", XLY: "Consumer discretionary", XLP: "Consumer staples",
@@ -206,6 +209,8 @@ async function run(profileId) {
 	const recentNews = symbols.length ? await alpaca.news(symbols, { since: new Date(now - 24 * 3600_000).toISOString(), limit: 30 }).catch(() => []) : [];
 
 	const marketCtx = { spy: { above_vwap: overview.spy.above_vwap }, qqq: { above_vwap: overview.qqq.above_vwap } };
+	// Time-expired setups turn EXPIRED before anything reads them as current.
+	await store.expireDue(profileId, now);
 	const rows = [];
 	for (const w of list) {
 		const sym = w.symbol;
@@ -236,6 +241,7 @@ async function run(profileId) {
 		});
 	}
 
+	await managePaper(profileId, bars, now);
 	await positionAlerts(profileId, state, quotes, date, now);
 	await riskAlerts(profileId, state, date);
 	await eventAlerts(profileId, state, base.events.today, date, now);
@@ -254,6 +260,7 @@ async function run(profileId) {
 		store.insertSnapshot({ session_date: date, kind: "market", taken_at: now, data_source: alpaca.SOURCE, feed, quote_at: overview.spy.price_at, last_bar_at: null, is_stale: false, market_phase: ph.phase, regime: mkt.regime, assessment: mkt.assessment, payload: overview, profile_id: profileId })
 			.catch(() => {});
 	}
+	await notifications.process(profileId, { now, dashboard: payload });
 	return payload;
 }
 
@@ -344,6 +351,22 @@ async function finishPaper(p, exitRaw, reason, at) {
 	await store.closePosition(p, { exit_price: exit, exit_at: at, exit_fees: exitFees, exit_reason: reason, journal: { ...journal, followed_plan: true, notes: "Paper forward test (simulated)." } });
 }
 
+/**
+ * Paper positions close at their stop or target from the candles since entry
+ * (a stop touch wins a candle that touched both). This used to follow the
+ * signal's EXIT_INVALIDATED, but a confirmed signal can now EXPIRE when its
+ * entry window passes while the simulated position is still open.
+ */
+async function managePaper(profileId, bars, now) {
+	for (const p of await store.positions(profileId, { mode: "paper", status: "open" })) {
+		const since = ind.closedBars(bars[p.symbol] || [], now).filter((b) => b.t >= Date.parse(p.entry_at));
+		const stopBar = since.find((b) => b.l <= p.planned_stop);
+		const targetBar = p.planned_target ? since.find((b) => b.h >= p.planned_target) : null;
+		const hit = stopBar && (!targetBar || stopBar.t <= targetBar.t) ? { exit: p.planned_stop, reason: "stop", t: stopBar.t } : targetBar ? { exit: p.planned_target, reason: "target", t: targetBar.t } : null;
+		if (hit) await finishPaper({ ...p, profile_id: profileId }, hit.exit, hit.reason, new Date(hit.t + ind.MINUTE).toISOString());
+	}
+}
+
 /** Paper positions still open near the close are flattened at the last price. */
 async function flattenPaper(profileId, quotes, now) {
 	const ph = clock.phase(now);
@@ -380,6 +403,7 @@ async function riskAlerts(profileId, state, date) {
 	if (!state.account.alerts_enabled) return;
 	const lost = -Math.min(0, state.today.realized_pl);
 	const max = state.account.max_daily_loss;
+	if (state.today.trades >= state.account.max_trades_per_day) await store.insertAlert({ profile_id: profileId, kind: "trade_limit", dedupe_key: `risk:${date}:trades`, title: "Daily trade limit reached", body: `${state.today.trades} of ${state.account.max_trades_per_day} trades used today. No further setups qualify today.` });
 	if (lost >= max) await store.insertAlert({ profile_id: profileId, kind: "daily_risk", dedupe_key: `risk:${date}:full`, title: "Daily loss limit reached", body: `Realized ${money(-lost)} today against a ${money(max)} limit. No further setups qualify today.` });
 	else if (lost >= max / 2) await store.insertAlert({ profile_id: profileId, kind: "daily_risk", dedupe_key: `risk:${date}:half`, title: "Half the daily loss limit used", body: `Realized ${money(-lost)} of a ${money(max)} limit; ${money(state.today.daily_loss_left)} left.` });
 }

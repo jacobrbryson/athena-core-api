@@ -135,7 +135,7 @@ function topicFor(collapseKey) {
  * an ordinary refusal: a closed browser must not be able to fail the pass
  * that was trying to reach five other people.
  */
-async function send(token, { title, body, data = {}, collapseKey } = {}) {
+async function send(token, { title, body, data = {}, collapseKey, ttlSeconds } = {}) {
 	const subscription = parseSubscription(token);
 	if (!subscription) return { ok: false, dead: true, reason: "MALFORMED_SUBSCRIPTION" };
 
@@ -155,7 +155,7 @@ async function send(token, { title, body, data = {}, collapseKey } = {}) {
 
 	try {
 		await webpush.sendNotification(subscription, payload, {
-			TTL: TTL_SECONDS,
+			TTL: Number.isInteger(ttlSeconds) && ttlSeconds > 0 ? Math.min(ttlSeconds, TTL_SECONDS) : TTL_SECONDS,
 			// Collapses a redelivery of the same nudge against itself. Two
 			// different nudges carry different keys and stack — see the note in
 			// push/index.js deliverNudge about why that changed.

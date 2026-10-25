@@ -237,6 +237,140 @@ const THERMOSTAT_GAP_C = 1.66;
 const MAX_EVENT_DAYS = 365;
 const MAX_EVENT_HOURS = 24 * 14;
 
+// --- Projects (services/projects) -------------------------------------------
+
+/** One of their projects by the title the model wrote; ambiguity is the model's mistake to fix, never a guess. */
+async function ownProject(ctx, title) {
+	try {
+		return await projectStore.findByTitle(ctx.profileId, str(title, 190));
+	} catch (err) {
+		throw invalid(err.message);
+	}
+}
+
+/** A project's step by title: exact, else the one step containing it; anything else is refused, naming the choices. */
+async function projectStep(row, title) {
+	const want = str(title, 190)?.toLowerCase();
+	if (!want) return null;
+	const [steps] = await projectStore.stepsOf(row.id);
+	const match = steps.filter((s) => s.title.toLowerCase() === want);
+	const loose = match.length ? match : steps.filter((s) => s.title.toLowerCase().includes(want) || want.includes(s.title.toLowerCase()));
+	if (loose.length !== 1) {
+		throw invalid(loose.length
+			? `"${title}" could be ${loose.slice(0, 4).map((s) => `"${s.title}"`).join(", ")} — say which`
+			: `"${row.title}" has no step called "${title}"`);
+	}
+	return loose[0];
+}
+
+const given = (v) => v !== undefined && v !== null && v !== "";
+
+/** A model-written amount ("3200", "$3,200"), or throws. */
+function amount(value, label) {
+	const n = Number(String(value).replace(/[$,\s]/g, ""));
+	if (!Number.isFinite(n) || n < 0 || n > 100_000_000) throw invalid(`${label} must be an amount in dollars`);
+	return Math.round(n * 100) / 100;
+}
+
+/** "on" / "off" from a model, or throws. */
+function onOff(value, label) {
+	const v = String(value).toLowerCase();
+	if (["on", "true", "yes"].includes(v)) return true;
+	if (["off", "false", "no"].includes(v)) return false;
+	throw invalid(`${label} is "on" or "off"`);
+}
+
+/** The 0096/0097 fields add_project and update_project share, from the model's params to the service's names. */
+function projectPlanFields(raw) {
+	const out = {};
+	const doneWhen = str(raw.project_done_when, 4000);
+	if (doneWhen) out.project_done_when = projectShape.criteriaOf(doneWhen).join("\n");
+	if (str(raw.project_ref_code, 48)) out.project_ref_code = str(raw.project_ref_code, 48);
+	if (str(raw.project_revision, 16)) out.project_revision = str(raw.project_revision, 16).replace(/^v/i, "");
+	if (given(raw.project_budget)) out.project_budget = amount(raw.project_budget, "The working budget");
+	if (given(raw.project_budget_ceiling)) out.project_budget_ceiling = amount(raw.project_budget_ceiling, "The approval ceiling");
+	if (out.project_budget !== undefined && out.project_budget_ceiling !== undefined && out.project_budget > out.project_budget_ceiling) {
+		throw invalid("The working budget is above the approval ceiling");
+	}
+	if (given(raw.project_pin)) out.project_pin = onOff(raw.project_pin, "project_pin");
+	return out;
+}
+
+function planInput(p) {
+	const out = {};
+	if (p.project_done_when) out.doneWhen = p.project_done_when;
+	if (p.project_ref_code) out.refCode = p.project_ref_code;
+	if (p.project_revision) out.revision = p.project_revision;
+	if (p.project_budget !== undefined || p.project_budget_ceiling !== undefined) {
+		out.budget = {
+			...(p.project_budget !== undefined ? { working: p.project_budget } : {}),
+			...(p.project_budget_ceiling !== undefined ? { ceiling: p.project_budget_ceiling } : {}),
+		};
+	}
+	if (p.project_pin !== undefined) out.pinned = p.project_pin;
+	return out;
+}
+
+function planSummary(p) {
+	return [
+		p.project_done_when ? `done when: ${projectShape.criteriaOf(p.project_done_when).join("; ").slice(0, 160)}` : null,
+		p.project_ref_code ? `reference ${p.project_ref_code}` : null,
+		p.project_revision ? `version ${p.project_revision}` : null,
+		p.project_budget !== undefined ? `working budget $${p.project_budget}` : null,
+		p.project_budget_ceiling !== undefined ? `approval ceiling $${p.project_budget_ceiling}` : null,
+		p.project_pin === true ? "move it to the front of the line" : p.project_pin === false ? "unpin it" : null,
+	].filter(Boolean);
+}
+
+/**
+ * A work session's start: an instant with an offset, or local time with a
+ * zone, never a guessed zone. Must be in the next year and not in the past
+ * (a day's grace, for "I did an hour this morning").
+ */
+function sessionStart(raw, timeZone, { allowPast = false } = {}) {
+	const at = instant(raw, { timeZone });
+	if (!at) throw invalid("A session needs a start time with a UTC offset, or a time_zone to read it in");
+	const when = whenOf(at, timeZone);
+	if (Number.isNaN(when.getTime())) throw invalid("That start time doesn't read as a time");
+	const days = (when.getTime() - Date.now()) / 86400000;
+	if (days > 365) throw invalid("That session is more than a year out");
+	if (!allowPast && days < -1) throw invalid("That session is in the past — use record_project_session for work already done");
+	return when.toISOString();
+}
+
+/** The local date of an ISO instant in a zone (UTC without one). */
+function localDate(iso, timeZone) {
+	try {
+		return new Intl.DateTimeFormat("en-CA", { timeZone: timeZone || "UTC", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
+	} catch {
+		return String(iso).slice(0, 10);
+	}
+}
+
+/**
+ * One open session of the project. By its date (in their zone) when given,
+ * narrowed to a step when one is named; with no date, the latest that has
+ * already started — the one "how did it go?" is about. Exactly one, or refused.
+ */
+async function projectSession(ctx, row, { on, step, timeZone, pastOnly = false }) {
+	const [rows] = await projectStore.openSessionsOf(ctx.profileId, row.id);
+	const iso = (v) => (v instanceof Date ? v.toISOString() : new Date(`${String(v).replace(" ", "T")}Z`).toISOString());
+	let list = rows.map((r) => ({ ...r, start: iso(r.planned_start) }));
+	if (step) list = list.filter((r) => r.step_uuid === step.uuid);
+	if (on) {
+		if (!DATE_ONLY.test(on)) throw invalid("session_on is a date, YYYY-MM-DD");
+		list = list.filter((r) => localDate(r.start, timeZone) === on);
+	} else if (pastOnly) {
+		list = list.filter((r) => Date.parse(r.start) <= Date.now()).slice(-1);
+	}
+	if (list.length !== 1) {
+		throw invalid(list.length
+			? `"${row.title}" has ${list.length} sessions then — say which step`
+			: `"${row.title}" has no planned session${on ? ` on ${on}` : ""}${step ? ` for "${step.title}"` : ""}`);
+	}
+	return list[0];
+}
+
 const ACTIONS = [
 	{
 		id: "update_grocery_list",
@@ -1628,10 +1762,19 @@ const ACTIONS = [
 			project_priority: "1 (low) to 5 (critical). Optional; default 3.",
 			project_deadline: "A hard deadline as YYYY-MM-DD, only if they gave one. Optional.",
 			project_part_of: "The title of a bigger project or program this is part of, exactly as listed. Optional.",
+			// Added on the owner's instruction 2026-10-25 (projects P0 execution): the
+			// plan-tool fields (0096) and what done looks like (0097).
+			project_done_when: "What finished looks like, one check per line, in their words (\"Gate opens and latches\"). Optional.",
+			project_ref_code: "Their own reference code for it, e.g. HOME-SIDEYARD-2026-001. Optional.",
+			project_revision: "The spec version they're on, e.g. 1.2. Optional.",
+			project_budget: "Working budget in dollars. Optional.",
+			project_budget_ceiling: "The most they've approved spending, in dollars. Optional.",
+			project_pin: '"on" only when they asked to put it at the front of the line. Optional.',
 		},
 
 		async normalize(raw = {}, ctx = {}) {
 			if (!ctx.profileId) throw invalid("A project needs a person");
+			const plan = projectPlanFields(raw);
 			const input = {
 				title: str(raw.project_title, 190),
 				goal: str(raw.project_goal, 2000),
@@ -1662,6 +1805,7 @@ const ACTIONS = [
 				project_priority: input.priority,
 				...(input.hardDeadline ? { project_deadline: input.hardDeadline } : {}),
 				...(partOf ? { part_of_uuid: partOf.uuid, part_of_title: partOf.title } : {}),
+				...plan,
 			};
 		},
 
@@ -1670,6 +1814,7 @@ const ACTIONS = [
 				p.project_area !== "home" ? `under ${p.project_area[0].toUpperCase()}${p.project_area.slice(1)}` : null,
 				p.part_of_title ? `as part of "${p.part_of_title}"` : null,
 				p.project_deadline ? `due ${p.project_deadline}` : null,
+				...planSummary(p),
 			].filter(Boolean);
 			return `Start the project "${p.project_title}"${bits.length ? ` ${bits.join(", ")}` : ""}`.slice(0, 500);
 		},
@@ -1683,6 +1828,7 @@ const ACTIONS = [
 				areas: [params.project_area],
 				primaryArea: params.project_area,
 				status: "idea",
+				...planInput(params),
 			}, { source: "chat" });
 			if (params.part_of_uuid) {
 				await projectStore.addLink(profileId, uuid, { relation: "contributes_to", to: params.part_of_uuid })
@@ -1700,9 +1846,11 @@ const ACTIONS = [
 		reversible: true,
 		standing: true,
 		describe:
-			"Change one of their existing projects: mark it started, done, on hold or dropped; add a step; tick a step " +
-			'off; add a note; set a deadline or priority ("I finished the gutters", "the porch is waiting on the ' +
-			'lights", "add buying batts to the attic project"). Name the project exactly as it appears in their projects list.',
+			"Change one of their existing projects: mark it started, on hold or dropped; add a step; tick a step " +
+			'off; add a note; set a deadline, priority, budget, version or what done looks like ("I finished the gutters", "the porch is waiting on the ' +
+			'lights", "add buying batts to the attic project"). Name the project exactly as it appears in their projects list. ' +
+			"A project that says what done looks like is closed with close_out_project, never by marking it done here. " +
+			"Blocking a step, its prerequisites and its acceptance criteria are update_project_step.",
 		params: {
 			project: "The project's title exactly as listed. Required.",
 			project_status: '"active" (started), "done", "waiting" (on hold), "dropped", or "ready". Optional.',
@@ -1712,39 +1860,47 @@ const ACTIONS = [
 			project_note: "A note for the project's journal, in their words. Optional.",
 			project_priority: "1 (low) to 5 (critical). Optional.",
 			project_deadline: "A new hard deadline, YYYY-MM-DD. Optional.",
+			// Added on the owner's instruction 2026-10-25 (projects P0 execution).
+			project_done_when: "What finished looks like, one check per line; replaces what was there. Optional.",
+			project_ref_code: "Their reference code. Optional.",
+			project_revision: "A new spec version, e.g. 1.3 — logged in the journal with project_note as what changed. Optional.",
+			project_budget: "Working budget in dollars. Optional.",
+			project_budget_ceiling: "Approval ceiling in dollars. Optional.",
+			project_pin: '"on" to move it to the front of the line, "off" to unpin — only when they asked. Optional.',
+			project_item: "A spec or material line to add, e.g. \"Gate width\". Optional.",
+			project_item_kind: '"spec" (a measurement or decision) or "material". Default "spec".',
+			project_item_value: "Its value or quantity, e.g. \"4 ft\". Optional.",
+			project_item_confirmed: "The label of an existing spec or material they've now verified. Optional.",
 		},
 
 		async normalize(raw = {}, ctx = {}) {
 			if (!ctx.profileId) throw invalid("A project update needs a person");
-			let row;
-			try {
-				row = await projectStore.findByTitle(ctx.profileId, str(raw.project, 190));
-			} catch (err) {
-				throw invalid(err.message);
-			}
+			const row = await ownProject(ctx, raw.project);
 			const out = { project_uuid: row.uuid, project_title: row.title };
 			const status = str(raw.project_status, 16)?.toLowerCase();
 			if (status) {
 				if (!["active", "done", "waiting", "dropped", "ready"].includes(status)) {
 					throw invalid('Status must be "active", "done", "waiting", "dropped" or "ready"');
 				}
+				// Only the person closes out a project that says what done looks
+				// like, against its checklist, through close_out_project — which is
+				// never standing. Marking it done here would be the quiet certifying
+				// the owner ruled out.
+				if (status === "done" && projectShape.criteriaOf(raw.project_done_when ?? row.done_when).length) {
+					throw invalid(`"${row.title}" says what done looks like — propose close_out_project so they can confirm the outcome`);
+				}
 				out.project_status = status;
 				if (status === "waiting" && str(raw.project_waiting_on, 32)) out.project_waiting_on = str(raw.project_waiting_on, 32);
 			}
 			const step = str(raw.project_step, 190);
 			if (step) out.project_step = step;
-			const doneTitle = str(raw.project_step_done, 190)?.toLowerCase();
-			if (doneTitle) {
-				const [steps] = await projectStore.stepsOf(row.id);
-				const match = steps.filter((s) => s.title.toLowerCase() === doneTitle);
-				const loose = match.length ? match : steps.filter((s) => s.title.toLowerCase().includes(doneTitle) || doneTitle.includes(s.title.toLowerCase()));
-				if (loose.length !== 1) {
-					throw invalid(loose.length
-						? `"${raw.project_step_done}" could be ${loose.slice(0, 4).map((s) => `"${s.title}"`).join(", ")} — say which`
-						: `"${row.title}" has no step called "${raw.project_step_done}"`);
-				}
-				out.step_done_uuid = loose[0].uuid;
-				out.step_done_title = loose[0].title;
+			if (str(raw.project_step_done, 190)) {
+				const done = await projectStep(row, raw.project_step_done);
+				out.step_done_uuid = done.uuid;
+				out.step_done_title = done.title;
+				// Ticking off a step that has acceptance criteria is confirming them; the card says so.
+				const criteria = projectShape.criteriaOf(done.acceptance_criteria);
+				if (criteria.length) out.step_done_criteria = criteria;
 			}
 			const note = str(raw.project_note, 4000);
 			if (note) out.project_note = note;
@@ -1758,6 +1914,28 @@ const ACTIONS = [
 				if (!Number.isInteger(n) || n < 1 || n > 5) throw invalid("Priority is 1 to 5");
 				out.project_priority = n;
 			}
+			Object.assign(out, projectPlanFields(raw));
+			const item = str(raw.project_item, 190);
+			if (item) {
+				const kind = (str(raw.project_item_kind, 16) || "spec").toLowerCase();
+				if (!projectShape.ITEM_KINDS.includes(kind)) throw invalid('project_item_kind is "spec" or "material"');
+				out.project_item = item;
+				out.project_item_kind = kind;
+				if (str(raw.project_item_value, 64)) out.project_item_value = str(raw.project_item_value, 64);
+			}
+			const confirmed = str(raw.project_item_confirmed, 190)?.toLowerCase();
+			if (confirmed) {
+				const [items] = await projectStore.itemsOf(row.id);
+				const match = items.filter((i) => i.label.toLowerCase() === confirmed);
+				const loose = match.length ? match : items.filter((i) => i.label.toLowerCase().includes(confirmed));
+				if (loose.length !== 1) {
+					throw invalid(loose.length
+						? `"${raw.project_item_confirmed}" could be ${loose.slice(0, 4).map((i) => `"${i.label}"`).join(", ")} — say which`
+						: `"${row.title}" has no spec or material called "${raw.project_item_confirmed}"`);
+				}
+				out.item_confirmed_uuid = loose[0].uuid;
+				out.item_confirmed_label = loose[0].label;
+			}
 			if (Object.keys(out).length === 2) throw invalid("Say what to change about the project");
 			return out;
 		},
@@ -1766,11 +1944,16 @@ const ACTIONS = [
 			const word = { active: "started", done: "done", waiting: "on hold", dropped: "dropped", ready: "ready" };
 			const parts = [
 				p.project_status ? `mark it ${word[p.project_status]}${p.project_waiting_on ? ` (waiting on ${p.project_waiting_on})` : ""}` : null,
-				p.step_done_title ? `tick off "${p.step_done_title}"` : null,
+				p.step_done_title
+					? `tick off "${p.step_done_title}"${p.step_done_criteria ? ` (you're confirming: ${p.step_done_criteria.join("; ").slice(0, 160)})` : ""}`
+					: null,
 				p.project_step ? `add the step "${p.project_step}"` : null,
 				p.project_note ? `add a note: "${p.project_note.slice(0, 120)}${p.project_note.length > 120 ? "…" : ""}"` : null,
 				p.project_deadline ? `set the deadline to ${p.project_deadline}` : null,
 				p.project_priority ? `set priority ${p.project_priority} of 5` : null,
+				...planSummary(p),
+				p.project_item ? `add the ${p.project_item_kind} "${p.project_item}"${p.project_item_value ? ` (${p.project_item_value})` : ""}` : null,
+				p.item_confirmed_label ? `mark "${p.item_confirmed_label}" verified` : null,
 			].filter(Boolean);
 			return `"${p.project_title}": ${parts.join("; ")}`.slice(0, 500);
 		},
@@ -1781,9 +1964,464 @@ const ACTIONS = [
 			if (params.project_waiting_on) patch.waitingOn = params.project_waiting_on;
 			if (params.project_deadline) patch.hardDeadline = params.project_deadline;
 			if (params.project_priority) patch.priority = params.project_priority;
+			Object.assign(patch, planInput(params));
 			if (Object.keys(patch).length) await projectStore.update(profileId, params.project_uuid, patch);
 			if (params.step_done_uuid) await projectStore.updateStep(profileId, params.project_uuid, params.step_done_uuid, { status: "done" });
 			if (params.project_step) await projectStore.addStep(profileId, params.project_uuid, { title: params.project_step });
+			if (params.project_item) {
+				await projectStore.addItem(profileId, params.project_uuid, {
+					kind: params.project_item_kind, label: params.project_item, value: params.project_item_value ?? null,
+					status: params.project_item_kind === "material" ? "estimate" : "pending",
+				});
+			}
+			if (params.item_confirmed_uuid) await projectStore.updateItem(profileId, params.project_uuid, params.item_confirmed_uuid, { status: "confirmed" });
+			// A new version is a decision, the same as "New version…" in the app; the note says what changed.
+			if (params.project_revision) {
+				await projectEntries.add(profileId, params.project_uuid, { type: "decision", body: `v${params.project_revision}${params.project_note ? ` — ${params.project_note}` : ""}` }, { source: "chat" });
+			} else if (params.project_note) {
+				await projectEntries.add(profileId, params.project_uuid, { type: "note", body: params.project_note }, { source: "chat" });
+			}
+			return { ref: params.project_uuid, detail: null };
+		},
+	},
+
+	// Projects P0 execution, on the owner's instruction 2026-10-25: steps that
+	// wait on each other, blockers that get looked at again, time set aside for
+	// the work, and a closeout the person confirms. All of it is their own data
+	// written at their request, except the calendar, which is its own action.
+	{
+		id: "update_project_step",
+		label: "Update a project step",
+		provider: null,
+		consentType: null,
+		reversible: true,
+		standing: true,
+		describe:
+			"Add or change one step of an existing project: block it on something (what, who it waits on, when to check " +
+			"back, what would clear it), unblock it, say it needs other steps done first, set what done means for it, its " +
+			'effort or due date, or tick it off ("the fence posts are waiting on the lumber delivery, check Thursday", ' +
+			'"I can\'t pour until the forms are built", "measuring takes about 45 minutes"). When they report a blocker, ' +
+			"ask who or what it waits on and when to look again if they haven't said.",
+		params: {
+			project: "The project's title exactly as listed. Required.",
+			step: "The step's title as listed (or the new step's title with step_is_new). Required.",
+			step_is_new: "true to add it as a new step. Optional.",
+			step_status: '"todo", "in_progress", "blocked", "done" or "skipped". Optional.',
+			step_blocked_on: 'With "blocked": what is in the way, short ("permit response"). Optional.',
+			step_waiting_on: 'With "blocked": who or what is responsible ("the county", "Sam", "the weather"). Optional.',
+			step_review_on: "With \"blocked\": when to look at it again, YYYY-MM-DD (or a time with its offset). Optional.",
+			step_unblock_action: 'With "blocked": the action that would clear it ("call the permit office"). Optional.',
+			step_needs_first: "Titles of other steps of the same project that must be done before this one. Optional.",
+			step_no_longer_needs: "Titles of prerequisite steps to drop. Optional.",
+			step_acceptance_criteria: "What done means for this step, one check per line. Optional.",
+			step_effort_minutes: "About how long it takes, in minutes. Optional.",
+			step_due_on: "When it's due, YYYY-MM-DD. Optional.",
+			step_phase: 'The phase it belongs to on the plan ("Concrete and Foundations"), or "none" to take it out of its phase. Use a phase name already on the project when one fits. Optional.',
+			step_also: "With step_phase: titles of other steps of the same project to put in that phase too. Optional.",
+		},
+
+		async normalize(raw = {}, ctx = {}) {
+			if (!ctx.profileId) throw invalid("A step update needs a person");
+			const row = await ownProject(ctx, raw.project);
+			const isNew = raw.step_is_new === true || String(raw.step_is_new).toLowerCase() === "true";
+			const title = str(raw.step, 190);
+			if (!title) throw invalid("Say which step");
+			const out = { project_uuid: row.uuid, project_title: row.title };
+			let existing = null;
+			if (isNew) {
+				out.step_title = title;
+				out.step_is_new = true;
+			} else {
+				existing = await projectStep(row, title);
+				out.step_uuid = existing.uuid;
+				out.step_title = existing.title;
+			}
+			const status = str(raw.step_status, 16)?.toLowerCase();
+			if (status) {
+				if (!projectShape.STEP_STATUSES.includes(status)) throw invalid(`Step status must be one of ${projectShape.STEP_STATUSES.join(", ")}`);
+				out.step_status = status;
+				if (status === "done") {
+					const criteria = projectShape.criteriaOf(raw.step_acceptance_criteria ?? existing?.acceptance_criteria);
+					if (criteria.length) out.step_done_criteria = criteria;
+				}
+			}
+			const blocked = status ? status === "blocked" : existing?.status === "blocked";
+			const follow = [["step_blocked_on", 190], ["step_waiting_on", 190], ["step_unblock_action", 190]];
+			for (const [name, max] of follow) {
+				if (!str(raw[name], max)) continue;
+				if (!blocked) throw invalid(`${name} only goes with a blocked step`);
+				out[name] = str(raw[name], max);
+			}
+			if (given(raw.step_review_on)) {
+				if (!blocked) throw invalid("step_review_on only goes with a blocked step");
+				try {
+					const at = projectShape.read.when(String(raw.step_review_on).trim(), null, "The review date");
+					const days = (Date.parse(`${at.replace(" ", "T")}Z`) - Date.now()) / 86400000;
+					if (days > 366) throw new Error("The review date is more than a year out");
+					if (days < -1) throw new Error("The review date is in the past");
+					out.step_review_at = at;
+				} catch (err) {
+					throw invalid(err.message);
+				}
+			}
+			for (const [name, key] of [["step_needs_first", "needs"], ["step_no_longer_needs", "drop"]]) {
+				if (!given(raw[name])) continue;
+				const titles = Array.isArray(raw[name]) ? raw[name] : [raw[name]];
+				const resolved = [];
+				for (const t of titles.slice(0, 20)) {
+					const pre = await projectStep(row, t);
+					if (existing && pre.uuid === existing.uuid) throw invalid("A step can't need itself first");
+					resolved.push({ uuid: pre.uuid, title: pre.title });
+				}
+				if (resolved.length) out[`step_${key}`] = resolved;
+			}
+			const criteria = str(raw.step_acceptance_criteria, 4000);
+			if (criteria) out.step_acceptance_criteria = projectShape.criteriaOf(criteria).join("\n");
+			if (given(raw.step_effort_minutes)) {
+				const n = Math.round(Number(raw.step_effort_minutes));
+				if (!Number.isFinite(n) || n <= 0 || n > 60 * 24 * 14) throw invalid("step_effort_minutes is a number of minutes");
+				out.step_effort_minutes = n;
+			}
+			const due = str(raw.step_due_on, 10);
+			if (due) {
+				if (!DATE_ONLY.test(due) || Number.isNaN(Date.parse(due))) throw invalid("step_due_on must be YYYY-MM-DD");
+				out.step_due_on = due;
+			}
+			// A phase is a label for the plan; it changes no readiness, so it needs no more checking than its length.
+			if (given(raw.step_phase)) {
+				const phase = str(String(raw.step_phase), 64);
+				out.step_phase = !phase || ["none", "no phase", "null"].includes(phase.toLowerCase()) ? null : phase;
+				if (given(raw.step_also)) {
+					const titles = (Array.isArray(raw.step_also) ? raw.step_also : [raw.step_also]).slice(0, 40);
+					const also = [];
+					for (const t of titles) {
+						const other = await projectStep(row, t);
+						if (other.uuid !== existing?.uuid && !also.some((a) => a.uuid === other.uuid)) also.push({ uuid: other.uuid, title: other.title });
+					}
+					if (also.length) out.step_also = also;
+				}
+			} else if (given(raw.step_also)) {
+				throw invalid("step_also only goes with step_phase");
+			}
+			if (!isNew && Object.keys(out).length === 4) throw invalid("Say what to change about the step");
+			return out;
+		},
+
+		summarize(p) {
+			const word = { todo: "not started", in_progress: "under way", blocked: "blocked", done: "done", skipped: "skipped" };
+			const parts = [
+				p.step_status === "blocked"
+					? `mark it blocked${p.step_blocked_on ? ` on ${p.step_blocked_on}` : ""}${p.step_waiting_on ? `, waiting on ${p.step_waiting_on}` : ""}`
+					: p.step_status ? `mark it ${word[p.step_status]}` : null,
+				p.step_done_criteria ? `you're confirming: ${p.step_done_criteria.join("; ").slice(0, 160)}` : null,
+				p.step_review_at ? `look again on ${p.step_review_at.slice(0, 10)}` : null,
+				p.step_unblock_action ? `what clears it: ${p.step_unblock_action}` : null,
+				p.step_needs ? `needs ${p.step_needs.map((s) => `"${s.title}"`).join(", ")} first` : null,
+				p.step_drop ? `no longer needs ${p.step_drop.map((s) => `"${s.title}"`).join(", ")}` : null,
+				p.step_acceptance_criteria ? `done means: ${p.step_acceptance_criteria.split("\n").join("; ").slice(0, 160)}` : null,
+				p.step_effort_minutes ? `about ${p.step_effort_minutes} min` : null,
+				p.step_due_on ? `due ${p.step_due_on}` : null,
+				p.step_phase !== undefined
+					? p.step_phase === null
+						? `take it out of its phase${p.step_also ? ` (and ${p.step_also.map((s) => `"${s.title}"`).join(", ")})` : ""}`
+						: `put it${p.step_also ? ` and ${p.step_also.map((s) => `"${s.title}"`).join(", ")}` : ""} under "${p.step_phase}"`
+					: null,
+			].filter(Boolean);
+			const lead = p.step_is_new ? `add the step "${p.step_title}"` : `"${p.step_title}"`;
+			return `"${p.project_title}": ${lead}${parts.length ? `${p.step_is_new ? ", " : ": "}${parts.join("; ")}` : ""}`.slice(0, 500);
+		},
+
+		async execute(profileId, params) {
+			const patch = {};
+			if (params.step_status) patch.status = params.step_status;
+			if (params.step_blocked_on) patch.blockedOn = params.step_blocked_on;
+			if (params.step_waiting_on) patch.waitingOnActor = params.step_waiting_on;
+			if (params.step_review_at) patch.reviewAt = `${params.step_review_at.replace(" ", "T")}Z`;
+			if (params.step_unblock_action) patch.unblockAction = params.step_unblock_action;
+			if (params.step_acceptance_criteria) patch.acceptanceCriteria = params.step_acceptance_criteria;
+			if (params.step_effort_minutes) patch.effortMinutes = params.step_effort_minutes;
+			if (params.step_due_on) patch.dueOn = params.step_due_on;
+			if (params.step_phase !== undefined) patch.phase = params.step_phase;
+			const regroup = async (conn) => {
+				for (const s of params.step_also || []) await projectStore.updateStep(profileId, params.project_uuid, s.uuid, { phase: params.step_phase }, { db: conn });
+			};
+			if (params.step_is_new) {
+				const { uuid } = await projectStore.withTx(async (conn) => {
+					const added = await projectStore.addStep(profileId, params.project_uuid, {
+						title: params.step_title, ...patch, ...(params.step_needs ? { dependsOn: params.step_needs.map((s) => s.uuid) } : {}),
+					}, { db: conn });
+					await regroup(conn);
+					return added;
+				});
+				return { ref: uuid, detail: null };
+			}
+			await projectStore.withTx(async (conn) => {
+				if (Object.keys(patch).length) await projectStore.updateStep(profileId, params.project_uuid, params.step_uuid, patch, { db: conn });
+				for (const pre of params.step_needs || []) await projectStore.addStepDependency(profileId, params.project_uuid, params.step_uuid, pre.uuid, { db: conn });
+				await regroup(conn);
+			});
+			for (const pre of params.step_drop || []) await projectStore.removeStepDependency(profileId, params.project_uuid, params.step_uuid, pre.uuid);
+			return { ref: params.step_uuid, detail: null };
+		},
+	},
+
+	{
+		id: "schedule_project_work",
+		label: "Schedule project work",
+		provider: null,
+		consentType: null,
+		reversible: true,
+		standing: true,
+		describe:
+			"Set aside time to work on one of their projects (or one step of it), or move a session already planned " +
+			'("let\'s do the fence line Saturday at 9", "push Sunday\'s concrete session to next weekend"). Suggest a realistic ' +
+			"block from the step's effort and their free time. This plans the session on the Projects page only — it never " +
+			"writes their calendar; propose put_project_session_on_calendar afterwards if they want it there.",
+		params: {
+			project: "The project's title exactly as listed. Required.",
+			work_step: "The step the session is for, as listed. Optional — leave out for general work on the project.",
+			session_start: "When it starts: ISO 8601 with the UTC offset, or local time with time_zone. Required.",
+			time_zone: "IANA zone for a session_start without an offset.",
+			session_minutes: "How long, in minutes. Optional; defaults to the step's effort, else 60.",
+			session_moving_from: "To reschedule: the date (YYYY-MM-DD) of the planned session being moved. Optional.",
+		},
+
+		async normalize(raw = {}, ctx = {}) {
+			if (!ctx.profileId) throw invalid("Scheduling needs a person");
+			const row = await ownProject(ctx, raw.project);
+			if (projectShape.CLOSED.has(row.status)) throw invalid(`"${row.title}" is closed — reopen it first`);
+			const step = str(raw.work_step, 190) ? await projectStep(row, raw.work_step) : null;
+			const timeZone = zone(raw.time_zone);
+			const start = sessionStart(raw.session_start, timeZone);
+			const moving = str(raw.session_moving_from, 10)
+				? await projectSession(ctx, row, { on: str(raw.session_moving_from, 10), step, timeZone })
+				: null;
+			// Moving a session keeps its length unless they gave a new one.
+			const minutes = given(raw.session_minutes)
+				? Math.round(Number(raw.session_minutes))
+				: Number(moving?.planned_duration_minutes) || step?.effort_minutes || 60;
+			if (!Number.isFinite(minutes) || minutes < 15 || minutes > 16 * 60) throw invalid("A session is 15 minutes to 16 hours");
+			const out = {
+				project_uuid: row.uuid, project_title: row.title, session_start: start, session_minutes: minutes,
+				...(timeZone ? { time_zone: timeZone } : {}),
+				...(step ? { step_uuid: step.uuid, step_title: step.title } : {}),
+			};
+			if (moving) {
+				out.session_uuid = moving.uuid;
+				out.session_was = moving.start;
+				if (moving.calendar_event_id) out.on_calendar = true;
+				if (!step && moving.step_uuid) Object.assign(out, { step_uuid: moving.step_uuid, step_title: moving.step_title });
+			}
+			return out;
+		},
+
+		summarize(p) {
+			const what = p.step_title ? `"${p.step_title}" (${p.project_title})` : `"${p.project_title}"`;
+			const when = `${humanTime(p.session_start, p.time_zone)}, ${p.session_minutes} min`;
+			if (p.session_uuid) {
+				return `Move the ${humanTime(p.session_was, p.time_zone)} session on ${what} to ${when}${p.on_calendar ? " (the calendar event stays put until you move it too)" : ""}`.slice(0, 500);
+			}
+			return `Set aside ${when} for ${what}`.slice(0, 500);
+		},
+
+		async execute(profileId, params) {
+			if (params.session_uuid) {
+				await projectStore.updateSession(profileId, params.project_uuid, params.session_uuid, {
+					plannedStart: params.session_start, plannedMinutes: params.session_minutes,
+				});
+				return { ref: params.session_uuid, detail: null };
+			}
+			const { uuid } = await projectStore.createSession(profileId, params.project_uuid, {
+				plannedStart: params.session_start, plannedMinutes: params.session_minutes, stepUuid: params.step_uuid ?? null,
+			});
+			return { ref: uuid, detail: null };
+		},
+	},
+
+	{
+		id: "record_project_session",
+		label: "Log how a work session went",
+		provider: null,
+		consentType: null,
+		reversible: true,
+		standing: true,
+		describe:
+			"Record how a planned project work session went, after they tell you: done, skipped or cancelled, how long it " +
+			"really took, whether it moved things forward, and a note. Finishing a session does not finish its step — ask " +
+			"whether the step itself is done and only then set session_step_done.",
+		params: {
+			project: "The project's title exactly as listed. Required.",
+			session_on: "The session's date, YYYY-MM-DD. Optional; defaults to the latest one that has started.",
+			time_zone: "IANA zone the date is in. Optional.",
+			session_outcome: '"completed", "in_progress", "skipped" or "cancelled". Required.',
+			session_actual_minutes: "How long it really took, in minutes. Optional.",
+			session_made_progress: "true or false: did it move the work forward? Optional.",
+			session_note: "What happened, in their words. Optional.",
+			session_step_done: "true only when they said the step itself is finished. Optional.",
+		},
+
+		async normalize(raw = {}, ctx = {}) {
+			if (!ctx.profileId) throw invalid("A session update needs a person");
+			const row = await ownProject(ctx, raw.project);
+			const outcome = str(raw.session_outcome, 16)?.toLowerCase();
+			if (!["completed", "in_progress", "skipped", "cancelled"].includes(outcome)) {
+				throw invalid('session_outcome is "completed", "in_progress", "skipped" or "cancelled"');
+			}
+			const timeZone = zone(raw.time_zone);
+			const session = await projectSession(ctx, row, { on: str(raw.session_on, 10), timeZone, pastOnly: true });
+			const out = {
+				project_uuid: row.uuid, project_title: row.title, session_uuid: session.uuid, session_was: session.start,
+				session_outcome: outcome, ...(timeZone ? { time_zone: timeZone } : {}),
+				...(session.step_uuid ? { step_uuid: session.step_uuid, step_title: session.step_title } : {}),
+			};
+			if (given(raw.session_actual_minutes)) {
+				const n = Math.round(Number(raw.session_actual_minutes));
+				if (!Number.isFinite(n) || n < 0 || n > 24 * 60) throw invalid("session_actual_minutes is a number of minutes");
+				out.session_actual_minutes = n;
+			}
+			if (given(raw.session_made_progress)) out.session_made_progress = onOff(raw.session_made_progress, "session_made_progress");
+			if (str(raw.session_note, 4000)) out.session_note = str(raw.session_note, 4000);
+			if (given(raw.session_step_done) && onOff(raw.session_step_done, "session_step_done")) {
+				if (!session.step_uuid) throw invalid("That session isn't for a particular step — use update_project_step");
+				out.session_step_done = true;
+			}
+			return out;
+		},
+
+		summarize(p) {
+			const word = { completed: "done", in_progress: "under way", skipped: "skipped", cancelled: "cancelled" };
+			const what = p.step_title ? `"${p.step_title}"` : `"${p.project_title}"`;
+			const bits = [
+				p.session_actual_minutes !== undefined ? `${p.session_actual_minutes} min` : null,
+				p.session_made_progress === true ? "it moved things forward" : p.session_made_progress === false ? "no real progress" : null,
+				p.session_note ? `note: "${p.session_note.slice(0, 100)}"` : null,
+				p.session_step_done ? `and mark ${what} itself done` : null,
+			].filter(Boolean);
+			return `The ${humanTime(p.session_was, p.time_zone)} session on ${what}: ${word[p.session_outcome]}${bits.length ? ` — ${bits.join("; ")}` : ""}`.slice(0, 500);
+		},
+
+		async execute(profileId, params) {
+			await projectStore.updateSession(profileId, params.project_uuid, params.session_uuid, {
+				status: params.session_outcome,
+				...(params.session_actual_minutes !== undefined ? { actualMinutes: params.session_actual_minutes } : {}),
+				...(params.session_made_progress !== undefined ? { madeProgress: params.session_made_progress } : {}),
+				...(params.session_note ? { notes: params.session_note } : {}),
+			});
+			if (params.session_step_done) await projectStore.updateStep(profileId, params.project_uuid, params.step_uuid, { status: "done" });
+			return { ref: params.session_uuid, detail: null };
+		},
+	},
+
+	{
+		id: "put_project_session_on_calendar",
+		label: "Put a work session on the calendar",
+		provider: "google_calendar",
+		consentType: "action_authority",
+		reversible: true,
+		// A calendar write, so never standing; and the app's "Add to calendar" button is the approval (direct).
+		standing: false,
+		direct: true,
+		describe:
+			"Put a planned project work session on their Google Calendar, or move its calendar event after the session " +
+			"was rescheduled. Only when they want it on the calendar. One session is only ever one event.",
+		params: {
+			project: "The project's title exactly as listed. Required unless session_uuid.",
+			session_on: "The session's date, YYYY-MM-DD. Required unless session_uuid.",
+			time_zone: "IANA zone the date is in. Optional.",
+			session_uuid: "The session's id (from the Projects page). Optional.",
+		},
+		sameAs: (a, b) => a.session_uuid === b.session_uuid && a.start === b.start,
+
+		async normalize(raw = {}, ctx = {}) {
+			if (!ctx.profileId) throw invalid("A calendar write needs a person");
+			let session;
+			if (str(raw.session_uuid, 36)) {
+				session = await projectStore.findSession(ctx.profileId, str(raw.session_uuid, 36));
+				if (!session) throw invalid("That work session isn't on your projects");
+				if (!["planned", "in_progress"].includes(session.status)) throw invalid("Only a planned session can go on the calendar");
+			} else {
+				const row = await ownProject(ctx, raw.project);
+				const open = await projectSession(ctx, row, { on: str(raw.session_on, 10), timeZone: zone(raw.time_zone) });
+				session = await projectStore.findSession(ctx.profileId, open.uuid);
+			}
+			const start = projectShape.toSession(session).plannedStart;
+			const end = new Date(Date.parse(start) + Number(session.planned_duration_minutes) * 60000).toISOString();
+			const inSync = session.calendar_event_id && projectShape.toSession(session).calendarInSync;
+			if (inSync) throw invalid("That session is already on the calendar at that time");
+			return {
+				session_uuid: session.uuid,
+				project_uuid: session.project_uuid,
+				title: str(session.step_title ? `${session.step_title} — ${session.project_title}` : session.project_title, 200),
+				start,
+				end,
+				...(session.calendar_event_id ? { replaces_event_id: session.calendar_event_id } : {}),
+				...(zone(raw.time_zone) ? { time_zone: zone(raw.time_zone) } : {}),
+			};
+		},
+
+		summarize(p) {
+			return `${p.replaces_event_id ? "Move" : "Add"} "${p.title}" ${p.replaces_event_id ? "on" : "to"} your calendar: ${humanTime(p.start, p.time_zone)} – ${humanTime(p.end, p.time_zone)}`.slice(0, 500);
+		},
+
+		async execute(profileId, params) {
+			// Moving is delete-then-create, in that order: if the create fails the
+			// session is simply off the calendar, never on it twice.
+			if (params.replaces_event_id) {
+				await googleCalendar.deleteEvent(profileId, { event_id: params.replaces_event_id });
+				await projectStore.setSessionCalendarEvent(profileId, params.session_uuid, null);
+			}
+			const { ref, html_link } = await googleCalendar.createEvent(profileId, {
+				title: params.title, start: params.start, end: params.end,
+				description: "Time set aside for this project in Athena.",
+			});
+			await projectStore.setSessionCalendarEvent(profileId, params.session_uuid, ref, params.start);
+			return { ref, detail: { html_link } };
+		},
+	},
+
+	{
+		id: "close_out_project",
+		label: "Close out a project",
+		provider: null,
+		consentType: null,
+		reversible: true,
+		// Confirming an outcome — that the fence is stable, the inspection passed —
+		// is the person's to say, every time. Never standing.
+		standing: false,
+		describe:
+			"Close out one of their projects once its steps are finished: they confirm each \"done when\" check and it is " +
+			"marked complete. Show them the checklist first and propose this only after they say it's all true. Never " +
+			"propose it on your own judgement that structural or safety work is fine.",
+		params: {
+			project: "The project's title exactly as listed. Required.",
+			project_note: "Anything they said about how it turned out, for the journal. Optional.",
+		},
+
+		async normalize(raw = {}, ctx = {}) {
+			if (!ctx.profileId) throw invalid("A closeout needs a person");
+			const row = await ownProject(ctx, raw.project);
+			if (projectShape.CLOSED.has(row.status)) throw invalid(`"${row.title}" is already ${row.status}`);
+			const [steps] = await projectStore.stepsOf(row.id);
+			const open = steps.filter((s) => ["todo", "in_progress", "blocked"].includes(s.status));
+			if (open.length) {
+				throw invalid(`"${row.title}" still has ${open.length} open step${open.length === 1 ? "" : "s"} (${open.slice(0, 3).map((s) => `"${s.title}"`).join(", ")}) — finish or skip them first`);
+			}
+			return {
+				project_uuid: row.uuid,
+				project_title: row.title,
+				criteria: projectShape.criteriaOf(row.done_when),
+				...(str(raw.project_note, 4000) ? { project_note: str(raw.project_note, 4000) } : {}),
+			};
+		},
+
+		summarize(p) {
+			return (p.criteria.length
+				? `Close out "${p.project_title}" — you're confirming: ${p.criteria.map((c) => `✓ ${c}`).join("; ")}`
+				: `Mark "${p.project_title}" finished`).slice(0, 500);
+		},
+
+		async execute(profileId, params) {
+			await projectStore.update(profileId, params.project_uuid, { status: "done", outcomeConfirmed: true });
 			if (params.project_note) await projectEntries.add(profileId, params.project_uuid, { type: "note", body: params.project_note }, { source: "chat" });
 			return { ref: params.project_uuid, detail: null };
 		},
@@ -2038,6 +2676,20 @@ const PARAM_TYPES = {
 	eco: { type: "string", enum: ["on", "off"] },
 	check_in_hours: { type: "number" },
 	project_priority: { type: "number" },
+	project_budget: { type: "number" },
+	project_budget_ceiling: { type: "number" },
+	project_item_kind: { type: "string", enum: ["spec", "material"] },
+	step_is_new: { type: "boolean" },
+	step_status: { type: "string", enum: ["todo", "in_progress", "blocked", "done", "skipped"] },
+	step_needs_first: { type: "array", items: { type: "string" } },
+	step_no_longer_needs: { type: "array", items: { type: "string" } },
+	step_also: { type: "array", items: { type: "string" } },
+	step_effort_minutes: { type: "number" },
+	session_minutes: { type: "number" },
+	session_outcome: { type: "string", enum: ["completed", "in_progress", "skipped", "cancelled"] },
+	session_actual_minutes: { type: "number" },
+	session_made_progress: { type: "boolean" },
+	session_step_done: { type: "boolean" },
 	feeling_better: { type: "boolean" },
 	email_triage_uuids: { type: "array", items: { type: "string" } },
 	items: {

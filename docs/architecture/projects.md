@@ -613,3 +613,104 @@ which phase 1 provides. Until then it should go in as a home project with
 4. **Work projects stay off the Dashboard.** Projects whose primary area is
    `work` never appear in the Dashboard's Projects card. They show on the Work
    section and the Projects page only.
+
+## Plan tools (0096, 2026-10-25)
+
+Added for the side-yard fence/awning build (HOME-SIDEYARD-2026-001), which
+arrived as a versioned spec with confirmed and still-to-verify measurements, a
+material takeoff, a working budget and an approval ceiling.
+
+- `pinned_at` — "move to the front". `rank.js` puts every pinned open project
+  above every unpinned one, newest pin first, with "you moved it to the front"
+  as its reason. It is set by the person only; nothing learned sets it.
+- `ref_code`, `revision` — the person's reference and spec version. "New
+  version…" in the app bumps `revision` and writes a `decision` journal entry,
+  so the history lives in the journal, not in a versions table.
+- `budget_working`, `budget_ceiling`, `budget_note` — working ≤ ceiling.
+- `athena_project_item` — `spec` or `material` rows, each `confirmed`,
+  `pending` (to verify) or `estimate`; materials carry an optional cost range
+  that the app totals against the budget.
+
+These columns are written only when a request mentions them
+(`columnsFor` in `index.js`), so every other edit keeps working on a database
+without 0096. Since 0097 the chat actions cover them too (owner, 10-25).
+
+## Execution (0097, 2026-10-25)
+
+The owner's brief: turn Projects from tracking and ranking into finishing —
+always able to say what can be done next, what's in the way, when the work
+happens, what finished means, and what comes after this step. Extended in
+place; nothing above changed meaning.
+
+**One engine, derived on read.** `src/services/projects/execution.js` is pure
+like `rank.js`: given the graph from `getAll()` and a `now`, it answers
+`getExecutableSteps`, `getNextAction`, `getStepBlockers`,
+`getBlockedStepsNeedingReview` / `getOverdueFollowUps` / `getUnblockActions`,
+`getCompletionReadiness` / `getIncompleteAcceptanceCriteria` /
+`getProjectCloseoutSummary`, the session helpers (`upcomingSessions`,
+`getUnscheduledExecutableSteps`, `suggestWorkSession`, `getSessionPreparation`)
+and, per project, `getProjectExecutionState`; `getExecutionPlan` does every
+open project at once and applies the work-in-progress preference. The
+snapshot (`controllers/projects.js`), Right Now and `prompt.js` all read it, so
+none of them can disagree about whether a step is ready. Nothing it derives is
+stored.
+
+- **Dependencies** (`athena_project_step_dependency`). Ordinal is display
+  order; only an edge makes a step wait. Both ends carry `project_id` and
+  reference `(id, project_id)` on the step, so a cross-project edge can't be
+  written. Self-edges and cycles are refused in `writeDependencies`. A skipped
+  prerequisite holds nothing up, like a dropped project dependency. Legacy
+  steps have no edges, so every open one is ready, top to bottom.
+- **Executable**: todo/in progress, every prerequisite done or skipped, not
+  blocked, on a project whose effective status is idea/planning/ready/active
+  (waiting and blocked projects hold every step). "Active" in the brief is read
+  as *open and not held* so the side yard (`planning`) has a next action; a step
+  on a project that isn't active yet is flagged `startsNew`, which is what the
+  preference weighs.
+- **Next action** scores in-progress, due dates, fit in the free window (too big
+  → `needsMultipleSessions`, never excluded), the wet-day indoor rule, and who
+  does it, on top of the project's `rank.js` score. Unknown effort or place
+  stops counting rather than excluding.
+- **Blockers**: `waiting_on_actor`, `review_at`, `unblock_action` beside the
+  existing `blocked_on`, all cleared on unblock. A due `review_at` is a
+  follow-up keyed `stepUuid@reviewAt` — one per review date (`newFollowUps`
+  is the dedupe for anything that tells the person); no date is "needs
+  triage". Nothing resolves a blocker but a person. **There is no push for
+  follow-ups**: initiative is protected, and a project follow-up trigger would
+  be a new one the owner enables — proposed, not built. They surface on the
+  project, in Right Now (`kind: "followup"`) and in the chat prompt.
+- **Phases**: `athena_project_step.phase`, a free-text label (owner, 10-25).
+  `getPhases` groups the plan by it — order of first appearance, unlabelled
+  last, done/total and a date range from due dates and sessions. Deliberately
+  not an entity and never a gate: two things that can each block a step is
+  how plans get stuck for reasons nobody can see. A chunk with its own budget,
+  season or status is a project linked with `contributes_to`, not a phase.
+- **Completion**: `done_when` (one criterion per line), `done_when_confirmed`
+  (by text, so rewording un-confirms), `outcome_confirmed_at`, step
+  `acceptance_criteria`. Readiness is `work_remaining` → `outcome_unverified`
+  → `ready_for_confirmation` → `verified_complete` (or `complete` for a legacy
+  project closed without criteria). `update()` refuses to close a project
+  with criteria unless `outcomeConfirmed: true`; chat can only do that through
+  `close_out_project`, which is never standing.
+- **Sessions** (`athena_project_work_session`): project or step, many per
+  step, UTC `planned_start`. Rescheduling updates the row (same uuid). The
+  same work can't overlap itself. Completing one never completes its step.
+  The calendar is separate: `put_project_session_on_calendar` (Google Calendar
+  provider, `action_authority`, never standing, `direct` so the app's button is
+  the approval) creates the event, or deletes-then-recreates it after a
+  reschedule; `calendar_start` says whether the event still matches. Rescheduling
+  or deleting a session never touches the calendar.
+- **Work-in-progress preference** (`athena_project_pref`, default 3 and
+  prefer finishing): a `startsNew` step loses 10 points, 40 when the active
+  count is at the limit; priority 5, a deadline within 14 days, `serves`
+  safety, an open severe concern, or a pin exempt it. It only orders.
+- **Success counts** (`metrics` in the snapshot's `execution`): active projects
+  with a next action, blocked without a follow-up, oldest progress, sessions
+  planned vs completed (30 days), verified completions and the median days
+  from `activated_at` (first time active) to the confirmed outcome.
+
+Compatibility: every new column is written only when the row already has it
+or the request names it (`columnsFor`/`stepColumnsFor`), and the new tables
+are read with a catch, so the code runs on a database without 0097. Older
+clients ignore the new snapshot fields. The importer is unchanged and stays
+create-only on `import_key`.

@@ -102,7 +102,7 @@ async function authorized() {
  * for "how far is…"). The app draws a notification only when a body arrives,
  * so a silent message never reaches the tray, old app or new.
  */
-async function send(token, { title, body, data = {}, collapseKey, dataOnly = false, silent = false } = {}) {
+async function send(token, { title, body, data = {}, collapseKey, dataOnly = false, silent = false, ttlSeconds } = {}) {
 	let auth;
 	try {
 		auth = await authorized();
@@ -142,6 +142,10 @@ async function send(token, { title, body, data = {}, collapseKey, dataOnly = fal
 					},
 				},
 	};
+
+	// A message only worth seeing for a while (a trading setup's entry window)
+	// is dropped by FCM after that rather than delivered stale.
+	if (Number.isInteger(ttlSeconds) && ttlSeconds > 0) message.message.android = { ...message.message.android, ttl: `${ttlSeconds}s` };
 
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);

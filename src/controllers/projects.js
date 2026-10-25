@@ -12,22 +12,48 @@ const projects = require('../services/projects');
 const entries = require('../services/projects/entries');
 const bindings = require('../services/projects/bindings');
 const { rank } = require('../services/projects/rank');
+const execution = require('../services/projects/execution');
 const rightNow = require('../services/rightNow');
 
+/**
+ * The graph, ranked, with what the execution engine derives from it: each open
+ * project's next action, blockers, sessions and completion readiness, plus the
+ * cross-project next actions, due follow-ups and success counts. Derived on
+ * every read and never stored. Older clients ignore the extra fields.
+ */
 async function snapshot(profileId) {
   const all = await projects.getAll(profileId);
-  const ranks = rank(all);
+  const now = Date.now();
+  const ranks = rank(all, now);
   for (const p of all.projects) {
     const r = ranks.get(p.uuid);
     p.rank = r ? r.score : null;
     p.rankWhy = r ? r.why : [];
   }
+  const plan = execution.getExecutionPlan(all, { now, ranks, prefs: all.prefs });
+  const byProject = new Map(plan.states.map((s) => [s.projectUuid, s]));
+  for (const p of all.projects) {
+    const state = byProject.get(p.uuid) || null;
+    if (state && state.upcomingSessions[0]) {
+      state.preparation = execution.getSessionPreparation(state.upcomingSessions[0], p, { needs: execution.needsOf(all, p) });
+    }
+    p.execution = state;
+    p.completion = state ? state.completion : execution.getCompletionReadiness(p);
+    p.closeout = ['outcome_unverified', 'ready_for_confirmation'].includes(p.completion.state) ? execution.getProjectCloseoutSummary(p) : null;
+  }
+  all.execution = {
+    nextActions: plan.nextActions.slice(0, 5),
+    followUps: plan.followUps,
+    upcomingSessions: execution.upcomingAcross(all, now).slice(0, 10),
+    focus: plan.focus,
+    metrics: plan.metrics,
+  };
   return all;
 }
 
 function fail(res, err) {
   if (err?.status === 400 || err?.status === 404) {
-    return res.status(err.status).json({ success: false, message: err.message });
+    return res.status(err.status).json({ success: false, message: err.message, ...(err.code ? { code: err.code } : {}) });
   }
   console.warn('[projects] unavailable:', err?.message || err);
   return res.status(503).json({ success: false, message: 'Projects are unavailable right now. Check that the projects migration is installed.' });
@@ -129,6 +155,17 @@ module.exports = {
   updateStep: write((pid, req) => projects.updateStep(pid, req.params.uuid, req.params.stepUuid, body(req))),
   removeStep: write((pid, req) => projects.removeStep(pid, req.params.uuid, req.params.stepUuid)),
   reorderSteps: write((pid, req) => projects.reorderSteps(pid, req.params.uuid, body(req).order)),
+  addStepDependency: write((pid, req) => projects.addStepDependency(pid, req.params.uuid, req.params.stepUuid, body(req).dependsOn)),
+  removeStepDependency: write((pid, req) => projects.removeStepDependency(pid, req.params.uuid, req.params.stepUuid, req.params.dependsOn)),
+
+  addSession: write((pid, req) => projects.createSession(pid, req.params.uuid, body(req))),
+  updateSession: write((pid, req) => projects.updateSession(pid, req.params.uuid, req.params.sessionUuid, body(req))),
+  removeSession: write((pid, req) => projects.removeSession(pid, req.params.uuid, req.params.sessionUuid)),
+  putPrefs: write((pid, req) => projects.putPrefs(pid, body(req))),
+
+  addItem: write((pid, req) => projects.addItem(pid, req.params.uuid, body(req))),
+  updateItem: write((pid, req) => projects.updateItem(pid, req.params.uuid, req.params.itemUuid, body(req))),
+  removeItem: write((pid, req) => projects.removeItem(pid, req.params.uuid, req.params.itemUuid)),
 
   addLink: write((pid, req) => projects.addLink(pid, req.params.uuid, body(req))),
   removeLink: write((pid, req) => projects.removeLink(pid, req.params.uuid, { relation: req.query.relation, to: req.query.to })),

@@ -113,11 +113,28 @@ async function guardianPass() {
 	}
 }
 
+/**
+ * The trading monitor's backstop (services/trading/monitor.js). During market
+ * hours, with someone's trading notifications on, ask the core service for a
+ * tick; it ignores the ask while its own Cloud Tasks chain is alive, so this
+ * only restarts a chain that broke or never started. Never fails the pass.
+ */
+async function tradingPass() {
+	if (args.status || args.dryRun) return;
+	try {
+		const out = await require("../services/trading/monitor").backstop();
+		if (!out.skipped) log(`trading monitor: ${out.ok ? (out.body?.skipped ? `chain alive` : `ticked for ${out.body?.profiles ?? "?"}`) : `not delivered (${out.status || out.error})`}`);
+	} catch (error) {
+		log("trading monitor failed:", error.message);
+	}
+}
+
 async function pass() {
 	if (args.status) return status();
 	await reminderBackstop();
 	await weatherAlertPass();
 	await guardianPass();
+	await tradingPass();
 	const out = await watch.runOnce({ dryRun: args.dryRun, force: args.force });
 	const { results } = out;
 	if (out.skipped) return log(`not due (every ${minutes(out.everyMs)}, ${out.why}); next in ${minutes(out.nextInMs)}`);

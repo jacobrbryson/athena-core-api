@@ -95,7 +95,14 @@ const STATUS = Object.freeze({
 	WAIT: "WAIT",
 	AVOID: "AVOID",
 	EXIT_INVALIDATED: "EXIT_INVALIDATED",
+	// Set by the lifecycle (lifecycle.js), never by evaluate(): the setup's
+	// entry window or the day's entry cutoff passed. Terminal, like
+	// EXIT_INVALIDATED.
+	EXPIRED: "EXPIRED",
 });
+
+/** The ten entry conditions; all must pass on fresh, confirmable data. */
+const ENTRY_CONDITIONS = Object.freeze(["above_vwap", "vwap_rising", "higher_lows", "breakout", "retest_hold", "volume", "spread", "risk_budget", "reward_risk", "event_data"]);
 
 const money = (x) => (x === null || x === undefined ? "—" : `$${Number(x).toFixed(2)}`);
 const pct = (x, dp = 2) => (x === null || x === undefined ? "—" : `${(x * 100).toFixed(dp)}%`);
@@ -179,6 +186,11 @@ function evaluate(input) {
 		else if (quoteAge > params.maxQuoteAgeSec) data.problems.push(`quote is ${Math.round(quoteAge)}s old`);
 	}
 	data.stale = data.problems.length > 0;
+
+	// Expired is terminal whatever the candles say: the setup can't re-form today.
+	if (input.previous?.status === STATUS.EXPIRED) {
+		return result(STATUS.EXPIRED, input.previous.reason || "This setup expired.", "One setup per symbol per day; nothing further today.", { confirmed: input.previous.confirmed || null });
+	}
 
 	// ---- before the decision window ---------------------------------------
 	if (!session.trading) return result(STATUS.WAIT, "The market is closed today.", "Nothing to do until the next session.");
@@ -369,6 +381,9 @@ function evaluate(input) {
 		return asOf >= at - params.eventBlackoutBeforeMin * ind.MINUTE && asOf <= at + params.eventBlackoutAfterMin * ind.MINUTE;
 	});
 	const dataOk = !data.stale && feedCanConfirm;
+	// Kept with the data so a stored event can tell a feed that can't confirm
+	// from an event blackout, which fail the same condition.
+	data.blackout = blackout ? blackout.name : null;
 	add("event_data", "No event or data issue", blackout || !dataOk ? "fail" : "pass",
 		blackout ? `${blackout.name} at ${etClock(blackout.at)} ET is inside the blackout window.`
 			: data.stale ? `Data problem: ${data.problems.join("; ")}.`
@@ -427,7 +442,7 @@ function evaluate(input) {
 
 	// ---- classify ----------------------------------------------------------
 	const state = (id) => conditions.find((c) => c.id === id)?.state;
-	const tenIds = ["above_vwap", "vwap_rising", "higher_lows", "breakout", "retest_hold", "volume", "spread", "risk_budget", "reward_risk", "event_data"];
+	const tenIds = ENTRY_CONDITIONS;
 	const allTen = tenIds.every((id) => state(id) === "pass");
 
 	if (state("tradeable") === "fail") return result(STATUS.AVOID, conditions.find((c) => c.id === "tradeable").detail, "Not a candidate today.", { sizing, confirmed });
@@ -475,4 +490,4 @@ function nearestResistance(entry, levels, sessionBars, params) {
 	return above.length ? Math.min(...above) : null;
 }
 
-module.exports = { STRATEGY_KEY, DEFAULT_PARAMS, STATUS, evaluate, nearestResistance };
+module.exports = { STRATEGY_KEY, DEFAULT_PARAMS, STATUS, ENTRY_CONDITIONS, evaluate, nearestResistance };

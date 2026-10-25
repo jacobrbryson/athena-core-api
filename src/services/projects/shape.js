@@ -17,6 +17,9 @@ const RELATIONS = ["contributes_to", "depends_on"];
 const CONCERN_STATUSES = ["open", "monitoring", "resolved"];
 const CONDITIONS = ["dry", "mild", "warm", "cold", "during_rain", "after_rain", "no_freeze", "daylight"];
 const VISIBILITY = ["private", "household"];
+const ITEM_KINDS = ["spec", "material"];
+const ITEM_STATUSES = ["confirmed", "pending", "estimate"];
+const SESSION_STATUSES = ["planned", "in_progress", "completed", "skipped", "cancelled"];
 
 const bad = (message) => Object.assign(new Error(message), { status: 400 });
 
@@ -72,6 +75,22 @@ const read = {
 		if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || Number.isNaN(Date.parse(s))) throw bad(`${label} is not a date I can read (use YYYY-MM-DD).`);
 		return s;
 	},
+	/**
+	 * A moment, stored as UTC "YYYY-MM-DD HH:MM:SS". A bare date means midday
+	 * UTC — morning across the US — so "review Thursday" is due on Thursday
+	 * wherever they are. An offsetless time is refused: it would be read in
+	 * whatever zone the server happens to be in.
+	 */
+	when(value, fallback, label = "That time") {
+		if (value === undefined) return fallback;
+		if (!value) return null;
+		const raw = value instanceof Date ? value.toISOString() : String(value).trim();
+		const iso = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T12:00:00Z` : raw;
+		if (!/(?:Z|[+-]\d{2}:?\d{2})$/.test(iso)) throw bad(`${label} needs a date (YYYY-MM-DD) or a time with its UTC offset.`);
+		const t = Date.parse(iso);
+		if (!Number.isFinite(t)) throw bad(`${label} is not a time I can read.`);
+		return new Date(t).toISOString().slice(0, 19).replace("T", " ");
+	},
 	tri(value, fallback) {
 		if (value === undefined) return fallback;
 		if (value === null || value === "") return null;
@@ -112,6 +131,17 @@ const maskToMonths = (mask) => {
 };
 
 /**
+ * "Done when" and acceptance criteria are written one per line; bullets and
+ * empty checkboxes are the person's formatting, not part of the criterion.
+ */
+const criteriaOf = (value) =>
+	String(value || "")
+		.split(/\r?\n/)
+		.map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)]|\[\s?[xX]?\s?\])\s*/, "").trim())
+		.filter(Boolean)
+		.slice(0, 40);
+
+/**
  * Normalise a submitted project against what exists (or nothing, on create).
  * Returns column values. Areas are handled separately — see normalizeAreas.
  */
@@ -123,6 +153,7 @@ function normalizeProject(input = {}, existing = null) {
 	const effort = input.effort === undefined ? {} : input.effort || { min: null, max: null, note: null };
 	const cost = input.cost === undefined ? {} : input.cost || { diyLow: null, diyHigh: null, proLow: null, proHigh: null, note: null };
 	const metric = input.metric === undefined ? {} : input.metric || { source: null, start: null, target: null, unit: null };
+	const budget = input.budget === undefined ? {} : input.budget || { working: null, ceiling: null, note: null };
 	const out = {
 		title,
 		goal: read.text(input.goal, 8000, e.goal ?? null),
@@ -153,7 +184,27 @@ function normalizeProject(input = {}, existing = null) {
 		serves: read.list(input.serves, e.serves ?? [], { label: "Serves" }),
 		involves_children: read.bool(input.involvesChildren, e.involvesChildren ?? false),
 		visibility: read.pick(input.visibility, VISIBILITY, e.visibility ?? "private", "Visibility"),
+		ref_code: read.text(input.refCode, 48, e.refCode ?? null),
+		revision: read.text(input.revision, 16, e.revision ?? null),
+		// Pinning again moves it to the front of the other pins: newest pin first.
+		pinned_at: input.pinned === undefined ? (e.pinnedAt ?? null) : input.pinned ? new Date() : null,
+		budget_working: read.money(budget.working, e.budget?.working ?? null),
+		budget_ceiling: read.money(budget.ceiling, e.budget?.ceiling ?? null),
+		budget_note: read.text(budget.note, 190, e.budget?.note ?? null),
+		done_when: read.text(input.doneWhen, 4000, e.doneWhen ?? null),
 	};
+	// What they have ticked off on the closeout checklist, by criterion text, so
+	// rewording a criterion un-ticks it. Only criteria that still exist count.
+	const criteria = criteriaOf(out.done_when);
+	let ticked = e.doneWhenConfirmed ?? [];
+	if (input.doneWhenConfirmed !== undefined) {
+		if (input.doneWhenConfirmed !== null && !Array.isArray(input.doneWhenConfirmed)) throw bad("Confirmed criteria must be a list.");
+		ticked = (input.doneWhenConfirmed || []).map((c) => String(c ?? "").trim());
+	}
+	out.done_when_confirmed = [...new Set(ticked)].filter((c) => criteria.includes(c));
+	if (out.budget_working !== null && out.budget_ceiling !== null && out.budget_working > out.budget_ceiling) {
+		throw bad("Budget: the working budget is above the approval ceiling.");
+	}
 	if (out.effort_min_minutes !== null && out.effort_max_minutes !== null && out.effort_min_minutes > out.effort_max_minutes) {
 		throw bad("Effort: the low end is above the high end.");
 	}
@@ -186,15 +237,107 @@ function normalizeStep(input = {}, existing = null) {
 	const title = read.text(input.title, 190, e.title ?? null);
 	if (!title) throw bad("A step needs a title.");
 	const status = read.pick(input.status, STEP_STATUSES, e.status ?? "todo", "Step status");
+	// A blocker's follow-through (what, who, when to look again, what clears it)
+	// only means something while it is blocked; unblocking clears all four.
+	const blocked = status === "blocked";
 	return {
 		title,
 		detail: read.text(input.detail, 4000, e.detail ?? null),
+		// A grouping label for the plan; it never gates anything.
+		phase: read.text(input.phase, 64, e.phase ?? null),
+		acceptance_criteria: read.text(input.acceptanceCriteria, 4000, e.acceptanceCriteria ?? null),
 		status,
 		who: read.pick(input.who, STEP_WHO, e.who ?? "me", "Who"),
-		blocked_on: status === "blocked" ? read.text(input.blockedOn, 190, e.blockedOn ?? null) : null,
+		blocked_on: blocked ? read.text(input.blockedOn, 190, e.blockedOn ?? null) : null,
+		waiting_on_actor: blocked ? read.text(input.waitingOnActor, 190, e.waitingOnActor ?? null) : null,
+		review_at: blocked ? read.when(input.reviewAt, e.reviewAt ? read.when(e.reviewAt) : null, "Review date") : null,
+		unblock_action: blocked ? read.text(input.unblockAction, 190, e.unblockAction ?? null) : null,
 		due_on: read.date(input.dueOn, e.dueOn ?? null, "Due date"),
 		effort_minutes: read.minutes(input.effortMinutes, e.effortMinutes ?? null),
 		indoor: read.tri(input.indoor, e.indoor ?? null),
+	};
+}
+
+/**
+ * Time set aside to work. Its step, if any, is resolved by the service against
+ * the same project — a session can never point at another project's step.
+ */
+function normalizeSession(input = {}, existing = null) {
+	const e = existing || {};
+	const start = read.when(input.plannedStart, e.plannedStart ? read.when(e.plannedStart) : undefined, "Start");
+	if (!start) throw bad("A work session needs a start time.");
+	const minutes = read.minutes(input.plannedMinutes, e.plannedMinutes ?? undefined);
+	if (!minutes) throw bad("Say how long the session is, in minutes.");
+	if (minutes > 16 * 60) throw bad("A single session is at most 16 hours — split longer work into several.");
+	const status = read.pick(input.status, SESSION_STATUSES, e.status ?? "planned", "Session status");
+	const actual = read.minutes(input.actualMinutes, e.actualMinutes ?? null);
+	return {
+		planned_start: start,
+		planned_duration_minutes: minutes,
+		actual_duration_minutes: actual,
+		status,
+		made_progress: read.tri(input.madeProgress, e.madeProgress ?? null),
+		notes: read.text(input.notes, 4000, e.notes ?? null),
+	};
+}
+
+const iso = (v) => {
+	if (!v) return null;
+	if (v instanceof Date) return v.toISOString();
+	const s = String(v);
+	return /(?:Z|[+-]\d{2}:?\d{2})$/.test(s) ? new Date(s).toISOString() : new Date(`${s.replace(" ", "T")}Z`).toISOString();
+};
+
+function toSession(row, stepUuid = null) {
+	return {
+		uuid: row.uuid,
+		stepUuid,
+		plannedStart: iso(row.planned_start),
+		plannedMinutes: Number(row.planned_duration_minutes),
+		actualMinutes: num(row.actual_duration_minutes),
+		status: row.status,
+		madeProgress: row.made_progress === null || row.made_progress === undefined ? null : !!row.made_progress,
+		calendarEventId: row.calendar_event_id || null,
+		// On the calendar at the time it's planned for; false once rescheduled until the event is moved too.
+		calendarInSync: row.calendar_event_id ? iso(row.calendar_start) === iso(row.planned_start) : null,
+		notes: row.notes || null,
+		completedAt: iso(row.completed_at),
+		createdAt: iso(row.created_at),
+	};
+}
+
+/** A spec (a measurement or decision) or a material (a takeoff line), each confirmed, pending or an estimate. */
+function normalizeItem(input = {}, existing = null) {
+	const e = existing || {};
+	const label = read.text(input.label, 190, e.label ?? null);
+	if (!label) throw bad("Say what it is — a label like \"Fence length\".");
+	const out = {
+		kind: read.pick(input.kind, ITEM_KINDS, e.kind ?? "spec", "Kind"),
+		label,
+		value: read.text(input.value, 64, e.value ?? null),
+		unit: read.text(input.unit, 16, e.unit ?? null),
+		status: read.pick(input.status, ITEM_STATUSES, e.status ?? "pending", "Item status"),
+		cost_low: read.money(input.costLow, e.costLow ?? null),
+		cost_high: read.money(input.costHigh, e.costHigh ?? null),
+		note: read.text(input.note, 255, e.note ?? null),
+	};
+	if (out.cost_low !== null && out.cost_high !== null && out.cost_low > out.cost_high) throw bad("Cost: the low end is above the high end.");
+	return out;
+}
+
+function toItem(row) {
+	return {
+		uuid: row.uuid,
+		kind: row.kind,
+		ordinal: Number(row.ordinal),
+		label: row.label,
+		value: row.value || null,
+		unit: row.unit || null,
+		status: row.status,
+		costLow: num(row.cost_low),
+		costHigh: num(row.cost_high),
+		note: row.note || null,
+		confirmedAt: row.confirmed_at || null,
 	};
 }
 
@@ -277,6 +420,14 @@ function toProject(row) {
 		completedAt: row.completed_at || null,
 		source: row.source,
 		importKey: row.import_key || null,
+		refCode: row.ref_code || null,
+		revision: row.revision || null,
+		pinnedAt: row.pinned_at || null,
+		budget: { working: num(row.budget_working), ceiling: num(row.budget_ceiling), note: row.budget_note || null },
+		doneWhen: row.done_when || null,
+		doneWhenConfirmed: json(row.done_when_confirmed) || [],
+		outcomeConfirmedAt: row.outcome_confirmed_at || null,
+		activatedAt: row.activated_at || null,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
 	};
@@ -288,9 +439,14 @@ function toStep(row) {
 		ordinal: Number(row.ordinal),
 		title: row.title,
 		detail: row.detail || null,
+		phase: row.phase || null,
+		acceptanceCriteria: row.acceptance_criteria || null,
 		status: row.status,
 		who: row.who,
 		blockedOn: row.blocked_on || null,
+		waitingOnActor: row.waiting_on_actor || null,
+		reviewAt: iso(row.review_at),
+		unblockAction: row.unblock_action || null,
 		dueOn: day(row.due_on),
 		effortMinutes: num(row.effort_minutes),
 		indoor: row.indoor === null || row.indoor === undefined ? null : !!row.indoor,
@@ -350,8 +506,8 @@ function effectiveStatus(project, dependencies) {
 }
 
 module.exports = {
-	AREAS, STATUSES, CLOSED, STEP_STATUSES, STEP_WHO, RELATIONS, CONCERN_STATUSES, CONDITIONS,
-	bad, read, monthsToMask, maskToMonths,
-	normalizeProject, normalizeAreas, normalizeStep, normalizeConcern, normalizeCharter,
-	toProject, toStep, toConcern, wouldCycle, effectiveStatus,
+	AREAS, STATUSES, CLOSED, STEP_STATUSES, STEP_WHO, RELATIONS, CONCERN_STATUSES, CONDITIONS, ITEM_KINDS, ITEM_STATUSES, SESSION_STATUSES,
+	bad, read, monthsToMask, maskToMonths, criteriaOf,
+	normalizeProject, normalizeAreas, normalizeStep, normalizeItem, normalizeConcern, normalizeCharter, normalizeSession,
+	toProject, toStep, toItem, toConcern, toSession, wouldCycle, effectiveStatus,
 };

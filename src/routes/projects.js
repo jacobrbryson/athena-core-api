@@ -78,6 +78,8 @@ router.patch('/concerns/:uuid', json, c.updateConcern);
 router.delete('/concerns/:uuid', c.removeConcern);
 
 router.put('/charters/:area', json, c.putCharter);
+// The work-in-progress recommendation preference (a preference, never a limit).
+router.put('/prefs', json, c.putPrefs);
 router.get('/binding-options', c.bindingOptions);
 
 router.patch('/:uuid', json, c.update);
@@ -87,6 +89,19 @@ router.post('/:uuid/steps', json, c.addStep);
 router.post('/:uuid/steps/reorder', json, c.reorderSteps);
 router.patch('/:uuid/steps/:stepUuid', json, c.updateStep);
 router.delete('/:uuid/steps/:stepUuid', c.removeStep);
+// Step prerequisites: same project only, no self-edges, no cycles.
+router.post('/:uuid/steps/:stepUuid/dependencies', json, c.addStepDependency);
+router.delete('/:uuid/steps/:stepUuid/dependencies/:dependsOn', c.removeStepDependency);
+
+// Work sessions: time set aside for the work. No calendar writes here — that is an approved action.
+router.post('/:uuid/sessions', json, c.addSession);
+router.patch('/:uuid/sessions/:sessionUuid', json, c.updateSession);
+router.delete('/:uuid/sessions/:sessionUuid', c.removeSession);
+
+// Specs (confirmed / pending verification) and the material takeoff.
+router.post('/:uuid/items', json, c.addItem);
+router.patch('/:uuid/items/:itemUuid', json, c.updateItem);
+router.delete('/:uuid/items/:itemUuid', c.removeItem);
 
 router.get('/:uuid/entries', c.listEntries);
 // Photos arrive as base64 JSON (≤3 MB decoded). server.js gives this path an

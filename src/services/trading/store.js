@@ -8,6 +8,7 @@ const crypto = require("node:crypto");
 const uuidv4 = () => crypto.randomUUID();
 const pool = require("../../helpers/db");
 const { etParts, settlementDate } = require("./marketClock");
+const lifecycle = require("./lifecycle");
 
 const DEFAULTS = Object.freeze({
 	starting_capital: 423,
@@ -205,43 +206,95 @@ async function signalState(profileId, date, symbol, versionId) {
 	if (!s) return null;
 	const [[e]] = await pool.query("SELECT reason FROM trading_signal_events WHERE signal_id = ? ORDER BY seq DESC LIMIT 1", [s.id]);
 	return {
-		id: s.id, uuid: s.uuid, status: s.status, reason: e?.reason || null,
+		id: s.id, uuid: s.uuid, symbol: s.symbol, session_date: dateOnly(s.session_date), status: s.status, state_key: s.state_key || s.status, reason: e?.reason || null,
+		expires_at: iso(s.expires_at),
 		confirmed: s.ever_confirmed ? { entry: num(s.confirmed_entry), stop: num(s.confirmed_stop), target: num(s.confirmed_target), at: iso(s.confirmed_at) } : null,
 	};
 }
 
 /**
  * Record one evaluation. The first evaluation creates the signal; after that a
- * new event is appended only when the status changes, carrying the full
- * conditions, indicators and levels that produced it. Returns
- * { signal_id, uuid, changed, from, seq }.
+ * new event is appended only when the state changes, carrying the full
+ * conditions, indicators and levels that produced it. The state is the status,
+ * except that a paper setup (every condition but the feed) is its own state
+ * (lifecycle.stateKey). Every evaluation, changed or not, moves
+ * last_evaluated_at. Returns { signal_id, uuid, changed, from, from_key, seq }.
  */
 async function recordEvaluation({ profileId, date, versionId, source, feed, result, snapshotId }) {
 	const at = new Date(result.evaluated_at);
+	const key = lifecycle.stateKey(result);
 	let state = await signalState(profileId, date, result.symbol, versionId);
 	if (!state) {
+		const expires = lifecycle.expiryFor({ sessionDate: date, status: result.status, confirmedAt: result.confirmed?.at });
 		await pool.query(
-			`INSERT IGNORE INTO trading_signals (uuid, profile_id, session_date, symbol, strategy_version_id, data_source, feed, initial_status, initial_at, status, last_event_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			[uuidv4(), profileId, date, result.symbol, versionId, source, feed, result.status, at, result.status, at]);
+			`INSERT IGNORE INTO trading_signals (uuid, profile_id, session_date, symbol, strategy_version_id, data_source, feed, initial_status, initial_at, status, state_key, last_event_at, last_evaluated_at, expires_at, expiry_policy)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			[uuidv4(), profileId, date, result.symbol, versionId, source, feed, result.status, at, result.status, key, at, at, expires, lifecycle.EXPIRY_POLICY]);
 		state = await signalState(profileId, date, result.symbol, versionId);
 		const inserted = await appendEvent(state.id, null, result, snapshotId);
-		if (inserted && result.status === "ENTRY_CONFIRMED") await markConfirmed(state.id, result);
+		if (inserted && result.status === "ENTRY_CONFIRMED") await markConfirmed(state.id, result, date);
 		return { signal_id: state.id, uuid: state.uuid, changed: inserted, from: null, seq: 1 };
 	}
-	if (state.status === result.status) return { signal_id: state.id, uuid: state.uuid, changed: false, from: state.status };
+	await pool.query("UPDATE trading_signals SET last_evaluated_at = GREATEST(COALESCE(last_evaluated_at, ?), ?) WHERE id = ?", [at, at, state.id]);
+	if (state.state_key === key) return { signal_id: state.id, uuid: state.uuid, changed: false, from: state.status };
 	const seq = await appendEvent(state.id, state.status, result, snapshotId);
 	if (!seq) return { signal_id: state.id, uuid: state.uuid, changed: false, from: state.status };
-	await pool.query("UPDATE trading_signals SET status = ?, last_event_at = ? WHERE id = ?", [result.status, at, state.id]);
-	if (result.status === "ENTRY_CONFIRMED" && !state.confirmed) await markConfirmed(state.id, result);
-	return { signal_id: state.id, uuid: state.uuid, changed: true, from: state.status, seq };
+	await pool.query("UPDATE trading_signals SET status = ?, state_key = ?, last_event_at = ? WHERE id = ?", [result.status, key, at, state.id]);
+	if (result.status === "ENTRY_CONFIRMED" && !state.confirmed) await markConfirmed(state.id, result, date);
+	return { signal_id: state.id, uuid: state.uuid, changed: true, from: state.status, from_key: state.state_key, seq };
 }
 
-async function markConfirmed(signalId, result) {
+/** First confirmation: the plan's levels, and the entry window replaces the day's expiry. */
+async function markConfirmed(signalId, result, date) {
 	const c = result.confirmed;
 	if (!c) return;
-	await pool.query("UPDATE trading_signals SET ever_confirmed = 1, confirmed_at = ?, confirmed_entry = ?, confirmed_stop = ?, confirmed_target = ? WHERE id = ? AND ever_confirmed = 0",
-		[new Date(c.at), c.entry, c.stop, c.target, signalId]);
+	const expires = lifecycle.expiryFor({ sessionDate: date, status: "ENTRY_CONFIRMED", confirmedAt: c.at });
+	await pool.query("UPDATE trading_signals SET ever_confirmed = 1, confirmed_at = ?, confirmed_entry = ?, confirmed_stop = ?, confirmed_target = ?, expires_at = ? WHERE id = ? AND ever_confirmed = 0",
+		[new Date(c.at), c.entry, c.stop, c.target, expires, signalId]);
+}
+
+/**
+ * Expire this person's signals whose time is up: an EXPIRED event is appended
+ * (the unique seq makes a concurrent second expiry a no-op) and the row turns
+ * terminal. Returns the expired signals' ids.
+ */
+async function expireDue(profileId, now = Date.now()) {
+	const [rows] = await pool.query(
+		`SELECT * FROM trading_signals WHERE profile_id = ? AND status NOT IN ('EXIT_INVALIDATED','EXPIRED') AND expires_at IS NOT NULL AND expires_at <= ?`,
+		[profileId, new Date(now)]);
+	const expired = [];
+	for (const s of rows) {
+		const result = lifecycle.expiredResult(shapeSignal(s), now);
+		const seq = await appendEvent(s.id, s.status, result, null);
+		if (!seq) continue;
+		await pool.query("UPDATE trading_signals SET status = 'EXPIRED', state_key = 'EXPIRED', last_event_at = ? WHERE id = ? AND status = ?", [new Date(now), s.id, s.status]);
+		expired.push(s.id);
+	}
+	return expired;
+}
+
+/** Today's signals and every event of each, oldest first, for deriving notifications. */
+async function signalsWithEventsForDay(profileId, date) {
+	const [signals] = await pool.query(
+		`SELECT s.*, v.version, v.status AS version_status FROM trading_signals s JOIN trading_strategy_versions v ON v.id = s.strategy_version_id
+		 WHERE s.profile_id = ? AND s.session_date = ?`, [profileId, date]);
+	if (!signals.length) return [];
+	const [events] = await pool.query("SELECT * FROM trading_signal_events WHERE signal_id IN (?) ORDER BY signal_id, seq", [signals.map((s) => s.id)]);
+	return signals.map((s) => ({
+		...shapeSignal(s),
+		events: events.filter((e) => Number(e.signal_id) === Number(s.id)).map((e) => ({
+			seq: e.seq, evaluated_at: iso(e.evaluated_at), from_status: e.from_status, to_status: e.to_status, reason: e.reason,
+			conditions: json(e.conditions_json), indicators: json(e.indicators_json), levels: json(e.levels_json), sizing: json(e.sizing_json),
+		})),
+	}));
+}
+
+/** One signal by uuid, with its strategy version's status. */
+async function signalByUuid(profileId, uuid) {
+	const [[s]] = await pool.query(
+		`SELECT s.*, v.version, v.status AS version_status FROM trading_signals s JOIN trading_strategy_versions v ON v.id = s.strategy_version_id
+		 WHERE s.profile_id = ? AND s.uuid = ?`, [profileId, uuid]);
+	return s ? shapeSignal(s) : null;
 }
 
 /** Append with the next seq; a concurrent duplicate loses on the unique key and is dropped. */
@@ -271,7 +324,8 @@ async function signalsForDay(profileId, date) {
 function shapeSignal(s) {
 	return {
 		id: s.id, uuid: s.uuid, session_date: dateOnly(s.session_date), symbol: s.symbol, strategy_version: s.version ?? null, version_status: s.version_status ?? null,
-		data_source: s.data_source, feed: s.feed, initial_status: s.initial_status, initial_at: iso(s.initial_at), status: s.status, last_event_at: iso(s.last_event_at),
+		data_source: s.data_source, feed: s.feed, initial_status: s.initial_status, initial_at: iso(s.initial_at), status: s.status, state_key: s.state_key || s.status, last_event_at: iso(s.last_event_at),
+		last_evaluated_at: iso(s.last_evaluated_at), expires_at: iso(s.expires_at), expiry_policy: s.expiry_policy || null,
 		ever_confirmed: !!s.ever_confirmed, confirmed_at: iso(s.confirmed_at), confirmed_entry: num(s.confirmed_entry), confirmed_stop: num(s.confirmed_stop), confirmed_target: num(s.confirmed_target),
 		outcome: s.outcome, outcome_r: num(s.outcome_r), outcome_mfe_r: num(s.outcome_mfe_r), outcome_mae_r: num(s.outcome_mae_r),
 	};
@@ -470,7 +524,7 @@ module.exports = {
 	getAccount, ensureAccount, updateAccount, recordBrokerCheck, ledger, addLedger,
 	ensureStrategyVersion, strategyVersions,
 	saveWatchlist, addManualWatch, removeWatch, watchlist, lastScanAt, saveCandles, candles, insertSnapshot,
-	signalState, recordEvaluation, signalsForDay, signalsBetween, signalWithEvents, setOutcome, unmeasuredSignals,
+	signalState, recordEvaluation, expireDue, signalsWithEventsForDay, signalByUuid, signalsForDay, signalsBetween, signalWithEvents, setOutcome, unmeasuredSignals,
 	positions, position, openPosition, closePosition, updateJournal,
 	insertAlert, alerts, markAlertsSeen, dismissAlert, saveDailySummary, dailySummaries, backtestRuns, saveBacktestRun,
 };

@@ -456,7 +456,7 @@ async function pushEnabledFor(profileId) {
  * same shape of answer, because the caller's behaviour is identical in all
  * three: carry on, the in-app path still works.
  */
-async function sendToProfile(profileId, { title, body, data, collapseKey } = {}) {
+async function sendToProfile(profileId, { title, body, data, collapseKey, ttlSeconds } = {}) {
 	if (!profileId || !title || !body) return { sent: 0, failed: 0, devices: 0 };
 	if (!(await pushEnabledFor(profileId))) return { sent: 0, failed: 0, devices: 0, skipped: "not enabled" };
 
@@ -475,7 +475,9 @@ async function sendToProfile(profileId, { title, body, data, collapseKey } = {})
 			results.push({ uuid: device.uuid, name: device.name, ok: false, reason: "no transport" });
 			continue;
 		}
-		const result = await transport.send(device.token, { title, body, data, collapseKey });
+		// ttlSeconds: how long a push service may hold it for an offline device.
+		// Omitted = the transport's default; a trading setup passes its window.
+		const result = await transport.send(device.token, { title, body, data, collapseKey, ttlSeconds });
 		results.push({
 			uuid: device.uuid,
 			name: device.name,

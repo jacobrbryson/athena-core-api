@@ -5,6 +5,7 @@ const engine = require('../services/trading/engine');
 const store = require('../services/trading/store');
 const strategy = require('../services/trading/strategy');
 const clock = require('../services/trading/marketClock');
+const notifications = require('../services/trading/notifications');
 
 // Family → Trading (docs/capabilities/trading.md): the signed-in adult's own
 // trading desk. Analysis, records and settings only — nothing here, or
@@ -23,7 +24,8 @@ function handler(fn) {
       const out = await fn(req, actor.profileId, res);
       if (!res.headersSent) res.json(out);
     } catch (err) {
-      if (err?.code === 'ER_NO_SUCH_TABLE') return res.status(503).json({ message: 'Trading isn\'t set up yet (migration 0092_trading is pending).' });
+      if (err?.code === 'ER_NO_SUCH_TABLE') return res.status(503).json({ message: 'Trading isn\'t set up yet (migration 0092_trading or 0098_trading_notifications is pending).' });
+      if (err?.code === 'ER_BAD_FIELD_ERROR') return res.status(503).json({ message: 'Trading needs migration 0098_trading_notifications applied.' });
       if (err?.code === 'rate_limited') return res.status(503).json({ message: 'The market-data provider asked us to slow down. Try again in a minute.' });
       if (err?.code === 'unauthorized') return res.status(503).json({ message: 'The market-data provider refused the API key.' });
       console.error('[trading] request failed', { path: req.path, code: err?.code || null, message: err?.message });
@@ -145,6 +147,39 @@ router.post('/alerts/seen', handler(async (req, profileId) => {
 router.post('/alerts/:id/dismiss', handler(async (req, profileId) => {
   await store.dismissAlert(profileId, Number(req.params.id));
   return { ok: true };
+}));
+
+// Notifications (services/trading/notifications.js). Preferences, history and
+// tests are the caller's own; a tapped notification lands on /setups/:uuid,
+// which re-checks the setup against the market now.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+router.get('/notifications', handler(async (req, profileId) => ({
+  ...(await notifications.status(profileId)),
+  history: await notifications.history(profileId, { limit: 50 }),
+})));
+
+router.put('/notifications/prefs', handler(async (req, profileId, res) => {
+  const hash = store.hashParams(strategy.DEFAULT_PARAMS);
+  const current = (await store.strategyVersions(strategy.STRATEGY_KEY)).find((v) => v.params_hash === hash);
+  const out = await notifications.setPrefs(profileId, req.body || {}, { versionStatus: current?.status || null });
+  if (out.error) return bad(res, out.error);
+  return out;
+}));
+
+router.post('/notifications/test', handler(async (req, profileId) => notifications.sendTest(profileId)));
+
+router.post('/notifications/:uuid/ack', handler(async (req, profileId, res) => {
+  if (!UUID.test(req.params.uuid)) return bad(res, 'Not a notification id.');
+  return { ok: await notifications.acknowledge(profileId, req.params.uuid, req.body?.via) };
+}));
+
+router.get('/setups/:uuid', handler(async (req, profileId, res) => {
+  if (!UUID.test(req.params.uuid)) return bad(res, 'Not a setup id.');
+  const n = typeof req.query.n === 'string' && UUID.test(req.query.n) ? req.query.n : null;
+  const out = await notifications.recheckSetup(profileId, req.params.uuid, { notificationUuid: n });
+  if (!out) return res.status(404).json({ message: 'No such setup.' });
+  return out;
 }));
 
 router.get('/strategy', handler(async () => ({

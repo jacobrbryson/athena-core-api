@@ -69,10 +69,38 @@ Lifecycle: once confirmed, a setup stays ENTRY_CONFIRMED until one of these ends
 - `trading_candles`: closed candles of watched symbols, kept 400 days. Replay rebuilds what was known at each event from these, filtered to candles closed by then.
 - Backtests (`trading_backtest_runs`), paper positions (`mode='paper'`) and real positions (`mode='live'`) never mix in analytics.
 
+## Notifications (2026-10-25)
+
+The owner asked for push notifications for actionable setups. They are an outbox derived from the stored event log, not an initiative trigger, and they do not touch `services/initiative/` beyond reading quiet hours and mutes.
+
+```
+monitor tick (Cloud Tasks, ~60 s, open−15 min … close+10 min, only if someone opted in)
+  → engine.evaluate(profile)              persists transitions (append-only events)
+  → store.expireDue                        EXPIRED event when expires_at passes
+  → notifications.sync                     events → outbox rows (INSERT IGNORE on dedupe key)
+  → notifications.deliver                  claim → gates → lifecycle.revalidate → push → deliveries
+```
+
+**Lifecycle.** WATCH → SETUP_FORMING → ENTRY_CONFIRMED → EXIT_INVALIDATED | EXPIRED. Every signal row now carries `state_key`, `last_evaluated_at`, `expires_at` and `expiry_policy`. A confirmed entry is actionable for 10 minutes (`lifecycle.ENTRY_WINDOW_MIN`), never past the 15:00 ET cutoff or the close; other setups expire at the cutoff. EXPIRED is terminal (strategy.evaluate returns it whatever the candles say). Paper positions now close on stop/target from candles (`engine.managePaper`), because a confirmed signal can expire while its paper position is open.
+
+**Paper setups on IEX.** The IEX feed can never produce ENTRY_CONFIRMED. A WAIT where every condition passed except the feed, on fresh data outside a blackout, is its own state (`WAIT_PAPER_SETUP`) so it gets its own event; it notifies as a PAPER / EXPERIMENTAL confirmation.
+
+**Live vs paper.** Live needs all three: the SIP feed, a `validated` strategy version, and the person switching on live alerts for that strategy (refused for an unvalidated version). Everything else is labelled PAPER / EXPERIMENTAL in the title.
+
+**Dedupe.** One row per (person, `confirm:<signal>` / `forming:<signal>` / `invalid:<signal>` / `expired:<signal>` / `risk:<date>:full|trades`). Forming and confirmed rows come only from a signal's latest event, so switching on mid-day doesn't replay the morning. One signal per symbol per day per strategy version means a new alert needs a genuinely new setup (another symbol, day or version). Invalidation and expiry only retract something that reached a device; otherwise they are recorded as skipped.
+
+**Send-time gates, in order:** opt-in and per-event switches; a `trading` mute; the row's own expiry; setups only while the market is open; quiet hours (hold 15 min and re-check, never drop); re-validation (`lifecycle.revalidate`: market open, entry window, evaluation ≤ 90 s old with fresh quote and closed candle, strategy still confirmed, price above stop and within entry + 0.5R, valid levels and whole shares, R ≥ max(2, account minimum), settled cash ≥ position cost, planned risk with costs ≤ the day's budget, trades left, no event blackout); the person's cooldown (low priority only: forming and paper confirmations; held to its end and re-checked). A failing check ends the row as `lapsed` with the reasons. Live confirmations, invalidations, expiries and risk limits are never held by the cooldown.
+
+**Delivery.** `push.sendToProfile` (existing paired_device rows: FCM, Web Push/VAPID, SMS), collapse key `trading-<uuid>` (per notification, never shared), TTL = seconds left in the entry window so a push service never delivers a stale plan. Soft failures retry at 30 s and 60 s (never past expiry) then `failed`; dead registrations are dropped by push. Every device answer is a `trading_notification_deliveries` row. A row stuck in `sending` for 3 minutes (a crashed worker) returns to `pending`; the per-notification collapse key makes the rare resend replace rather than stack.
+
+**Tap.** The payload carries `/family/trading?setup=<signal>&n=<notification>`; the service worker opens or navigates to it, the page calls `GET /api/v1/trading/setups/:uuid` which forces a fresh evaluation, acknowledges the notification and re-runs `revalidate`. The notified figures are shown as history; only the verdict says whether it still stands. The Android app currently opens its launch screen (deep link needs an APK change).
+
+**Monitoring cost.** About 390 short requests per trading day, only while someone is opted in, and nothing outside the window, so the service still scales to zero overnight and at weekends. `TRADING_MONITOR_INTERVAL_S` (default 60, min 30). The incidents job (every 5 min) restarts a broken chain; the service ignores it while the chain ticked recently.
+
 ## Validation status
 
 Not validated. `status` stays `paper` until an owner decides otherwise, on out-of-sample backtest evidence (`scripts/tradingBacktest.js`) plus a paper forward test. Until then, ENTRY_CONFIRMED alerts are labelled paper. Known modelling limits: backtests have no historical quotes, so spread is modelled at 0.05%. A candle touching both stop and target counts as the stop. Symbol choice is the caller's, and survivorship bias is theirs to avoid (the run records the list).
 
 ## Not built (later phases)
 
-Push delivery of alerts (needs an initiative trigger, owner's call). Regime-adaptive parameters. Multi-strategy comparison. Ranking by validated results. Sector mapping for single-stock relative strength. An earnings calendar.
+Regime-adaptive parameters. Multi-strategy comparison. Ranking by validated results. Sector mapping for single-stock relative strength. An earnings calendar.

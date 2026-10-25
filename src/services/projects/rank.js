@@ -3,8 +3,8 @@
  *
  * Arithmetic only, so it can be read and argued with: priority, the severity of
  * open concerns a project answers, the charter's weights for what it serves,
- * and deadline pressure. A model may write words about a project; it never
- * decides where the project sits.
+ * and deadline pressure — unless the person moved a project to the front. A
+ * model may write words about a project; it never decides where it sits.
  */
 const { CLOSED } = require("./shape");
 
@@ -53,8 +53,19 @@ function rank({ projects = [], concerns = [], charters = [] }, now = Date.now())
 		if (p.effectiveStatus === "blocked" || p.effectiveStatus === "waiting") score -= 15;
 		out.set(p.uuid, { score, why });
 	}
+	// "Move to the front" is the person overruling the arithmetic: every pinned
+	// open project sits above every unpinned one, the newest pin first.
+	const pinned = projects
+		.filter((p) => p.pinnedAt && !CLOSED.has(p.status))
+		.sort((a, b) => Date.parse(b.pinnedAt) - Date.parse(a.pinnedAt));
+	pinned.forEach((p, i) => {
+		const r = out.get(p.uuid);
+		out.set(p.uuid, { score: PINNED + (pinned.length - i), why: ["you moved it to the front", ...r.why] });
+	});
 	return out;
 }
+
+const PINNED = 100_000;
 
 const OUTDOOR_CONDITIONS = new Set(["dry", "warm", "mild", "no_freeze", "daylight"]);
 
@@ -66,24 +77,60 @@ const OUTDOOR_CONDITIONS = new Set(["dry", "warm", "mild", "no_freeze", "dayligh
  * (they never appear on the Dashboard); out-of-season work; and anything that
  * needs rain to do, which is a forecast question, not a free-time one.
  */
-function forRightNow(projects, now = new Date()) {
+function forRightNow(projects, now = new Date(), plan = null) {
 	const month = now.getMonth() + 1;
+	const stateOf = new Map((plan?.states || []).map((s) => [s.projectUuid, s]));
+	const indoorOf = (p) => (p.indoor !== null ? p.indoor : (p.conditions || []).some((c) => OUTDOOR_CONDITIONS.has(c)) ? false : null);
 	return projects
 		.filter((p) => ["idea", "planning", "ready", "active"].includes(p.effectiveStatus))
 		.filter((p) => p.kind !== "program" && p.primaryArea !== "work")
 		.filter((p) => !p.seasonMonths || p.seasonMonths.includes(month))
 		.filter((p) => !(p.conditions || []).includes("during_rain"))
-		.map((p) => ({
-			uuid: p.uuid,
-			title: p.title,
-			area: p.primaryArea,
-			detail: p.goal,
-			status: p.effectiveStatus === "active" ? "in_progress" : "todo",
-			priority: p.priority >= 4 ? "high" : p.priority <= 2 ? "low" : "normal",
-			effortMinutes: p.effort?.min ?? p.effort?.max ?? null,
-			indoor: p.indoor !== null ? p.indoor : (p.conditions || []).some((c) => OUTDOOR_CONDITIONS.has(c)) ? false : null,
-			dueDate: p.hardDeadline,
-		}));
+		// With the execution engine's plan, a project with steps is offered as its
+		// next executable step — or not at all while none is ready (heldForRightNow
+		// says why). Without steps, or without a plan, it is the project as before.
+		.filter((p) => !plan || !(p.steps || []).length || stateOf.get(p.uuid)?.nextAction)
+		.map((p) => {
+			const base = {
+				uuid: p.uuid,
+				title: p.title,
+				area: p.primaryArea,
+				detail: p.goal,
+				status: p.effectiveStatus === "active" ? "in_progress" : "todo",
+				priority: p.priority >= 4 ? "high" : p.priority <= 2 ? "low" : "normal",
+				effortMinutes: p.effort?.min ?? p.effort?.max ?? null,
+				indoor: indoorOf(p),
+				dueDate: p.hardDeadline,
+			};
+			const next = plan && (p.steps || []).length ? stateOf.get(p.uuid)?.nextAction : null;
+			if (!next) return base;
+			return {
+				...base,
+				title: next.title,
+				projectTitle: p.title,
+				stepUuid: next.stepUuid,
+				detail: next.detail || p.goal,
+				status: next.status === "in_progress" || p.effectiveStatus === "active" ? "in_progress" : "todo",
+				effortMinutes: next.effortMinutes,
+				indoor: next.indoor !== null && next.indoor !== undefined ? next.indoor : base.indoor,
+				dueDate: next.dueOn || p.hardDeadline,
+				reasons: next.reasons.slice(0, 3),
+				startsNew: next.startsNew && !next.urgentStart,
+			};
+		});
 }
 
-module.exports = { rank, forRightNow, daysUntil };
+/**
+ * Open projects Right Now would have offered but can't, each with why and what
+ * would change that — so a stuck project is said out loud, never just absent.
+ */
+function heldForRightNow(projects, plan) {
+	const stateOf = new Map((plan?.states || []).map((s) => [s.projectUuid, s]));
+	return projects
+		.filter((p) => p.kind !== "program" && p.primaryArea !== "work" && !CLOSED.has(p.status) && p.effectiveStatus !== "idea")
+		.map((p) => ({ p, s: stateOf.get(p.uuid) }))
+		.filter(({ s }) => s && !s.nextAction && s.noActionReason)
+		.map(({ p, s }) => ({ id: `project:${p.uuid}`, title: p.title, reason: s.noActionReason, unblock: s.unblock }));
+}
+
+module.exports = { rank, forRightNow, heldForRightNow, daysUntil };

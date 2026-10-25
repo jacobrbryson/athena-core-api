@@ -33,7 +33,7 @@ const verifier = new OAuth2Client();
 const configured = () => Boolean(process.env.GUARDIAN_DISPATCH_URL && process.env.GUARDIAN_DISPATCH_AUDIENCE);
 
 /** The job's call: dispatch now. Resolves { ok, status?, skipped? }; never throws. */
-async function dispatchNow({ reason = "planned" } = {}) {
+async function dispatchNow({ reason = "planned", url = process.env.GUARDIAN_DISPATCH_URL } = {}) {
 	if (!configured()) return { ok: false, skipped: "not configured" };
 	try {
 		const audience = process.env.GUARDIAN_DISPATCH_AUDIENCE;
@@ -46,7 +46,7 @@ async function dispatchNow({ reason = "planned" } = {}) {
 				method: "POST",
 				data: { audience, includeEmail: true },
 			});
-			const response = await fetch(process.env.GUARDIAN_DISPATCH_URL, {
+			const response = await fetch(url, {
 				method: "POST",
 				headers: { Authorization: `Bearer ${minted.data.token}`, "Content-Type": "application/json" },
 				body: JSON.stringify({ reason }),
@@ -55,7 +55,7 @@ async function dispatchNow({ reason = "planned" } = {}) {
 			res = { status: response.status, data: await response.json().catch(() => null) };
 		} else {
 			const client = await wakeups.authOf().getIdTokenClient(audience);
-			res = await client.request({ url: process.env.GUARDIAN_DISPATCH_URL, method: "POST", data: { reason }, timeout: 280_000 });
+			res = await client.request({ url, method: "POST", data: { reason }, timeout: 280_000 });
 		}
 		return { ok: res.status >= 200 && res.status < 300, status: res.status, body: res.data };
 	} catch (error) {
@@ -68,7 +68,7 @@ async function dispatchNow({ reason = "planned" } = {}) {
  * fall in the same minute share one call. Returns true when booked or already
  * booked; false otherwise (the job's next pass is the backstop).
  */
-async function wakeAt(at) {
+async function wakeAt(at, { url = process.env.GUARDIAN_DISPATCH_URL, name = "guardian", reason = "wake" } = {}) {
 	const when = new Date(at);
 	if (!Number.isFinite(when.getTime()) || !configured()) return false;
 	if (process.env.NODE_ENV === "test" && !process.env.GUARDIAN_WAKEUPS_IN_TESTS) return false;
@@ -84,14 +84,14 @@ async function wakeAt(at) {
 			method: "POST",
 			data: {
 				task: {
-					name: `${parent}/tasks/guardian-${minute}`,
+					name: `${parent}/tasks/${name}-${minute}`,
 					scheduleTime: fire.toISOString(),
 					dispatchDeadline: "300s",
 					httpRequest: {
 						httpMethod: "POST",
-						url: process.env.GUARDIAN_DISPATCH_URL,
+						url,
 						headers: { "Content-Type": "application/json" },
-						body: Buffer.from(JSON.stringify({ reason: "wake" })).toString("base64"),
+						body: Buffer.from(JSON.stringify({ reason })).toString("base64"),
 						oidcToken: { serviceAccountEmail: email, audience: process.env.GUARDIAN_DISPATCH_AUDIENCE },
 					},
 				},
@@ -100,7 +100,7 @@ async function wakeAt(at) {
 		return true;
 	} catch (err) {
 		if (err?.response?.status === 409 || /ALREADY_EXISTS/.test(String(err?.message))) return true;
-		console.warn("[guardian] couldn't book a wake-up (the incidents job is the backstop):", err.message);
+		console.warn(`[${name}] couldn't book a wake-up (the incidents job is the backstop):`, err.message);
 		return false;
 	}
 }

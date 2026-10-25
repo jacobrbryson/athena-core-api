@@ -22,6 +22,9 @@ app.post('/webhooks/eufy', express.json({ limit: '8mb' }), require('./controller
 // controller verifies a Google ID token for an allowed service account, and
 // the body carries nothing the engine reads (docs/architecture/guardian-engine.md).
 app.post('/internal/guardian/dispatch', express.json({ limit: '4kb' }), require('./controllers/guardian').dispatch);
+// Trading monitor ticks (Cloud Tasks chain + incidents-job backstop), same
+// caller check as the Guardian dispatch (services/trading/monitor.js).
+app.post('/internal/trading/tick', express.json({ limit: '4kb' }), require('./controllers/tradingMonitor').tick);
 // Image-bearing routes (photo memories, camera keyframes, project photos) get a larger body
 // limit; everything else keeps the 100kb default. body-parser skips a body
 // that is already parsed, so the global parser below is a no-op for these.

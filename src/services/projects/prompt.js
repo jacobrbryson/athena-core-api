@@ -8,6 +8,7 @@
  */
 const projects = require("./index");
 const { rank } = require("./rank");
+const execution = require("./execution");
 const { CLOSED } = require("./shape");
 const bindings = require("./bindings");
 const { openIssues } = require("../../controllers/propertyIssues");
@@ -44,10 +45,52 @@ function vehicleLine(v) {
 	return `- "${v.name}"${bits.length ? ` (${bits.join("; ")})` : ""}${v.notes ? ` Their note: ${v.notes.slice(0, 200)}` : ""}`;
 }
 
+const at = (iso) => `${String(iso).slice(0, 16).replace("T", " ")} UTC`;
+
+/**
+ * The execution engine's view of one project, as a few clauses: the ready
+ * next step and why, what is blocked and when to look again, the next session,
+ * and how close it is to finished. Derived, never the whole graph.
+ */
+function executionBits(state, p) {
+	if (!state) return [];
+	const out = [];
+	const next = state.nextAction;
+	if (next) {
+		const facts = [next.reasons[0], next.effortMinutes ? `about ${next.effortMinutes} min` : null, next.needsMultipleSessions ? "more than one sitting" : null]
+			.filter(Boolean).join(", ");
+		out.push(`ready next: "${next.title}"${next.phase ? ` in ${next.phase}` : ""}${facts ? ` (${facts})` : ""}${next.startsNew ? " — would start the project" : ""}`);
+	} else if (state.noActionReason) {
+		out.push(`nothing ready: ${state.noActionReason}${state.unblock ? ` To unstick: ${state.unblock}` : ""}`);
+	}
+	for (const b of state.blockedSteps.slice(0, 2)) {
+		out.push(`blocked: "${b.stepTitle}"${b.blockedOn ? ` on ${b.blockedOn}` : ""}${b.waitingOn ? `, waiting on ${b.waitingOn}` : ""}` +
+			(b.due ? ` — check-back was due ${at(b.reviewAt)}: ${b.action}` : b.triage ? " — no check-back date yet; ask when to look again" : `, check back ${at(b.reviewAt)}`));
+	}
+	const session = state.upcomingSessions[0];
+	if (session) {
+		const step = session.stepUuid ? p.steps.find((s) => s.uuid === session.stepUuid)?.title : null;
+		out.push(`next session ${at(session.plannedStart)}, ${session.plannedMinutes} min${step ? ` on "${step}"` : ""}${session.calendarEventId ? "" : " (not on the calendar)"}`);
+	}
+	for (const s of state.sessionsToCheckIn.slice(0, 1)) {
+		out.push(`the ${at(s.plannedStart)} session has passed with no word on it — ask how it went`);
+	}
+	const named = (state.phases || []).filter((ph) => ph.name);
+	if (named.length) out.push(`phases: ${named.slice(0, 8).map((ph) => `${ph.name} ${ph.done}/${ph.total}`).join(", ")}`);
+	const c = state.completion;
+	if (c.state === "outcome_unverified") out.push(`every step done; ${c.criteria.total - c.criteria.confirmed} of ${c.criteria.total} "done when" checks unconfirmed`);
+	if (c.state === "ready_for_confirmation") out.push(c.hasCriteria ? "every step done and checked — ready for them to close it out" : "every step done — ask if it's finished");
+	if (c.hasCriteria && c.state === "work_remaining") out.push(`done when: ${execution.getProjectCloseoutSummary(p).criteria.map((x) => x.text).slice(0, 4).join("; ")}`);
+	return out;
+}
+
 async function promptBlock(profileId) {
 	const [all, issues, vehicles] = await Promise.all([projects.getAll(profileId), openIssues(profileId), promptVehicles(profileId)]);
 	if (!all.projects.length && !all.concerns.length && !issues.length && !vehicles.length) return null;
-	const ranks = rank(all);
+	const now = Date.now();
+	const ranks = rank(all, now);
+	const plan = execution.getExecutionPlan(all, { now, ranks, prefs: all.prefs });
+	const stateOf = new Map(plan.states.map((s) => [s.projectUuid, s]));
 	const byId = new Map(all.projects.map((p) => [p.uuid, p]));
 	const open = all.projects
 		.filter((p) => !CLOSED.has(p.status))
@@ -58,16 +101,26 @@ async function promptBlock(profileId) {
 			.map((l) => byId.get(l.to))
 			.filter((d) => d && !CLOSED.has(d.status))
 			.map((d) => d.title);
-		const next = p.steps.find((s) => s.status === "in_progress") || p.steps.find((s) => s.status === "todo");
+		const items = p.items || [];
+		const pending = items.filter((i) => i.status === "pending").map((i) => i.label);
+		const confirmed = items.filter((i) => i.kind === "spec" && i.status === "confirmed")
+			.map((i) => `${i.label}${i.value ? ` ${i.value}${i.unit ? ` ${i.unit}` : ""}` : ""}`);
+		const b = p.budget || {};
 		const bits = [
 			AREA[p.primaryArea],
 			p.effectiveStatus,
+			p.pinnedAt ? "they moved this to the front of the line" : null,
+			p.refCode || p.revision ? [p.refCode, p.revision && `v${p.revision}`].filter(Boolean).join(" ") : null,
+			b.working !== null && b.working !== undefined ? `working budget $${b.working}` : null,
+			b.ceiling !== null && b.ceiling !== undefined ? `approval ceiling $${b.ceiling}` : null,
+			confirmed.length ? `confirmed: ${confirmed.slice(0, 6).join(", ")}` : null,
+			pending.length ? `still to verify: ${pending.slice(0, 6).join(", ")}` : null,
 			p.kind === "program" ? "program" : null,
 			p.waitingOn ? `waiting on ${p.waitingOn}` : null,
 			needs.length ? `needs first: ${needs.slice(0, 2).join(", ")}` : null,
 			p.hardDeadline ? `deadline ${p.hardDeadline}` : null,
-			next ? `next step: ${next.title}` : null,
 			p.progress.steps.total ? `${p.progress.steps.done}/${p.progress.steps.total} steps` : null,
+			...executionBits(stateOf.get(p.uuid), p),
 		].filter(Boolean);
 		return `- "${p.title}" (${bits.join("; ")})`;
 	};
@@ -119,9 +172,21 @@ async function promptBlock(profileId) {
 			: []),
 		...(recentDone.length ? ["", `Finished in the last two weeks: ${recentDone.slice(0, 6).join(", ")}.`] : []),
 		"",
-		"Use these when they come up — what to do next, what's blocked, how you could help. " +
+		...(plan.focus.over
+			? ["", `They have ${plan.focus.active} active projects and prefer to keep about ${plan.focus.limit} going — lean toward finishing those over starting another, unless something can't wait. Never pause or drop one yourself.`]
+			: []),
+		"",
+		"Use these when they come up — what to do next, what's blocked, how you could help. Talk like a partner on the job: " +
+			"the one next thing and why it's ready, not a status report. " +
 			"When they tell you they finished something, started something, or want a step or note added, propose update_project " +
 			"with the project's title exactly as listed. When they describe something new they want to track, propose add_project. " +
+			"For one step — a blocker (ask what it waits on, who, and when to check back if they haven't said), steps that must " +
+			"come first, or what done means for it — propose update_project_step. To set time aside, suggest a realistic block " +
+			"from the step's effort and propose schedule_project_work; it goes on their calendar only through " +
+			"put_project_session_on_calendar, when they want that. Once a session's time has passed, ask how it went " +
+			"(record_project_session), and ask separately whether the step itself is done — a session finishing doesn't finish the step. " +
+			"When every step is done, go through the \"done when\" checks with them and propose close_out_project only after they " +
+			"confirm each one; never judge structural or safety work finished yourself. " +
 			"Don't recite this list unprompted, and never change a project without proposing it.",
 	].join("\n");
 }

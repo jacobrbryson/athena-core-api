@@ -84,6 +84,43 @@ describe('links and derived status', () => {
   });
 });
 
+describe('plan tools (0096)', () => {
+  it('keeps code, revision, pin and budget unless mentioned, and refuses a budget above its ceiling', () => {
+    const existing = { title: 'Side yard', refCode: 'HOME-SIDEYARD-2026-001', revision: '1.1', pinnedAt: '2026-10-25T00:00:00Z', budget: { working: 3200, ceiling: 4200, note: null } };
+    const kept = shape.normalizeProject({ revision: '1.2' }, existing);
+    expect(kept).toMatchObject({ ref_code: 'HOME-SIDEYARD-2026-001', revision: '1.2', pinned_at: '2026-10-25T00:00:00Z', budget_working: 3200, budget_ceiling: 4200 });
+    expect(shape.normalizeProject({ pinned: false }, existing).pinned_at).toBeNull();
+    expect(shape.normalizeProject({ pinned: true }, existing).pinned_at).toBeInstanceOf(Date);
+    expect(() => shape.normalizeProject({ budget: { working: '$5,000' } }, existing)).toThrow(/above the approval ceiling/);
+  });
+
+  it('normalises specs and materials, and keeps the kind on a patch', () => {
+    expect(shape.normalizeItem({ kind: 'material', label: 'Fence posts', value: '5–7', unit: 'posts', costLow: '150', costHigh: 260 }))
+      .toMatchObject({ kind: 'material', status: 'pending', value: '5–7', cost_low: 150, cost_high: 260 });
+    const existing = shape.toItem({ uuid: 'i', kind: 'spec', ordinal: 0, label: 'Gate location', value: null, unit: null, status: 'pending', cost_low: null, cost_high: null, note: null, confirmed_at: null });
+    expect(shape.normalizeItem({ kind: undefined, status: 'confirmed' }, existing)).toMatchObject({ kind: 'spec', label: 'Gate location', status: 'confirmed' });
+    expect(() => shape.normalizeItem({ label: 'x', status: 'maybe' })).toThrow(/Item status/);
+    expect(() => shape.normalizeItem({ label: ' ' })).toThrow(/label/);
+  });
+
+  it('writes the new columns only when a patch mentions them', async () => {
+    const pool = require('../../helpers/db');
+    const conn = { beginTransaction: jest.fn(), commit: jest.fn(), rollback: jest.fn(), release: jest.fn(), query: jest.fn() };
+    pool.getConnection.mockResolvedValue(conn);
+    const row = { id: 7, uuid: 'p', title: 'Side yard', status: 'planning', priority: 4, conditions: '[]', serves: '[]', visibility: 'private' };
+    conn.query.mockImplementation(async (sql) => (sql.startsWith('SELECT * FROM athena_project') ? [[row]] : sql.startsWith('SELECT area') ? [[]] : [{}]));
+    await projects.update(1, 'p', { priority: 5 });
+    const plain = conn.query.mock.calls.find(([sql]) => sql.startsWith('UPDATE athena_project'))[0];
+    expect(plain).not.toMatch(/pinned_at|budget_working|ref_code/);
+    conn.query.mockClear();
+    await projects.update(1, 'p', { pinned: true, budget: { working: 3200 } });
+    const plan = conn.query.mock.calls.find(([sql]) => sql.startsWith('UPDATE athena_project'))[0];
+    expect(plan).toMatch(/pinned_at = \?/);
+    expect(plan).toMatch(/budget_working = \?, budget_ceiling = \?, budget_note = \?/);
+    expect(plan).not.toMatch(/ref_code/);
+  });
+});
+
 describe('rank', () => {
   const base = { status: 'ready', effectiveStatus: 'ready', priority: 3, primaryArea: 'home', serves: [], hardDeadline: null };
   const now = Date.parse('2026-10-13T12:00:00Z');
@@ -112,6 +149,23 @@ describe('rank', () => {
     const r = rank(all, now);
     expect(r.get('a').score).toBeNull();
     expect(r.get('b').score).toBe(30);
+  });
+
+  it('puts a project moved to the front above everything, newest pin first, and not once it is closed', () => {
+    const all = {
+      projects: [
+        { ...base, uuid: 'crit', priority: 5, hardDeadline: '2026-10-14' },
+        { ...base, uuid: 'old', priority: 1, pinnedAt: '2026-10-01T00:00:00Z' },
+        { ...base, uuid: 'new', priority: 1, pinnedAt: '2026-10-25T00:00:00Z' },
+        { ...base, uuid: 'shut', status: 'done', effectiveStatus: 'done', pinnedAt: '2026-10-26T00:00:00Z' },
+      ],
+      concerns: [], charters: [],
+    };
+    const r = rank(all, now);
+    expect(r.get('new').score).toBeGreaterThan(r.get('old').score);
+    expect(r.get('old').score).toBeGreaterThan(r.get('crit').score);
+    expect(r.get('new').why[0]).toBe('you moved it to the front');
+    expect(r.get('shut').score).toBeNull();
   });
 
   it('maps for Right Now with the old scorer shape', () => {

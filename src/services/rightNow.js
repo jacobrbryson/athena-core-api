@@ -28,7 +28,8 @@ const llm = require("./llm");
 const dashboard = require("./dashboard");
 const places = require("./places");
 const projectStore = require("./projects");
-const { forRightNow } = require("./projects/rank");
+const { forRightNow, heldForRightNow } = require("./projects/rank");
+const execution = require("./projects/execution");
 const weather = require("./weather");
 const readCache = require("./readCache");
 const incidents = require("./pulsepoint/watch");
@@ -183,6 +184,9 @@ function scorePlace({ usable, sky, distanceMi }) {
  * below the projects that can.
  */
 function projectCandidates(projects, window, wet) {
+	// Finishing beats starting: a new project's step gives way to a ready step
+	// on work already active, unless the engine flagged it as worth it anyway.
+	const activeReady = projects.some((p) => p.stepUuid && !p.startsNew);
 	return projects
 		.filter((p) => p.status === "todo" || p.status === "in_progress")
 		.map((p) => {
@@ -202,10 +206,13 @@ function projectCandidates(projects, window, wet) {
 			}
 			if (wet && p.indoor === true) score += 15;
 			if (wet && p.indoor === false) score -= 20;
+			if (p.startsNew && activeReady) score -= 15;
 			return {
 				id: `project:${p.uuid}`,
 				kind: "project",
 				title: p.title,
+				// Set when this is the project's next ready step rather than the whole project.
+				...(p.stepUuid ? { projectTitle: p.projectTitle, stepUuid: p.stepUuid, reasons: p.reasons || [], startsNew: !!p.startsNew } : {}),
 				area: p.area,
 				detail: p.detail,
 				status: p.status,
@@ -214,11 +221,32 @@ function projectCandidates(projects, window, wet) {
 				indoor: p.indoor,
 				dueDate: p.dueDate,
 				fitsWindow: fits,
+				// Too big for this window: still offered, as the first of a few sittings.
+				multiSession: p.effortMinutes != null && window.freeMinutes != null && !fits,
 				score,
 			};
 		})
 		.sort((a, b) => b.score - a.score)
 		.slice(0, 6);
+}
+
+/**
+ * Blocker follow-ups whose check-back date has come: a short, concrete thing
+ * to do (call the permit office, check the delivery). One per blocked step per
+ * review date - the engine's key - so the same one is never two candidates.
+ */
+function followUpCandidates(followUps) {
+	return (followUps || []).slice(0, 3).map((f) => ({
+		id: `followup:${f.stepUuid}`,
+		kind: "followup",
+		title: f.action,
+		projectTitle: f.projectTitle,
+		detail: `"${f.stepTitle}" is waiting${f.blockedOn ? ` on ${f.blockedOn}` : ""}${f.waitingOn ? ` (${f.waitingOn})` : ""}.`,
+		followUpKey: f.key,
+		effortMinutes: 15,
+		fitsWindow: true,
+		score: 46 + Math.min(f.overdueDays, 7) * 2,
+	}));
 }
 
 /**
@@ -343,7 +371,11 @@ const PROMPT = (sheet) =>
 	`that is genuinely different in kind (outdoors vs. at home vs. work vs. ` +
 	`rest).\n\n` +
 	`Candidate kinds: "place" is a saved place checked open right now; ` +
-	`"project" is a house project from their list; "goal" is something they ` +
+	`"project" is the next ready step of a project on their list (projectTitle ` +
+	`names the project and reasons say why that step can be done now) or, with ` +
+	`no projectTitle, a whole project that has no steps; "followup" is checking ` +
+	`on something a project step is waiting on, now that its check-back date has ` +
+	`come; "goal" is something they ` +
 	`told Athena they want to do; "work" is an assigned ticket; "rest" means ` +
 	`their body has not recovered.\n\n` +
 	`How to choose:\n` +
@@ -356,7 +388,13 @@ const PROMPT = (sheet) =>
 	`- If nothing outdoors is open or the weather has ruled it out, the lead is ` +
 	`something at home, and say plainly why the outdoor option is not on.\n` +
 	`- Low recovery after a hard week is a reason to pick the lighter option, ` +
-	`not a reason to say nothing.\n\n` +
+	`not a reason to say nothing.\n` +
+	`- Prefer finishing over starting: a project step with "startsNew": true ` +
+	`begins a new project; choose it over a ready step of active work only for a ` +
+	`clear reason. "multiSession": true means it won't finish in this window, so ` +
+	`say it's a first sitting.\n` +
+	`- heldProjects are stuck; never offer them as doable, but you may say what ` +
+	`would unstick one in the why.\n\n` +
 	`Write like someone who knows them, in plain sentences, no exclamation ` +
 	`marks and no cheerleading. Say the reason, not the data.\n\n` +
 	`Return JSON:\n` +
@@ -392,6 +430,8 @@ function fallback(candidates, window) {
 		rest: () => "Take it easy today",
 		work: () => `Make progress on ${lead.issueKey}`,
 		goal: () => `A step on ${lead.title.toLowerCase()}`,
+		followup: () => `Check on ${lead.projectTitle}`,
+		...(lead.projectTitle ? { project: () => `Next on ${lead.projectTitle}: ${lead.title}` } : {}),
 	};
 	const headline = (headlines[lead.kind] || (() => `Good window for ${lead.title.toLowerCase()}`))();
 	const why = (c) => {
@@ -410,9 +450,11 @@ function fallback(candidates, window) {
 		}
 		if (c.kind === "work") return [c.status, c.dueDate ? `due ${c.dueDate}` : null].filter(Boolean).join(" · ") || "Assigned to you.";
 		if (c.kind === "goal") return c.detail || "One of your goals.";
+		if (c.kind === "followup") return c.detail;
 		const bits = [];
-		if (c.effortMinutes) bits.push(`about ${hoursLabel(c.effortMinutes)}`);
-		if (c.status === "in_progress") bits.push("already started");
+		if (c.reasons?.length) bits.push(c.reasons[0]);
+		if (c.effortMinutes) bits.push(`about ${hoursLabel(c.effortMinutes)}${c.multiSession ? ", a first sitting" : ""}`);
+		if (c.status === "in_progress" && !c.reasons?.length) bits.push("already started");
 		if (c.priority === "high") bits.push("high priority");
 		return bits.join(" · ") || "On your list.";
 	};
@@ -428,7 +470,7 @@ function fallback(candidates, window) {
  * candidates, never the raw provider payloads and never anything that would
  * let it answer from outside this window.
  */
-function describe({ window, candidates, ruledOut, readiness, timeZone, projectCount, homeSky }) {
+function describe({ window, candidates, ruledOut, readiness, timeZone, projectCount, homeSky, held = [] }) {
 	const now = new Date();
 	return {
 		localTime: new Intl.DateTimeFormat("en-US", {
@@ -445,6 +487,7 @@ function describe({ window, candidates, ruledOut, readiness, timeZone, projectCo
 		candidates: candidates.map((c) => ({ ...c, confirmedAt: undefined })),
 		ruledOut: ruledOut.map((r) => ({ id: r.id, title: r.title, activity: r.activity, reason: r.reason })),
 		projectsOnList: projectCount,
+		heldProjects: held.slice(0, 4).map((h) => ({ title: h.title, reason: h.reason, unblock: h.unblock })),
 	};
 }
 
@@ -485,18 +528,23 @@ async function getRightNow(profileId, user) {
 	const weekday = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short" }).format(new Date());
 	const workHours = !/Sat|Sun/.test(weekday) && localHour >= 8 && localHour < 18;
 
-	const [placeList, projects, goals, home] = await Promise.all([
+	const [placeList, projectPlan, goals, home] = await Promise.all([
 		places.list(profileId, { timeZone }).catch((err) => {
 			console.warn("[rightNow] places unavailable:", err.message);
 			return [];
 		}),
-		projectStore.getAll(profileId).then((all) => forRightNow(all.projects)).catch((err) => {
+		projectStore.getAll(profileId).then((all) => {
+			const plan = execution.getExecutionPlan(all, { prefs: all.prefs, freeMinutes: window.freeMinutes });
+			return { list: forRightNow(all.projects, new Date(), plan), held: heldForRightNow(all.projects, plan), followUps: plan.followUps };
+		}).catch((err) => {
 			console.warn("[rightNow] projects unavailable:", err.message);
-			return [];
+			return { list: [], held: [], followUps: [] };
 		}),
 		savedGoals(profileId),
 		incidents.listPlaces(profileId).then((list) => list.find((p) => p.enabled) || null).catch(() => null),
 	]);
+	const projects = projectPlan.list;
+	const held = projectPlan.held.slice(0, 4);
 	if (window.freeMinutes === 0) {
 		return empty(window, `You're in ${window.busyWith} right now.`);
 	}
@@ -534,7 +582,8 @@ async function getRightNow(profileId, user) {
 	const candidates = [
 		...openPlaces,
 		...projectOptions,
-		...goalCandidates(goals, projects.map((p) => p.title)),
+		...followUpCandidates(projectPlan.followUps),
+		...goalCandidates(goals, projects.map((p) => p.projectTitle || p.title)),
 		...workCandidates(summary?.jira?.data?.issues, window, { workHours }),
 		...(rest ? [rest] : []),
 	];
@@ -547,13 +596,15 @@ async function getRightNow(profileId, user) {
 					? "Tell me a goal, or add a place or a house project, and I'll tell you what fits your day."
 					: "Nothing on your lists fits the time you have."),
 			ruledOut: ruledOut.map((r) => ({ id: r.id, title: r.title, reason: r.reason, url: r.url })),
+			held,
 		};
 	}
 
 	const base = fallback(candidates, window);
-	const sheet = describe({ window, candidates, ruledOut, readiness, timeZone, projectCount: projects.length, homeSky });
+	const sheet = describe({ window, candidates, ruledOut, readiness, timeZone, projectCount: projects.length, homeSky, held });
 	const shape = {
 		window,
+		held,
 		ruledOut: ruledOut.map((r) => ({ id: r.id, title: r.title, reason: r.reason, url: r.url })),
 		generatedAt: new Date().toISOString(),
 	};
@@ -564,7 +615,7 @@ async function getRightNow(profileId, user) {
 		// cache that never once hit. What actually changes the answer is which
 		// candidates exist, how they scored, and roughly how much time is left.
 		const key = readCache.hash([
-			"right-now-v2",
+			"right-now-v3",
 			candidates.map((c) => `${c.id}:${c.score}`).join(","),
 			ruledOut.map((r) => r.id).join(","),
 			window.freeMinutes === null ? "open" : Math.round(window.freeMinutes / 15),
@@ -601,6 +652,6 @@ function invalidate(profileId) {
 
 module.exports = {
 	getRightNow, invalidate, openWindow, scorePlace,
-	placeCandidates, projectCandidates, fallback, hoursLabel,
+	placeCandidates, projectCandidates, followUpCandidates, fallback, hoursLabel,
 	goalCandidates, workCandidates, restCandidate,
 };
