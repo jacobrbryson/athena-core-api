@@ -55,6 +55,27 @@ describe("summarizeCalls", () => {
 		expect(s.byEndpoint.orc).toMatchObject({ calls: 3, errors: 1 });
 		expect(s.byTask.eval).toBeUndefined();
 	});
+
+	// "embed 95% errored" got a plan to "check token limits" for two weeks when
+	// every failure read "Guardian access or owner approval required".
+	test("keeps the commonest error messages, with provider JSON reduced to code and message", () => {
+		const denied = "Guardian access or owner approval required";
+		const credits = '{"error":{"code":402,"message":"Your prepayment credits are depleted. Please go to AI Studio","status":"PAYMENT_REQUIRED"}}';
+		const s = summarizeCalls([
+			row({ task: "embed", outcome: "error", error: denied }),
+			row({ task: "embed", outcome: "error", error: denied }),
+			row({ task: "embed", outcome: "error", error: credits }),
+			row({ task: "embed" }),
+			row({ task: "critique", outcome: "invalid", error: "no verdict" }),
+		]);
+		expect(s.byTask.embed.topErrors).toEqual([
+			{ message: denied, count: 2 },
+			{ message: "402 Your prepayment credits are depleted. Please go to AI Studio", count: 1 },
+		]);
+		expect(s.byEndpoint.gemini.topErrors[0]).toEqual({ message: denied, count: 2 });
+		expect(s.byTask.critique.topInvalid).toEqual([{ message: "no verdict", count: 1 }]);
+		expect(s.byTask.embed.errorMessages).toBeUndefined();
+	});
 });
 
 describe("collectMetrics", () => {
@@ -89,6 +110,25 @@ describe("ruleFindings", () => {
 		});
 		expect(f.map((x) => x.area)).toEqual(expect.arrayContaining(["reliability", "infra"]));
 		expect(f.every((x) => x.severity === "high")).toBe(true);
+	});
+
+	test("error findings quote what the failures said", () => {
+		const topErrors = [{ message: "Guardian access or owner approval required", count: 210 }];
+		const f = ruleFindings({
+			metrics: {
+				models: {
+					last24h: {
+						available: true,
+						byTask: { embed: { calls: 220, ok: 10, errors: 210, errorRate: 0.955, invalid: 0, invalidRate: 0, fallbackRate: 0, tiers: { frontier: 10 }, topErrors } },
+						byEndpoint: { gemini: { calls: 979, errors: 284, errorRate: 0.29, topErrors } },
+					},
+				},
+			},
+			evals: {},
+			config: { orcwoodCount: 1 },
+		});
+		expect(f.find((x) => x.key === "task:embed:errors").evidence).toBe('210/220 calls in 24h; top errors: "Guardian access or owner approval required" ×210');
+		expect(f.find((x) => x.key === "endpoint:gemini").evidence).toContain('"Guardian access or owner approval required" ×210');
 	});
 
 	test("a strong local model is a promotion opportunity; a weak one is flagged", () => {

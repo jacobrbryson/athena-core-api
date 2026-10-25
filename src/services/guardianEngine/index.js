@@ -30,6 +30,7 @@ const protocols = require("./protocols");
 const weatherRisk = require("./weatherRisk");
 const observe = require("./observe");
 const { CHECKS, unknownText, escalationText } = require("./checks");
+const reports = require("./reports");
 const { runTransition, incidentTransition, INCIDENT_ACTIVE } = require("./states");
 
 /** One household per deployment today (the Eufy bridge's). Every row carries it. */
@@ -48,6 +49,9 @@ function createEngine(overrides = {}) {
 		store: defaultStore,
 		push: () => require("../push"),
 		weather: (place, config, opts) => weatherRisk.assess(place, config, opts),
+		tonight: (place, config, opts) => weatherRisk.tonight(place, config, opts),
+		/** Stranger sightings between two times, one per visit (sightings log, migration 0083). */
+		overnightStrangers: (from, to) => deps.store.overnightStrangers(from, to),
 		homePlace: (profileId, placeUuid) => require("../weatherAlerts").homePlace(profileId, placeUuid),
 		allowedIds: () => require("../eufyBridge").authorizedProfileIds().map(Number),
 		cameraNames: async () => {
@@ -133,6 +137,21 @@ function createEngine(overrides = {}) {
 		const before = (await store.getProtocols(HOUSEHOLD)).find((r) => r.protocolId === protocolId);
 		const enabled = typeof body.enabled === "boolean" ? body.enabled : !!before?.enabled;
 		await store.saveProtocol(HOUSEHOLD, protocolId, { version: def.version, enabled, config, updatedBy: profileId, now });
+		// A booked sweep or morning report follows a changed time: its day stays,
+		// its hour moves (the occurrence key is the day, so it can't be booked twice).
+		if (protocolId === "nightly_sweep") {
+			for (const run of await store.scheduledRuns(HOUSEHOLD, protocolId)) {
+				const day = /(\d{4}-\d{2}-\d{2})$/.exec(run.occurrence_key)?.[1];
+				const time = run.trigger_kind === "schedule" ? config.schedule.time : run.trigger_kind === "report" ? config.reports.morningTime : null;
+				if (!day || !time) continue;
+				const when = protocols.zonedInstant(day, time, config.schedule.timeZone);
+				if (when.getTime() === new Date(run.scheduled_for).getTime()) continue;
+				if (await store.updateRun(run.id, "scheduled", { scheduled_for: when })) {
+					await event("run_rescheduled", { run, actor: `profile:${profileId}`, detail: { from: run.scheduled_for, to: when }, now });
+					if (when > now) await Promise.resolve(deps.wake(when)).catch(() => false);
+				}
+			}
+		}
 		await event("config_changed", { actor: `profile:${profileId}`, detail: { protocolId, enabled, wasEnabled: !!before?.enabled }, now });
 		await store.audit(profileId, `guardian_config:${protocolId}:${enabled ? "on" : "off"}`);
 		return { protocolId, enabled, config };
@@ -164,8 +183,9 @@ function createEngine(overrides = {}) {
 		return { run, created };
 	}
 
-	async function planNightly(proto, now) {
-		const { time, timeZone } = proto.config.schedule;
+	/** Today's run at a local time, or tomorrow's once today's has gone by. */
+	async function planDaily(proto, now, { time, prefix, trigger, checks }) {
+		const { timeZone } = proto.config.schedule;
 		const today = protocols.localDateOf(now, timeZone);
 		const at = protocols.zonedInstant(today, time, timeZone);
 		// Tonight's, unless tonight's time has already gone by (a protocol enabled
@@ -176,7 +196,18 @@ function createEngine(overrides = {}) {
 			date = protocols.localDateOf(new Date(at.getTime() + 24 * 3_600_000), timeZone);
 			when = protocols.zonedInstant(date, time, timeZone);
 		}
-		return scheduleRun(proto, { occurrenceKey: date, trigger: "schedule", scheduledFor: when, checks: proto.def.checks, now });
+		return scheduleRun(proto, { occurrenceKey: `${prefix}${date}`, trigger, scheduledFor: when, checks, now });
+	}
+
+	const planNightly = (proto, now) => planDaily(proto, now, { time: proto.config.schedule.time, prefix: "", trigger: "schedule", checks: proto.def.checks });
+	/** The 6 AM report: a run with nothing to look at, only a night to sum up. */
+	const planMorning = (proto, now) => planDaily(proto, now, { time: proto.config.reports.morningTime, prefix: "morning:", trigger: "report", checks: [] });
+
+	/** Reports need no camera, so whoever plans (job or service) sends them. */
+	async function runReports(now) {
+		for (const run of await store.dueRuns({ now, householdId: HOUSEHOLD })) {
+			if (run.trigger_kind === "report") await claimAndExecute(run);
+		}
 	}
 
 	async function riskFor(all, now) {
@@ -235,6 +266,14 @@ function createEngine(overrides = {}) {
 			if (Number(run.household_id) !== HOUSEHOLD) continue;
 			const proto = all[run.protocol_id];
 			if (!proto) continue;
+			// A morning report hours late is not worth sending; it lapses, recorded.
+			if (run.trigger_kind === "report") {
+				const lapse = run.state === "scheduled" ? "expired" : "failed";
+				if (await store.updateRun(run.id, run.state, { state: runTransition(run.state, lapse), finished_at: now, lease_until: null, summary: { missed: true, reason: "report_not_sent" } })) {
+					await event("report_missed", { run, now });
+				}
+				continue;
+			}
 			const to = run.state === "scheduled" ? "unknown" : "failed";
 			runTransition(run.state, to);
 			const moved = await store.updateRun(run.id, run.state, { state: to, finished_at: now, lease_until: null, summary: { ...(run.summary || {}), missed: true, reason: run.state === "scheduled" ? "dispatch_unavailable" : "attempts_exhausted" } });
@@ -285,11 +324,16 @@ function createEngine(overrides = {}) {
 		if (all.nightly_sweep.enabled) {
 			const r = await planNightly(all.nightly_sweep, now);
 			if (r.created) out.scheduled.push(r.run.uuid);
+			if (all.nightly_sweep.config.reports.morning) {
+				const m = await planMorning(all.nightly_sweep, now);
+				if (m.created) out.scheduled.push(m.run.uuid);
+			}
 		}
 		const storm = await planStorm(all, now).catch((error) => (console.warn("[guardian] storm plan failed", error?.message), null));
 		if (storm) out.storm = { atRisk: !!storm.risk?.atRisk, known: !!storm.risk?.known, created: !!storm.created };
 		await planRechecks(all, now);
 		await planEscalations(all, now);
+		await runReports(now);
 		await planMissed(all, now);
 		await retryNotifications(all, now);
 		await purgeEvidence();
@@ -383,13 +427,20 @@ function createEngine(overrides = {}) {
 			return { state: "suppressed" };
 		}
 		const simulated = !!run.simulated || proto.config.simulation || !!scenario;
+		if (run.trigger_kind === "report") return executeMorning(run, proto, all, simulated);
 		const tz = tzOf(all);
 		const cameraNames = scenario ? new Map() : await deps.cameraNames().catch(() => new Map());
 		const incidentOfRun = run.incident_id ? await store.getIncident(run.incident_id) : null;
+		// The evening sweep with its report: every problem it finds goes out in
+		// the one report push (collected in `deferred`), never as a second push.
+		const reportMode = run.protocol_id === "nightly_sweep" && run.trigger_kind === "schedule" && !!proto.config.reports?.evening;
+		const deferred = reportMode ? [] : null;
 		let risk = null;
-		if ((run.checks || []).includes("patio_umbrella")) {
+		let tonight = null;
+		if ((run.checks || []).includes("patio_umbrella") || reportMode) {
 			const ok = await authorize("weather.read", {}, { run, config: proto.config });
 			risk = ok.allowed ? await riskFor(all, now).catch(() => null) : null;
+			if (ok.allowed && reportMode) tonight = await tonightFor(all, now).catch(() => null);
 		}
 		const ctx = { trigger: run.trigger_kind, clock: protocols.clockIn(now, tz), risk, weatherPhrase: risk?.atRisk ? weatherRisk.phrase(risk) : null };
 		const results = [];
@@ -406,7 +457,10 @@ function createEngine(overrides = {}) {
 			// The umbrella is looked at under weather risk, when the weather is
 			// unreadable (unknown is not calm), or to follow up an open incident.
 			const applies = !check.appliesWhen || check.appliesWhen(ctx) || risk === null || risk?.known === false || !!incidentOfRun;
-			if (!applies) {
+			// On a calm night the evening report still looks, so it can say it
+			// checked — but what it sees there is information, not an incident.
+			const informational = !applies && reportMode;
+			if (!applies && !informational) {
 				for (const subject of subjects) {
 					await recordObservation(run, check, subject, { status: "not_applicable", reason: "no weather risk", source: "weather", fresh: true }, now, 1, null);
 					results.push({ check: checkId, subject: subject.key, status: "not_applicable", reason: "no_weather_risk" });
@@ -418,16 +472,28 @@ function createEngine(overrides = {}) {
 				const safe = obs.status === check.safe;
 				let evidence = null;
 				// Keep the frame only when it is the reason someone will be told.
-				if (!safe && obs.jpeg && !simulated) {
+				if (!safe && !informational && obs.jpeg && !simulated) {
 					evidence = await Promise.resolve(deps.saveEvidence({ profileId: operatorOf(proto), serial: subject.serial, cameraName: obs.cameraName, jpeg: obs.jpeg })).catch(() => null);
 				}
 				const obsId = await recordObservation(run, check, subject, obs, deps.now(), attempt, evidence);
 				const out = safe
-					? await settle(proto, run, check, subject, obs, obsId, ctx, { simulated })
-					: await raise(proto, run, check, subject, obs, obsId, ctx, deps.now(), { simulated });
+					? await settle(proto, run, check, subject, obs, obsId, ctx, { simulated, defer: deferred })
+					: informational
+						? { notified: false, incident: null }
+						: await raise(proto, run, check, subject, obs, obsId, ctx, deps.now(), { simulated, defer: deferred });
 				notified = notified || out.notified;
-				results.push({ check: checkId, subject: subject.key, status: obs.status, reason: obs.reason || null, confidence: obs.confidence, incident: out.incident?.uuid || null });
+				results.push({ check: checkId, subject: subject.key, status: obs.status, reason: obs.reason || null, confidence: obs.confidence, incident: out.incident?.uuid || null, ...(informational ? { informational: true } : {}) });
 			}
+		}
+		let report = null;
+		if (reportMode) {
+			const nameOf = (checkId, key) => subjectsFor(all, checkId, run).find((s) => s.key === key)?.name || key;
+			const garage = results.filter((r) => r.check === "garage_door" && r.subject).map((r) => ({ name: nameOf("garage_door", r.subject), status: r.status, reason: r.reason }));
+			const u = results.find((r) => r.check === "patio_umbrella" && r.subject);
+			const words = reports.eveningText({ garage, umbrella: u ? { name: nameOf("patio_umbrella", u.subject), status: u.status, reason: u.reason } : null, risk, tonight });
+			const deliveries = await sendReport(proto, run, { kind: "evening", ...words, deferred, now: deps.now(), simulated });
+			report = { kind: "evening", text: words.text, deliveries };
+			notified = notified || deliveries.length > 0;
 		}
 		// A test leaves nothing open behind it: its incidents live under their own
 		// keys (so they can never swallow a real alert) and close when it ends.
@@ -440,11 +506,11 @@ function createEngine(overrides = {}) {
 			}
 		}
 		await store.updateRun(run.id, "observing", { state: runTransition("observing", "evaluating") });
-		const looked = results.filter((r) => r.status !== "not_applicable");
+		const looked = results.filter((r) => r.status !== "not_applicable" && !r.informational);
 		const unsafe = looked.some((r) => CHECKS[r.check] && r.status === CHECKS[r.check].unsafe);
 		const unknown = looked.some((r) => CHECKS[r.check] && r.status !== CHECKS[r.check].safe && r.status !== CHECKS[r.check].unsafe);
 		const verdict = unsafe ? "attention_required" : unknown ? "unknown" : "safe";
-		const summary = { results, risk: risk ? { atRisk: risk.atRisk, known: risk.known, reasons: risk.reasons, earliestAt: risk.earliestAt } : null, simulated };
+		const summary = { results, risk: risk ? { atRisk: risk.atRisk, known: risk.known, reasons: risk.reasons, earliestAt: risk.earliestAt } : null, simulated, ...(report ? { report } : {}) };
 		await store.updateRun(run.id, "evaluating", { state: runTransition("evaluating", verdict), finished_at: deps.now(), lease_until: null, summary });
 		let finalState = verdict;
 		if (notified && verdict !== "safe") {
@@ -452,20 +518,99 @@ function createEngine(overrides = {}) {
 			finalState = "notified";
 		}
 		await event("run_finished", { run, detail: { state: finalState, results: results.map(({ check, subject, status, reason }) => ({ check, subject, status, reason })) }, now: deps.now() });
-		return { state: finalState, results, simulated };
+		return { state: finalState, results, simulated, ...(report ? { report } : {}) };
+	}
+
+	async function tonightFor(all, now) {
+		const storm = all.storm_umbrella;
+		const operator = operatorOf(storm.updatedBy ? storm : all.nightly_sweep);
+		const place = operator ? await Promise.resolve(deps.homePlace(operator, storm.config.placeUuid)).catch(() => null) : null;
+		return deps.tonight(place, storm.config.weather || {}, { now });
+	}
+
+	/**
+	 * The morning report: what happened since last evening's sweep. It looks at
+	 * nothing new — it reads what the engine recorded overnight (and any
+	 * strangers the sightings log has), so it costs no camera battery.
+	 */
+	async function executeMorning(run, proto, all, simulated) {
+		const now = deps.now();
+		if (!proto.config.reports?.morning) {
+			await store.updateRun(run.id, "observing", { state: runTransition("observing", "suppressed"), finished_at: now, lease_until: null, summary: { reason: "morning_report_off" } });
+			return { state: "suppressed" };
+		}
+		const tz = tzOf(all);
+		const runs = await store.recentRuns(HOUSEHOLD, 80);
+		const lastSweep = runs.find((r) => r.protocol_id === "nightly_sweep" && r.trigger_kind === "schedule" && new Date(r.scheduled_for) < now && now - new Date(r.scheduled_for) < 20 * 3_600_000);
+		const from = lastSweep ? new Date(lastSweep.scheduled_for) : new Date(now.getTime() - 12 * 3_600_000);
+		const inWindow = (v) => v && new Date(v) >= from && new Date(v) <= now;
+		const incidents = (await store.recentIncidents(HOUSEHOLD, 50)).filter(
+			(i) => !i.context?.simulated && (INCIDENT_ACTIVE.includes(i.state) || inWindow(i.first_detected_at) || inWindow(i.resolved_at))
+		);
+		const missed = runs.filter((r) => r.summary?.missed && r.trigger_kind !== "report" && inWindow(r.scheduled_for));
+		const strangers = await Promise.resolve(deps.overnightStrangers(from, now)).catch(() => null);
+		const words = reports.morningText({ from, to: now, incidents, missed, strangers, clock: (d) => protocols.clockIn(d, tz) });
+		await store.updateRun(run.id, "observing", { state: runTransition("observing", "evaluating") });
+		const deliveries = await sendReport(proto, run, { kind: "morning", ...words, deferred: [], now, simulated });
+		const report = { kind: "morning", text: words.text, deliveries };
+		await store.updateRun(run.id, "evaluating", { state: runTransition("evaluating", "safe"), finished_at: deps.now(), lease_until: null, summary: { results: [], report, window: { from, to: now }, simulated } });
+		return { state: "safe", report };
+	}
+
+	/**
+	 * One report push per approved recipient. Any incident the sweep found
+	 * rides in it: its alert rows are written with the report's delivery, so
+	 * dedupe, escalation and the failed-delivery retry all work as for any alert.
+	 */
+	async function sendReport(proto, run, { kind, text, severity, deferred = [], now, simulated }) {
+		const allowedIds = deps.allowedIds();
+		const recipients = recipientsFor(proto);
+		if (!recipients.length) await event("no_recipients", { run, detail: { kind }, now });
+		const deliveries = [];
+		for (const profileId of recipients) {
+			const decision = await authorize("notify.household", { recipientApproved: allowedIds.includes(Number(profileId)) }, { run, config: proto.config });
+			if (!decision.allowed) continue;
+			let status = "simulated";
+			let nudgeUuid = null;
+			let result = null;
+			if (!simulated) {
+				nudgeUuid = randomUUID();
+				try {
+					await store.insertNudge({ uuid: nudgeUuid, profileId, dedupeKey: `report:${run.uuid}`, urgency: severity === "urgent" ? "high" : "normal", text, facts: { run: run.uuid, kind }, ttlSeconds: NUDGE_TTL_S });
+					result = await deps.push().deliverNudge(profileId, { uuid: nudgeUuid, text, trigger_id: "guardian" });
+				} catch (error) {
+					result = { sent: 0, failed: 1, error: error?.message || "delivery failed" };
+				}
+				status = Number(result?.sent || 0) > 0 ? "sent" : result?.skipped && !result?.failed ? "in_app" : "failed";
+			}
+			deliveries.push({ profileId: Number(profileId), status });
+			for (const d of deferred) {
+				const { notification, created } = await store.insertNotification({ incident_id: d.incident.id, household_id: HOUSEHOLD, profile_id: profileId, kind: d.kind, status, text, created_at: now });
+				if (created) await store.updateNotification(notification.id, { attempts: simulated ? 0 : 1, nudge_uuid: nudgeUuid, result: result ? { sent: result.sent || 0, failed: result.failed || 0, skipped: result.skipped || null, error: result.error || null } : null, last_attempt_at: now });
+			}
+		}
+		if (deliveries.length) {
+			for (const d of deferred) {
+				const fresh = await store.getIncident(d.incident.id);
+				if (fresh?.state === "open") await store.updateIncident(fresh.id, "open", { state: incidentTransition("open", "notified") });
+			}
+		}
+		await event(`report_${kind}`, { run, detail: { deliveries, severity, incidents: deferred.length }, now });
+		return deliveries;
 	}
 
 	/** Fresh evidence of the safe state: resolve an open incident for it, if there is one. */
 	const openKeyOf = (check, subject, simulated) => `${simulated ? "sim:" : ""}${check.id}:${subject.key}`;
 
-	async function settle(proto, run, check, subject, obs, obsId, ctx, { simulated = false } = {}) {
+	async function settle(proto, run, check, subject, obs, obsId, ctx, { simulated = false, defer = null } = {}) {
 		const incident = await store.openIncident(HOUSEHOLD, openKeyOf(check, subject, simulated));
 		if (!incident) return { notified: false, incident: null };
 		const wasTold = incident.state === "notified";
 		await closeIncident(incident, "resolved", { resolution: "verified_safe", now: deps.now(), observationId: obsId, detail: { confidence: obs.confidence, run: run.uuid } });
 		let notified = false;
-		// The people who were alerted and haven't said they're on it hear that it's fixed.
-		if (wasTold) {
+		// The people who were alerted and haven't said they're on it hear that
+		// it's fixed — in the evening report itself, when there is one.
+		if (wasTold && !defer) {
 			const text = check.resolvedText(subject, obs, ctx);
 			notified = (await notify(proto, incident, "resolved", text, "advisory", { now: deps.now(), simulated: !!run.simulated || proto.config.simulation, onlyAlerted: true })).count > 0;
 		}
@@ -473,7 +618,7 @@ function createEngine(overrides = {}) {
 	}
 
 	/** An unsafe or unverifiable result: open an incident, or update the open one. */
-	async function raise(proto, run, check, subject, obs, obsId, ctx, now, { simulated = false } = {}) {
+	async function raise(proto, run, check, subject, obs, obsId, ctx, now, { simulated = false, defer = null } = {}) {
 		const unsafe = obs.status === check.unsafe;
 		const condition = unsafe ? check.unsafe : obs.status === "offline" ? "offline" : "unknown";
 		const severity = unsafe ? check.severity(ctx) : check.id === "garage_door" ? "urgent" : "advisory";
@@ -500,6 +645,10 @@ function createEngine(overrides = {}) {
 			// Same unresolved condition: no one is told again. A condition that
 			// became known ("unknown" → "open") is new information, told once.
 			if (conditionChanged && unsafe) {
+				if (defer) {
+					defer.push({ incident: { ...existing, ...patch }, kind: "update", severity });
+					return { notified: false, incident: existing };
+				}
 				const r = await notify(proto, { ...existing, ...patch }, "update", text, severity, { now, simulated });
 				return { notified: r.count > 0, incident: existing };
 			}
@@ -527,6 +676,10 @@ function createEngine(overrides = {}) {
 		if (!created) return { notified: false, incident };
 		await event("incident_opened", { run, incident, detail: { condition, severity, confidence: obs.confidence, reason: obs.reason || null, simulated }, now });
 		if (!simulated) await Promise.resolve(deps.wake(recheckAt)).catch(() => false);
+		if (defer) {
+			defer.push({ incident, kind: "alert", severity });
+			return { notified: false, incident };
+		}
 		const r = await notify(proto, incident, "alert", text, severity, { now, simulated });
 		return { notified: r.count > 0, incident };
 	}
@@ -635,7 +788,11 @@ function createEngine(overrides = {}) {
 	async function runDue({ now = deps.now() } = {}) {
 		const planned = await plan({ now });
 		const ran = [];
-		for (const run of await store.dueRuns({ now: deps.now(), householdId: HOUSEHOLD })) {
+		// The scheduled sweep first: when a storm watch comes due in the same
+		// pass, it then finds the umbrella already in the evening report rather
+		// than sending a second push about it.
+		const due = (await store.dueRuns({ now: deps.now(), householdId: HOUSEHOLD })).sort((a, b) => (b.trigger_kind === "schedule") - (a.trigger_kind === "schedule"));
+		for (const run of due) {
 			const out = await claimAndExecute(run);
 			if (out.claimed) ran.push({ run: run.uuid, protocol: run.protocol_id, state: out.state });
 		}
@@ -756,7 +913,7 @@ function createEngine(overrides = {}) {
 	}
 
 	function publicRun(r) {
-		return { id: r.uuid, protocol: r.protocol_id, trigger: r.trigger_kind, state: r.state, scheduledFor: iso(r.scheduled_for), startedAt: iso(r.started_at), finishedAt: iso(r.finished_at), attempts: Number(r.attempts), simulated: r.simulated === 1 || r.simulated === true, results: r.summary?.results || [], risk: r.summary?.risk || null, missed: !!r.summary?.missed, reason: r.summary?.reason || null };
+		return { id: r.uuid, protocol: r.protocol_id, trigger: r.trigger_kind, state: r.state, scheduledFor: iso(r.scheduled_for), startedAt: iso(r.started_at), finishedAt: iso(r.finished_at), attempts: Number(r.attempts), simulated: r.simulated === 1 || r.simulated === true, results: r.summary?.results || [], risk: r.summary?.risk || null, missed: !!r.summary?.missed, reason: r.summary?.reason || null, report: r.summary?.report ? { kind: r.summary.report.kind, text: r.summary.report.text, deliveries: r.summary.report.deliveries || [] } : null };
 	}
 
 	/**
@@ -782,10 +939,13 @@ function createEngine(overrides = {}) {
 		]);
 		// Tests are shown in the activity list but never count toward status or health.
 		const real = (r) => !(r.simulated === 1 || r.simulated === true);
-		const sweeps = runs.filter((r) => r.protocol_id === "nightly_sweep" && r.state !== "scheduled" && real(r));
+		const isReport = (r) => r.trigger_kind === "report";
+		const sweeps = runs.filter((r) => r.protocol_id === "nightly_sweep" && r.state !== "scheduled" && real(r) && !isReport(r));
 		const lastSweep = sweeps[0] || null;
-		const nextSweep = runs.filter((r) => r.protocol_id === "nightly_sweep" && r.state === "scheduled").sort((a, b) => new Date(a.scheduled_for) - new Date(b.scheduled_for))[0] || null;
-		const week = runs.filter((r) => now - new Date(r.scheduled_for) <= 7 * 86_400_000 && r.state !== "scheduled" && real(r));
+		const pending = (pred) => runs.filter((r) => r.protocol_id === "nightly_sweep" && r.state === "scheduled" && pred(r)).sort((a, b) => new Date(a.scheduled_for) - new Date(b.scheduled_for))[0] || null;
+		const nextSweep = pending((r) => !isReport(r));
+		const nextMorning = pending(isReport);
+		const week = runs.filter((r) => now - new Date(r.scheduled_for) <= 7 * 86_400_000 && r.state !== "scheduled" && real(r) && !isReport(r));
 		const count = (pred) => week.filter(pred).length;
 		const anyOn = all.nightly_sweep.enabled || all.storm_umbrella.enabled;
 		const status = !anyOn ? "off" : active.some((i) => i.condition_status !== "unknown" && i.condition_status !== "offline") ? "attention" : active.length ? "unverified" : lastSweep && lastSweep.state === "safe" ? "secure" : lastSweep ? "unverified" : "waiting";
@@ -801,6 +961,7 @@ function createEngine(overrides = {}) {
 			protocols: Object.values(all).map((p) => ({ id: p.def.id, label: p.def.label, describe: p.def.describe, version: p.def.version, enabled: p.enabled, config: p.config, updatedBy: p.updatedBy, updatedAt: iso(p.updatedAt), policy: policy.describe(p.config.autonomy) })),
 			lastSweep: lastSweep ? publicRun(lastSweep) : null,
 			nextSweepAt: iso(nextSweep?.scheduled_for),
+			nextMorningReportAt: iso(nextMorning?.scheduled_for),
 			incidents: incidents.map((i) => publicIncident(i, notes, observations)),
 			runs: runs.slice(0, 12).map(publicRun),
 			events: events.map((e) => ({ kind: e.kind, actor: e.actor, at: iso(e.at), detail: e.detail })),

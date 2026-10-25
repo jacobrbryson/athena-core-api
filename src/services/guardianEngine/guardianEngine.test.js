@@ -34,6 +34,7 @@ function harness({ weather = calm, sweep = {}, storm = {}, allowed = [1, 2], swe
 		allowedIds: () => allowed,
 		push: () => ({ deliverNudge: async (profileId, nudge) => (deliveries.push({ profileId, ...nudge }), typeof pushResult.value === "function" ? pushResult.value(profileId) : pushResult.value) }),
 		weather: jest.fn(async () => (typeof weather === "function" ? weather() : weather)),
+		tonight: jest.fn(async () => ({ known: true, calm: true, phrase: null })),
 		homePlace: async () => ({ latitude: 35.6, longitude: -80.9 }),
 		cameraNames: async () => new Map([["GARAGECAM1", "Garage"], ["BACKCAM1", "Backyard"]]),
 		saveEvidence: jest.fn(async () => "evidence-uuid"),
@@ -50,7 +51,8 @@ function harness({ weather = calm, sweep = {}, storm = {}, allowed = [1, 2], swe
 	const engine = createEngine(deps);
 	const save = (id, enabled, config) => store.saveProtocol(1, id, { version: 1, enabled, config: protocols.normalizeConfig(id, config), updatedBy: 1, now: clock.now });
 	const ready = Promise.all([
-		save("nightly_sweep", sweepOn, { garageDoors: [GARAGE], ...sweep }),
+		// The alert-path tests run the sweep at 10 PM without reports; the report tests turn them on.
+		save("nightly_sweep", sweepOn, { garageDoors: [GARAGE], schedule: { time: "22:00", timeZone: "America/New_York" }, reports: { evening: false, morning: false }, ...sweep }),
 		save("storm_umbrella", stormOn, { umbrella: UMBRELLA, ...storm }),
 	]);
 	const advance = (iso) => (clock.now = at(iso));
@@ -534,6 +536,146 @@ describe("simulation", () => {
 	});
 });
 
+describe("evening and morning reports", () => {
+	const EVENING = "2026-10-23T21:00:05-04:00";
+	const REPORTS = { schedule: { time: "21:00", timeZone: "America/New_York" }, reports: { evening: true, morning: true, morningTime: "06:00" } };
+	const reportHarness = (opts = {}) => harness({ ...opts, sweep: { ...REPORTS, ...(opts.sweep || {}) } });
+	const evening = async (h) => {
+		h.advance("2026-10-23T20:59:00-04:00");
+		await h.engine.plan();
+		h.advance(EVENING);
+		return h.engine.runDue();
+	};
+
+	test("all clear at 9 PM: one push each, after really looking at the doors and the umbrella", async () => {
+		const h = reportHarness();
+		await h.ready;
+		await evening(h);
+		expect(h.deps.observeDeps.snapshot).toHaveBeenCalledWith("BACKCAM1"); // looked, though the night is calm
+		expect(h.deliveries.map((d) => d.profileId).sort()).toEqual([1, 2]);
+		expect(h.deliveries[0].text).toBe("All clear — I checked the garage door and the patio umbrella, and the weather looks peaceful tonight.");
+		expect(incidentsOf(h)).toHaveLength(0);
+		expect(h.db.runs.find((r) => r.occurrence_key === "2026-10-23").summary.report).toMatchObject({ kind: "evening" });
+	});
+
+	test("all clear, but the forecast isn't peaceful", async () => {
+		const h = reportHarness();
+		await h.ready;
+		h.deps.tonight.mockResolvedValue({ known: true, calm: false, phrase: "possible snow storms from around 11 PM" });
+		await evening(h);
+		expect(h.deliveries[0].text).toBe("All clear — I checked the garage door and the patio umbrella, but there's possible snow storms from around 11 PM tonight.");
+	});
+
+	test("problems go out as ONE alert report, and still open incidents that escalate and recheck", async () => {
+		const h = reportHarness({ weather: windy("2026-10-23T23:00:00-04:00") });
+		await h.ready;
+		h.answers.garage_door = { visible: true, state: "open", confidence: 0.95 };
+		h.answers.patio_umbrella = { visible: true, state: "up", confidence: 0.9 };
+		await evening(h);
+		// Two problems, two people: two pushes, not six.
+		expect(h.deliveries).toHaveLength(2);
+		expect(h.deliveries[0].text).toBe("ALERT: Your garage door is still open and the patio umbrella needs to be brought down before gusts up to 35 mph around 7 PM.");
+		expect(incidentsOf(h).map((i) => i.state)).toEqual(["notified", "notified"]);
+		expect(notesOf(h, "alert").map((n) => n.status)).toEqual(["sent", "sent", "sent", "sent"]);
+		// The incidents behave like any other: one reminder if no one acknowledges.
+		h.advance("2026-10-23T21:31:00-04:00");
+		await h.engine.plan();
+		expect(notesOf(h, "escalation").length).toBeGreaterThan(0);
+	});
+
+	test("an umbrella left up on a calm night is mentioned, not alarmed about", async () => {
+		const h = reportHarness();
+		await h.ready;
+		h.answers.patio_umbrella = { visible: true, state: "up", confidence: 0.9 };
+		const out = await evening(h);
+		expect(out.ran[0].state).toBe("safe");
+		expect(h.deliveries[0].text).toMatch(/^All clear .* peaceful tonight\. The patio umbrella is up, but the night looks calm\.$/);
+		expect(incidentsOf(h)).toHaveLength(0);
+	});
+
+	test("a door it couldn't verify is a heads-up, never 'all clear'", async () => {
+		const h = reportHarness();
+		await h.ready;
+		h.deps.observeDeps.snapshot.mockImplementation(async (serial) => (serial === "GARAGECAM1" ? { ok: false, reason: "device_unavailable" } : { ok: true, jpeg: Buffer.from("x"), capturedAt: new Date(h.clock.now.getTime()) }));
+		await evening(h);
+		expect(h.deliveries[0].text).toMatch(/^Heads up: I couldn't verify the garage door — the camera isn't responding\. The weather looks peaceful tonight\.$/);
+		expect(h.deliveries[0].text).not.toMatch(/All clear/);
+	});
+
+	test("a report that fails to send is retried as the incident's alert", async () => {
+		const h = reportHarness();
+		await h.ready;
+		h.answers.garage_door = { visible: true, state: "open", confidence: 0.95 };
+		h.pushResult.value = (id) => (id === 1 ? { sent: 0, failed: 1 } : { sent: 1, failed: 0 });
+		await evening(h);
+		const mine = () => h.db.notes.find((n) => n.profile_id === 1 && n.kind === "alert");
+		expect(mine()).toMatchObject({ status: "failed", attempts: 1 });
+		h.pushResult.value = { sent: 1, failed: 0 };
+		h.advance("2026-10-23T21:05:00-04:00");
+		await h.engine.plan();
+		expect(mine()).toMatchObject({ status: "sent", attempts: 2 });
+		expect(h.deliveries.at(-1).text).toMatch(/^ALERT: Your garage door is still open/);
+	});
+
+	test("6 AM after a quiet night: sent by the planner alone, no camera woken", async () => {
+		const h = reportHarness();
+		await h.ready;
+		await evening(h);
+		const shots = h.deps.observeDeps.snapshot.mock.calls.length;
+		h.advance("2026-10-24T06:00:30-04:00");
+		await h.engine.plan(); // the job — it can't reach a camera, and doesn't need one
+		expect(h.deps.observeDeps.snapshot.mock.calls.length).toBe(shots);
+		expect(h.deliveries.at(-1).text).toBe("Good morning, I hope you slept well through the night. All quiet — nothing happened overnight.");
+		expect(h.db.runs.find((r) => r.occurrence_key === "morning:2026-10-24")).toMatchObject({ state: "safe", trigger_kind: "report" });
+	});
+
+	test("6 AM after an eventful night says what happened", async () => {
+		const h = reportHarness();
+		await h.ready;
+		h.answers.garage_door = { visible: true, state: "open", confidence: 0.95 };
+		await evening(h);
+		h.answers.garage_door = { visible: true, state: "closed", confidence: 0.97 };
+		h.advance("2026-10-23T21:16:00-04:00");
+		await h.engine.runDue();
+		h.db.strangers = { count: 2, firstAt: at("2026-10-24T02:14:00-04:00"), camera: "Doorbell" };
+		h.advance("2026-10-24T06:00:30-04:00");
+		await h.engine.plan();
+		expect(h.deliveries.at(-1).text).toBe(
+			"Good morning, I hope you slept well through the night. Overnight: the garage door was open at 9:00 PM, fixed by 9:16 PM and the cameras saw a stranger 2 times (first at 2:14 AM on the Doorbell)."
+		);
+	});
+
+	test("6 AM with the door still open says so", async () => {
+		const h = reportHarness();
+		await h.ready;
+		h.answers.garage_door = { visible: true, state: "open", confidence: 0.95 };
+		await evening(h);
+		h.advance("2026-10-24T06:00:30-04:00");
+		await h.engine.plan();
+		expect(h.deliveries.at(-1).text).toMatch(/Overnight: the garage door is still open \(since 9:00 PM\)\.$/);
+	});
+
+	test("changing the times moves what's already booked", async () => {
+		const h = reportHarness();
+		await h.ready;
+		h.advance("2026-10-23T12:00:00-04:00");
+		await h.engine.plan();
+		const current = h.db.protocols.find((p) => p.protocol_id === "nightly_sweep").config;
+		await h.engine.saveConfig(1, "nightly_sweep", { config: { ...current, schedule: { ...current.schedule, time: "21:30" }, reports: { ...current.reports, morningTime: "06:45" } } });
+		const when = (key) => new Date(h.db.runs.find((r) => r.occurrence_key === key).scheduled_for).toISOString();
+		expect(when("2026-10-23")).toBe(at("2026-10-23T21:30:00-04:00").toISOString());
+		expect(when("morning:2026-10-24")).toBe(at("2026-10-24T06:45:00-04:00").toISOString());
+		expect(h.db.protocols.find((p) => p.protocol_id === "nightly_sweep").enabled).toBe(true);
+	});
+
+	test("morning report off: nothing booked for 6 AM", async () => {
+		const h = reportHarness({ sweep: { reports: { evening: true, morning: false } } });
+		await h.ready;
+		await h.engine.plan();
+		expect(h.db.runs.some((r) => r.trigger_kind === "report")).toBe(false);
+	});
+});
+
 describe("protocol plumbing", () => {
 	test("a disabled protocol books nothing", async () => {
 		const h = harness({ sweepOn: false, stormOn: false });
@@ -559,7 +701,8 @@ describe("protocol plumbing", () => {
 	test("config cleaning refuses junk and fills defaults", () => {
 		expect(() => protocols.normalizeConfig("nightly_sweep", { garageDoors: [{ name: "x", serial: "../../etc" }] })).toThrow(/camera id/);
 		const c = protocols.normalizeConfig("nightly_sweep", { schedule: { time: "25:00" }, retries: 99, minConfidence: 0.1 });
-		expect(c).toMatchObject({ schedule: { time: "22:00" }, retries: 2, minConfidence: 0.75 });
+		expect(c).toMatchObject({ schedule: { time: "21:00" }, retries: 2, minConfidence: 0.75, reports: { evening: true, morning: true, morningTime: "06:00" } });
+		expect(protocols.normalizeConfig("nightly_sweep", { reports: { morningTime: "6:30", evening: false } }).reports).toEqual({ evening: false, morning: true, morningTime: "06:30" });
 		expect(protocols.normalizeConfig("storm_umbrella", { weather: { gustMph: 30 } }).weather.gustMph).toBe(30);
 	});
 

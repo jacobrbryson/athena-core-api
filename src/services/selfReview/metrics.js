@@ -26,6 +26,34 @@ async function section(fn) {
 	}
 }
 
+/**
+ * One error string, short enough to group and quote. A provider's JSON body
+ * becomes "402 Your prepayment credits are depleted…" instead of a truncated
+ * blob, so the same failure groups as one line night after night.
+ */
+function errorKey(error) {
+	const text = String(error || "").replace(/\s+/g, " ").trim();
+	if (!text) return "(no message)";
+	const code = text.match(/"code"\s*:\s*(\d+)/)?.[1];
+	const message = text.match(/"message"\s*:\s*"([^"]+)/)?.[1];
+	const key = code && message ? `${code} ${message}` : text;
+	return key.length > 120 ? `${key.slice(0, 119)}…` : key;
+}
+
+function countError(map, error) {
+	const key = errorKey(error);
+	map[key] = (map[key] || 0) + 1;
+}
+
+const TOP_ERRORS = 3;
+
+function topOf(map) {
+	return Object.entries(map)
+		.sort(([, a], [, b]) => b - a)
+		.slice(0, TOP_ERRORS)
+		.map(([message, count]) => ({ message, count }));
+}
+
 /** Aggregate llm_call_log rows into per-task and per-endpoint stats. */
 function summarizeCalls(rows) {
 	const byTask = {};
@@ -43,20 +71,28 @@ function summarizeCalls(rows) {
 		// before the next tier answered. "40% errors" hid that every one of
 		// orcwood-dev's failures on 09-27 was a 60s wait, some of them in chat.
 		const timedOut = r.outcome === "error" && isTimeout(r.error);
-		const t = (byTask[r.task] ||= { calls: 0, ok: 0, errors: 0, timeouts: 0, invalid: 0, fallbackServed: 0, latencies: [], tiers: {} });
+		const t = (byTask[r.task] ||= { calls: 0, ok: 0, errors: 0, timeouts: 0, invalid: 0, fallbackServed: 0, latencies: [], tiers: {}, errorMessages: {}, invalidMessages: {} });
 		t.calls += 1;
 		if (r.outcome === "ok") {
 			t.ok += 1;
 			t.latencies.push(Number(r.latency_ms));
 			t.tiers[r.tier] = (t.tiers[r.tier] || 0) + 1;
 			if (Number(r.attempt) > 0) t.fallbackServed += 1;
-		} else if (r.outcome === "invalid") t.invalid += 1;
-		else t.errors += 1;
+		} else if (r.outcome === "invalid") {
+			t.invalid += 1;
+			countError(t.invalidMessages, r.error);
+		} else {
+			t.errors += 1;
+			countError(t.errorMessages, r.error);
+		}
 		if (timedOut) t.timeouts += 1;
 
-		const e = (byEndpoint[r.endpoint_id] ||= { tier: r.tier, calls: 0, errors: 0, timeouts: 0, timeoutWaitMs: 0, timeoutsByTask: {}, invalid: 0, latencies: [] });
+		const e = (byEndpoint[r.endpoint_id] ||= { tier: r.tier, calls: 0, errors: 0, timeouts: 0, timeoutWaitMs: 0, timeoutsByTask: {}, invalid: 0, latencies: [], errorMessages: {} });
 		e.calls += 1;
-		if (r.outcome === "error") e.errors += 1;
+		if (r.outcome === "error") {
+			e.errors += 1;
+			countError(e.errorMessages, r.error);
+		}
 		if (timedOut) {
 			e.timeouts += 1;
 			e.timeoutWaitMs += Number(r.latency_ms) || 0;
@@ -72,6 +108,15 @@ function summarizeCalls(rows) {
 		o.p95Ms = percentile(lat, 95);
 		o.errorRate = o.calls ? +(o.errors / o.calls).toFixed(3) : 0;
 		o.invalidRate = o.calls ? +(o.invalid / o.calls).toFixed(3) : 0;
+		// The commonest messages, not just the counts: "embed 95% errored" got a
+		// plan to "check token limits" for two weeks when every one of them read
+		// "Guardian access or owner approval required" (10-07 to 10-25).
+		o.topErrors = topOf(o.errorMessages);
+		delete o.errorMessages;
+		if (o.invalidMessages) {
+			o.topInvalid = topOf(o.invalidMessages);
+			delete o.invalidMessages;
+		}
 		return o;
 	};
 	for (const k of Object.keys(byTask)) {
@@ -326,4 +371,4 @@ async function collectMetrics({ embeddingSpace }) {
 	return { models: { last24h, baseline7d }, chat, memory, initiative, news, gaps };
 }
 
-module.exports = { collectMetrics, summarizeCalls, percentile };
+module.exports = { collectMetrics, summarizeCalls, percentile, errorKey };

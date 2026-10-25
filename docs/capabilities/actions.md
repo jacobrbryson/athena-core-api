@@ -42,6 +42,11 @@ Things I can propose today:
   lives with it. Heat stays between 50 °F and 80 °F and cooling between
   62 °F and 88 °F. I won't try one that's offline or not reporting. See
   [nest.md](nest.md).
+- **Change the Guardian report times** — move the nightly sweep and its
+  evening report, move the morning report, or turn either report on or off.
+  Only for adults authorized for household security, and only those settings;
+  turning the sweep off, cameras and who is told stay in Settings. See
+  [guardian.md](guardian.md).
 - **Save a fact** to my long-term memory, when you ask me to remember
   something specific.
 - **Log a family health update** — start a health watch ("Thomas has a

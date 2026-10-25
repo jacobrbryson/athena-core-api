@@ -172,6 +172,28 @@ recipients, retry within limits, verify resolution.
   A simulated run's incidents use `sim:`-prefixed open keys and are closed
   when the run ends, so a test "open garage" can never dedupe away a real one.
 
+## Reports (owner, 2026-10-25)
+
+- **Evening report.** With `reports.evening` on, the nightly sweep (default
+  now 21:00) always pushes one summary, `reports.eveningText()`. Problems it
+  finds still open incidents, but `raise()` collects them (`defer`) instead of
+  notifying; `sendReport()` sends the one report push per recipient and writes
+  each incident's alert rows with that delivery, so dedupe, escalation and the
+  failed-delivery retry are unchanged. The umbrella is looked at every night
+  for the report; without weather risk an "up" umbrella is informational, not
+  an incident. When a storm watch comes due in the same pass, the sweep runs
+  first so the umbrella isn't pushed twice.
+- **Morning report.** `reports.morning` books a `trigger_kind='report'` run
+  (`morning:<date>`, default 06:00) with no checks. It reads the night from
+  the store — incidents opened, fixed or still open, missed runs, and stranger
+  sightings counted per visit — and needs no camera, so the planner (job or
+  service) sends it. A morning report more than the overdue window late lapses.
+- **Wording is code**, not a model: every claim maps to an observation, and
+  an unverified door is a "Heads up", never "All clear".
+- **Changing times** moves already-booked runs (their day stays). From chat,
+  `set_guardian_reports` (action layer, never standing, household-security
+  adults only) changes the two times and the two report switches — nothing else.
+
 ## Persistence and idempotency (migration 0093)
 
 - `athena_guard_protocol` — per-household config, enabled flag, version.

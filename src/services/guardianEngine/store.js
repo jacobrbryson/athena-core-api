@@ -115,6 +115,30 @@ async function nextScheduledRun(householdId, protocolId, now) {
 	return rowOf(rows[0], ["checks", "summary"]);
 }
 
+/** Runs of a protocol still waiting for their time, so a changed schedule can move them. */
+async function scheduledRuns(householdId, protocolId) {
+	const [rows] = await pool.query("SELECT * FROM athena_guard_run WHERE household_id = ? AND protocol_id = ? AND state = 'scheduled' ORDER BY scheduled_for", [householdId, protocolId]);
+	return rows.map((r) => rowOf(r, ["checks", "summary"]));
+}
+
+/**
+ * Strangers the cameras logged between two times (sightings, migration 0083),
+ * counted per visit — frames closer than half an hour apart are one stranger —
+ * so a person on the porch for ten frames is "once", not "ten times".
+ */
+async function overnightStrangers(from, to) {
+	const [rows] = await pool.query("SELECT seen_at, device_name FROM athena_sighting WHERE label = 'stranger' AND seen_at BETWEEN ? AND ? ORDER BY seen_at LIMIT 200", [from, to]);
+	if (!rows.length) return null;
+	let count = 0;
+	let last = -Infinity;
+	for (const r of rows) {
+		const t = new Date(r.seen_at).getTime();
+		if (t - last > 30 * 60_000) count += 1;
+		last = t;
+	}
+	return { count, firstAt: new Date(rows[0].seen_at), camera: rows[0].device_name || null };
+}
+
 async function insertObservation(o) {
 	const [result] = await pool.query(
 		`INSERT INTO athena_guard_observation
@@ -288,7 +312,7 @@ async function clearEvidence(uuid) {
 }
 
 module.exports = {
-	getProtocols, saveProtocol, insertRun, claimRun, dueRuns, overdueRuns, getRun, updateRun, recentRuns, nextScheduledRun,
+	getProtocols, saveProtocol, insertRun, scheduledRuns, overnightStrangers, claimRun, dueRuns, overdueRuns, getRun, updateRun, recentRuns, nextScheduledRun,
 	insertObservation, observationsForRun, lastGoodObservation, observationsByIds, profileNames,
 	openIncident, insertIncident, getIncident, incidentByUuid, updateIncident, activeIncidents, recentIncidents,
 	insertNotification, updateNotification, retryableNotifications, notificationsFor,

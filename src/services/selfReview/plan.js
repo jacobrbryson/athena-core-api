@@ -170,6 +170,12 @@ function flakyCases(record) {
 	return Object.values(record).filter((x) => x.failed > 0 && x.failed < x.ran);
 }
 
+/** `; top errors: "…" ×n, …` — what the failures said, so the plan names a cause. */
+function quoteErrors(top, label = "top errors") {
+	if (!top?.length) return "";
+	return `; ${label}: ${top.map((e) => `"${e.message}" ×${e.count}`).join(", ")}`;
+}
+
 /** Tasks and endpoints with too few calls tonight for their rates to mean anything. */
 function thinSamples(metrics) {
 	const m24 = metrics.models?.last24h;
@@ -196,10 +202,10 @@ function ruleFindings({ metrics, evals, config, evalHistory = [], maintenance = 
 	} else {
 		for (const [task, t] of Object.entries(m24.byTask)) {
 			if (t.calls >= 10 && t.errorRate > THRESHOLDS.errorRate) {
-				add("high", "models", `${task}: ${(t.errorRate * 100).toFixed(1)}% of calls errored`, `${t.errors}/${t.calls} calls in 24h`, `task:${task}:errors`);
+				add("high", "models", `${task}: ${(t.errorRate * 100).toFixed(1)}% of calls errored`, `${t.errors}/${t.calls} calls in 24h${quoteErrors(t.topErrors)}`, `task:${task}:errors`);
 			}
 			if (t.calls >= 10 && t.invalidRate > THRESHOLDS.errorRate) {
-				add("medium", "models", `${task}: ${(t.invalidRate * 100).toFixed(1)}% of outputs failed validation`, `${t.invalid}/${t.calls} calls; the next tier had to answer`, `task:${task}:invalid`);
+				add("medium", "models", `${task}: ${(t.invalidRate * 100).toFixed(1)}% of outputs failed validation`, `${t.invalid}/${t.calls} calls; the next tier had to answer${quoteErrors(t.topInvalid, "top reasons")}`, `task:${task}:invalid`);
 			}
 			if (t.ok >= 10 && t.fallbackRate > THRESHOLDS.fallbackRate) {
 				add("medium", "models", `${task}: ${(t.fallbackRate * 100).toFixed(0)}% of answers came from a fallback tier`, "the preferred tier is unreliable for this task", `task:${task}:fallback`);
@@ -227,7 +233,7 @@ function ruleFindings({ metrics, evals, config, evalHistory = [], maintenance = 
 					`each waited ~${waited}s before the next tier answered (${tasks})${chat ? ` — ${chat} of them were people waiting on a chat reply` : ""}; other errors: ${e.errors - timeouts}. A hung server still answers the /models probe, so check the inference process, not just that the box is up`,
 					`endpoint:${id}`
 				);
-			} else if (e.calls >= 5 && e.errorRate > 0.25) add("high", "infra", `Endpoint ${id} is failing`, `${(e.errorRate * 100).toFixed(0)}% errors over ${e.calls} calls`, `endpoint:${id}`);
+			} else if (e.calls >= 5 && e.errorRate > 0.25) add("high", "infra", `Endpoint ${id} is failing`, `${(e.errorRate * 100).toFixed(0)}% errors over ${e.calls} calls${quoteErrors(e.topErrors)}`, `endpoint:${id}`);
 		}
 	}
 
@@ -535,6 +541,7 @@ Rules for the plan — these override your instincts:
 - Findings with area "stuck" have been planned for several nights and never moved. Never put them in the plan. Turn each into ONE specific question in questionsForOwner that names the decision or action you need.
 - Alert triggers (${[...ALERT_TRIGGERS].join(", ")}) are judged on whether they reached someone, never on replies. Never propose pausing, muting, rate-limiting or sending fewer alerts; the owner removed every interruption budget on 2026-09-19.
 - An endpoint that is "hanging" (timeouts) is an operations problem on that machine; say what to check on it, not how to change a prompt.
+- When a finding quotes its top errors, the plan item's change must address what those messages say, naming the message. A generic "check the config/keys/limits" is wrong when the message already names the cause. "Guardian access or owner approval required" means the call was refused before it reached the provider — a caller running without an authorized identity, not an endpoint or model fault; ask the owner which job or caller it is rather than proposing to change access checks.
 - Every number you write must appear in the data below, with the same denominator. Don't restate or re-add counts.
 
 For previousPlanStatus, judge each of yesterday's items against tonight's numbers: "improved" or "worse" only when the metric the item named moved beyond noise on at least ${THRESHOLDS.minCallsToJudge} calls; "unchanged" when nothing relevant moved (including when nobody acted on it); "unknown" when the sample is too small or the item was about an intermittent eval.
@@ -683,4 +690,4 @@ function renderMarkdown({ date, metrics, evals, findings, plan, maintenance }) {
 	return L.join("\n");
 }
 
-module.exports = { findingKey, ruleFindings, writePlan, fallbackPlan, renderMarkdown, evalRecord, flakyCases, thinSamples, stuckItems, THRESHOLDS, PLAN_SCHEMA, ALERT_TRIGGERS };
+module.exports = { quoteErrors, findingKey, ruleFindings, writePlan, fallbackPlan, renderMarkdown, evalRecord, flakyCases, thinSamples, stuckItems, THRESHOLDS, PLAN_SCHEMA, ALERT_TRIGGERS };

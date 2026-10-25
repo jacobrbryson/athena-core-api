@@ -31,6 +31,15 @@ test('checks the year, VIN, mileage and dates', () => {
   expect(() => normalize({ name: 'x', odometer: 5, odometerOn: '2999-01-01' })).toThrow('future');
 });
 
+test('keeps the registration state, number and inspection station', () => {
+  expect(normalize({ name: 'x', registrationState: 'va', registrationNumber: ' 12345678 ', inspectionStation: 'Jiffy Lube' }))
+    .toMatchObject({ registrationState: 'VA', registrationNumber: '12345678', inspectionStation: 'Jiffy Lube' });
+  expect(normalize({ name: 'x' })).toMatchObject({ registrationState: null, registrationNumber: null, inspectionStation: null });
+  expect(() => normalize({ name: 'x', registrationState: 'V1' })).toThrow('two letters');
+  // A patch that leaves them out keeps what is stored.
+  expect(normalize({ notes: 'hi' }, { name: 'x', registrationState: 'VA', registrationNumber: 'R1' })).toMatchObject({ registrationState: 'VA', registrationNumber: 'R1' });
+});
+
 test('a reading without a date is dated today, and no reading has no date', () => {
   expect(normalize({ name: 'x', odometer: 100 }).odometerOn).toBe(today);
   expect(normalize({ name: 'x', odometerOn: '2026-01-01' }).odometerOn).toBeNull();

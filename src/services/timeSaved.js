@@ -31,6 +31,13 @@ const MINUTES = {
   look_through_camera: 0, // no fair hand-done equivalent to price yet
   remind_at_place: 0, // nothing you'd do by hand that this replaces, so nothing to price
   remind_at_time: 0, // the same reminder you'd set on your phone, so nothing to price
+  set_guardian_reports: 0, // changing a setting; nothing done by hand that this replaces
+  // Per approval, not per item: a batch stores grocery_items, which the count
+  // below doesn't read, so ten items count once — an undercount, on purpose.
+  update_grocery_list: 0.5, // open Keep, find the list, type it in
+  set_thermostat: 0.5, // open the Nest app, pick the thermostat, change it
+  add_project: 1, // create the project and type its title, area and first steps
+  update_project: 0.5, // open the project and tick, note or re-date it
   // Writing the bug up and finding the right file yourself. The debugging the
   // agents do is worth more, but how much varies too much to claim it.
   investigate_code: 5,

@@ -37,8 +37,11 @@ test('refresh looks up by the decoded car and counts only new recalls', async ()
   const fetchImpl = jest.fn(async (url) => (url.includes('vpic') ? ok({ Results: [{ Make: 'BMW', Model: 'X5', ModelYear: '2019' }] }) : ok(NHTSA)));
   pool.query
     .mockResolvedValueOnce([{ affectedRows: 1 }]) // store the decode
+    .mockResolvedValueOnce([[{ campaign: '20V123000' }]]) // already stored
     .mockResolvedValueOnce([{ affectedRows: 1 }]) // first recall: new
-    .mockResolvedValueOnce([{ affectedRows: 2 }]) // second: already known, updated
+    // Second: already known and unchanged. mysql2's FOUND_ROWS makes that
+    // report 1, same as an insert — it must still not count as added.
+    .mockResolvedValueOnce([{ affectedRows: 1 }])
     .mockResolvedValueOnce([{ affectedRows: 1 }]); // checked_at
   const out = await recalls.refreshVehicle({ id: 4, vin: '5UXCR6C56KLL12345', make: 'Bimmer', model: 'x5', year: 2019 }, { fetchImpl });
   expect(out).toEqual({ skipped: false, added: 1 });
@@ -47,7 +50,7 @@ test('refresh looks up by the decoded car and counts only new recalls', async ()
 
 test('without a VIN the vehicle row says what it is; without either it is skipped', async () => {
   const fetchImpl = jest.fn(async () => ok({ results: [] }));
-  pool.query.mockResolvedValue([{ affectedRows: 1 }]);
+  pool.query.mockResolvedValue([[]]);
   await recalls.refreshVehicle({ id: 4, vin: null, make: 'Honda', model: 'Odyssey', year: 2021 }, { fetchImpl });
   expect(fetchImpl.mock.calls[0][0]).toContain('make=Honda&model=Odyssey&modelYear=2021');
   fetchImpl.mockClear();
@@ -56,7 +59,11 @@ test('without a VIN the vehicle row says what it is; without either it is skippe
 });
 
 test('only the owner can mark a recall, and only with a known status', async () => {
-  await expect(recalls.setStatus(1, 'v', '18V918000', 'ignored')).rejects.toThrow(/done, not applicable, or open/);
+  await expect(recalls.setStatus(1, 'v', '18V918000', 'ignored')).rejects.toThrow(/acknowledged, repaired, not applicable, or open/);
+  pool.query.mockResolvedValueOnce([{ affectedRows: 1 }]);
+  await recalls.setStatus(1, 'v', '18V918000', 'acknowledged');
+  expect(pool.query.mock.calls[0][1][0]).toBe('acknowledged');
+  pool.query.mockClear();
   pool.query.mockResolvedValueOnce([{ affectedRows: 0 }]);
   await expect(recalls.setStatus(1, 'someone-elses', '18V918000', 'done')).rejects.toMatchObject({ status: 404 });
   expect(pool.query.mock.calls[0][1]).toEqual(['done', 1, 'someone-elses', '18V918000']);

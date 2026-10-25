@@ -58,6 +58,13 @@ function memoryStore({ names = {} } = {}) {
 		async recentRuns(h, limit = 20) {
 			return db.runs.filter((r) => r.household_id === h).sort((a, b) => t(b.scheduled_for) - t(a.scheduled_for) || b.id - a.id).slice(0, limit).map(copy);
 		},
+		async scheduledRuns(h, p) {
+			return db.runs.filter((r) => r.household_id === h && r.protocol_id === p && r.state === "scheduled").map(copy);
+		},
+		/** Tests set db.strangers = { count, firstAt, camera } to script the sightings log. */
+		async overnightStrangers() {
+			return db.strangers || null;
+		},
 		async nextScheduledRun(h, p, now) {
 			return copy(db.runs.filter((r) => r.household_id === h && r.protocol_id === p && r.state === "scheduled" && t(r.scheduled_for) >= t(now)).sort((a, b) => t(a.scheduled_for) - t(b.scheduled_for))[0]);
 		},

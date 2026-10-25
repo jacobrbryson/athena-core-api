@@ -17,7 +17,7 @@ const VPIC = "https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues";
 const RECALLS = "https://api.nhtsa.gov/recalls/recallsByVehicle";
 const TIMEOUT_MS = 15_000;
 const STALE_MS = 20 * 3_600_000;
-const STATUSES = ["open", "done", "not_applicable"];
+const STATUSES = ["open", "acknowledged", "done", "not_applicable"];
 
 const bad = (message, status = 400) => Object.assign(new Error(message), { status });
 const clip = (v, n) => (typeof v === "string" && v.trim() ? v.trim().slice(0, n) : null);
@@ -90,9 +90,14 @@ async function refreshVehicle(row, { fetchImpl } = {}) {
 	if (!who && row.year && row.make && row.model) who = { make: row.make, model: row.model, year: row.year };
 	if (!who) return { skipped: true, added: 0 };
 	const recalls = await lookup(who, { fetchImpl });
+	// Counted against what was already stored, not from affectedRows: mysql2
+	// connects with FOUND_ROWS, so an unchanged duplicate reports 1 just like a
+	// fresh insert — every nightly said "added 19" for the same 19 recalls.
+	const [known] = await pool.query("SELECT campaign FROM athena_vehicle_recall WHERE vehicle_id = ?", [row.id]);
+	const seen = new Set(known.map((k) => k.campaign));
 	let added = 0;
 	for (const r of recalls) {
-		const [result] = await pool.query(
+		await pool.query(
 			`INSERT INTO athena_vehicle_recall
 				(vehicle_id, campaign, component, summary, consequence, remedy, reported_on, park_it, park_outside)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -100,8 +105,10 @@ async function refreshVehicle(row, { fetchImpl } = {}) {
 				consequence = VALUES(consequence), remedy = VALUES(remedy), park_it = VALUES(park_it), park_outside = VALUES(park_outside)`,
 			[row.id, r.campaign, r.component, r.summary, r.consequence, r.remedy, r.reported_on, r.park_it, r.park_outside]
 		);
-		// 1 = inserted, 2 = updated an existing row (mysql2's ON DUPLICATE count).
-		if (result.affectedRows === 1) added += 1;
+		if (!seen.has(r.campaign)) {
+			seen.add(r.campaign);
+			added += 1;
+		}
 	}
 	await pool.query("UPDATE athena_property_vehicle SET recalls_checked_at = NOW() WHERE id = ?", [row.id]);
 	return { skipped: false, added };
@@ -160,7 +167,7 @@ async function forVehicles(ids) {
 	try {
 		const [rows] = await pool.query(
 			`SELECT * FROM athena_vehicle_recall WHERE vehicle_id IN (?)
-			 ORDER BY status = 'open' DESC, reported_on DESC, id DESC`,
+			 ORDER BY FIELD(status, 'open', 'acknowledged', 'done', 'not_applicable'), reported_on DESC, id DESC`,
 			[ids]
 		);
 		for (const r of rows) out.set(r.vehicle_id, [...(out.get(r.vehicle_id) || []), shape(r)]);
@@ -170,9 +177,9 @@ async function forVehicles(ids) {
 	return out;
 }
 
-/** The person marks one done, not applicable, or open again. */
+/** The person acknowledges one, marks it repaired (done) or not applicable, or opens it again. */
 async function setStatus(profileId, vehicleUuid, campaign, status) {
-	if (!STATUSES.includes(status)) throw bad("Mark it done, not applicable, or open.");
+	if (!STATUSES.includes(status)) throw bad("Mark it acknowledged, repaired, not applicable, or open.");
 	const [result] = await pool.query(
 		`UPDATE athena_vehicle_recall r JOIN athena_property_vehicle v ON v.id = r.vehicle_id
 		 SET r.status = ?, r.status_at = NOW() WHERE v.profile_id = ? AND v.uuid = ? AND r.campaign = ?`,

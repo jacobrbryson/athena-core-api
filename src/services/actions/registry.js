@@ -1788,6 +1788,88 @@ const ACTIONS = [
 			return { ref: params.project_uuid, detail: null };
 		},
 	},
+
+	{
+		id: "set_guardian_reports",
+		label: "Change the Guardian report times",
+		// Added on the owner's instruction (2026-10-25): "I or Athena should be
+		// able to configure" the 9 PM sweep report and the 6 AM morning report.
+		// Deliberately narrow: times and the two report switches only. It cannot
+		// turn the sweep off, change cameras, thresholds or who is told — those
+		// stay on the Guardian settings page — and never standing: it changes
+		// what the whole household hears.
+		provider: null,
+		consentType: "action_authority",
+		reversible: true,
+		standing: false,
+		availableTo: (profileId) => require("../eufyBridge").allowed(profileId),
+		describe:
+			"Change when the nightly Guardian sweep runs and sends its evening report (garage doors, umbrella, " +
+			"tonight's weather), when the morning report about the night is sent, or turn either report on or off. " +
+			"Times are the household's local time as 24-hour HH:MM. Propose it when they ask to move or stop " +
+			"those reports. It cannot turn the sweep itself off or change cameras or who is told.",
+		alternatives: "Turning the sweep off, cameras, weather limits and recipients are on Property → Security → Guardian → Settings.",
+		params: {
+			guardian_evening_time: "HH:MM, 24-hour local time for the sweep and its evening report. Only when changing it.",
+			guardian_morning_time: "HH:MM, 24-hour local time for the morning report. Only when changing it.",
+			guardian_evening_report: "on or off: send the evening report. Only when changing it.",
+			guardian_morning_report: "on or off: send the morning report. Only when changing it.",
+		},
+
+		async normalize(raw = {}, ctx = {}) {
+			if (!require("../eufyBridge").allowed(ctx.profileId)) throw invalid("Only adults authorized for household security can change Guardian reports");
+			const { clockTime } = require("../guardianEngine/protocols");
+			const given = (v) => v !== undefined && v !== null && v !== "";
+			const out = {};
+			for (const [name, key] of [["guardian_evening_time", "evening_time"], ["guardian_morning_time", "morning_time"]]) {
+				if (!given(raw[name])) continue;
+				const t = clockTime(raw[name]);
+				if (!t) throw invalid(`${key === "evening_time" ? "The evening" : "The morning"} time must be HH:MM in 24-hour time`);
+				out[name] = t;
+			}
+			for (const name of ["guardian_evening_report", "guardian_morning_report"]) {
+				if (!given(raw[name])) continue;
+				const v = String(raw[name]).toLowerCase();
+				if (v !== "on" && v !== "off") throw invalid('Say "on" or "off" for a report');
+				out[name] = v;
+			}
+			if (!Object.keys(out).length) throw invalid("Say which report time or switch to change");
+			return out;
+		},
+
+		summarize(p) {
+			const clock = (t) => {
+				const [h, m] = t.split(":").map(Number);
+				return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
+			};
+			const bits = [];
+			if (p.guardian_evening_time) bits.push(`run the nightly sweep and evening report at ${clock(p.guardian_evening_time)}`);
+			if (p.guardian_evening_report) bits.push(`turn the evening report ${p.guardian_evening_report}`);
+			if (p.guardian_morning_time) bits.push(`send the morning report at ${clock(p.guardian_morning_time)}`);
+			if (p.guardian_morning_report) bits.push(`turn the morning report ${p.guardian_morning_report}`);
+			return `Guardian: ${bits.join("; ")}`.slice(0, 500);
+		},
+
+		async execute(profileId, p) {
+			// Re-checked at execution: an allowlist change since the proposal wins.
+			if (!require("../eufyBridge").allowed(profileId)) throw new Error("Not authorized for household security");
+			const engine = require("../guardianEngine");
+			const sweep = (await engine.loadProtocols()).nightly_sweep;
+			const config = {
+				...sweep.config,
+				schedule: { ...sweep.config.schedule, ...(p.guardian_evening_time ? { time: p.guardian_evening_time } : {}) },
+				reports: {
+					...sweep.config.reports,
+					...(p.guardian_morning_time ? { morningTime: p.guardian_morning_time } : {}),
+					...(p.guardian_evening_report ? { evening: p.guardian_evening_report === "on" } : {}),
+					...(p.guardian_morning_report ? { morning: p.guardian_morning_report === "on" } : {}),
+				},
+			};
+			// enabled is left out on purpose: this never turns the sweep on or off.
+			await engine.saveConfig(profileId, "nightly_sweep", { config });
+			return { ref: "nightly_sweep", detail: null };
+		},
+	},
 ];
 
 // ---------------------------------------------------------------------------

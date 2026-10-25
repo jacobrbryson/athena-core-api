@@ -36,7 +36,14 @@ const PROTOCOLS = {
 		requires: ["camera"],
 		defaults: {
 			...COMMON,
-			schedule: { time: "22:00", timeZone: DEFAULT_TZ },
+			// 9 PM on the owner's choice (2026-10-25), with the evening report.
+			schedule: { time: "21:00", timeZone: DEFAULT_TZ },
+			/**
+			 * Owner, 2026-10-25: a push every evening at the sweep — all clear or
+			 * not — and a morning one about the night. The evening report carries
+			 * the sweep's own alerts, so a problem found at 9 PM is one push, not two.
+			 */
+			reports: { evening: true, morning: true, morningTime: "06:00" },
 			// Lights-out is the point; a sweep that waited for morning would be useless.
 			quiet: { from: 0, to: 0 },
 			/** A sweep not run within this of its time is reported as missed, never run late and silent. */
@@ -67,6 +74,11 @@ const bad = (message) => Object.assign(new Error(message), { status: 400 });
 const text = (v, max) => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : null);
 const SERIAL = /^[A-Za-z0-9_-]{4,40}$/;
 const KEY = /^[a-z0-9_-]{1,40}$/;
+/** "21:00" stays "21:00"; "9:05" becomes "09:05"; anything else is null. */
+function clockTime(v) {
+	const m = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(String(v || "").trim());
+	return m ? `${m[1].padStart(2, "0")}:${m[2]}` : null;
+}
 const int = (v, lo, hi, d) => {
 	const n = Number(v);
 	return Number.isInteger(n) && n >= lo && n <= hi ? n : d;
@@ -106,10 +118,15 @@ function normalizeConfig(protocolId, input = {}) {
 		simulation: input.simulation === true,
 	};
 	if (protocolId === "nightly_sweep") {
-		const time = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(input.schedule?.time || ""));
 		out.schedule = {
-			time: time ? time[0] : d.schedule.time,
+			time: clockTime(input.schedule?.time) || d.schedule.time,
 			timeZone: resolveTimeZone(input.schedule?.timeZone || d.schedule.timeZone),
+		};
+		const r = input.reports || {};
+		out.reports = {
+			evening: typeof r.evening === "boolean" ? r.evening : d.reports.evening,
+			morning: typeof r.morning === "boolean" ? r.morning : d.reports.morning,
+			morningTime: clockTime(r.morningTime) || d.reports.morningTime,
 		};
 		out.overdueAfterMinutes = int(input.overdueAfterMinutes, 5, 120, d.overdueAfterMinutes);
 		const doors = Array.isArray(input.garageDoors) ? input.garageDoors.slice(0, 6) : d.garageDoors;
@@ -183,4 +200,4 @@ function quietEnds(quiet, date, timeZone) {
 	return zonedInstant(tomorrow, `${String(quiet.to).padStart(2, "0")}:00`, timeZone);
 }
 
-module.exports = { PROTOCOLS, normalizeConfig, zonedInstant, localDateOf, localHourOf, clockIn, inQuiet, quietEnds, get: (id) => PROTOCOLS[id] || null };
+module.exports = { PROTOCOLS, normalizeConfig, clockTime, zonedInstant, localDateOf, localHourOf, clockIn, inQuiet, quietEnds, get: (id) => PROTOCOLS[id] || null };

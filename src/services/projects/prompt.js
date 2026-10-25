@@ -31,11 +31,14 @@ function vehicleLine(v) {
 	const bits = [
 		car && car !== v.name ? car : null,
 		v.color,
+		v.plate ? `plate ${v.plate}` : null,
+		v.registrationState || v.registrationNumber ? `registered${v.registrationState ? ` in ${v.registrationState}` : ""}${v.registrationNumber ? ` (registration no. ${v.registrationNumber})` : ""}` : null,
+		v.inspectionStation ? `inspected at ${v.inspectionStation}` : null,
 		v.odometer !== null ? `${v.odometer} mi as of ${v.odometerOn}` : null,
 		due.length ? `due: ${due.join(", ")}` : null,
 		v.service.length ? `latest work: ${v.service.map((s) => `${s.doneOn} ${s.what.slice(0, 120)}${s.odometer !== null ? ` at ${s.odometer} mi` : ""}`).join("; ")}` : null,
 		(v.recalls || []).length
-			? `open NHTSA recalls for this model year (not confirmed unrepaired on this car): ${v.recalls.map((r) => `${r.campaign} ${r.component || ""}${r.parkIt ? " — NHTSA says don't drive it" : r.parkOutside ? " — NHTSA says park outside" : ""}`.trim()).join("; ")}`
+			? `unrepaired NHTSA recalls for this model year (not confirmed on this car): ${v.recalls.map((r) => `${r.campaign} ${r.component || ""}${r.status === "acknowledged" ? " (they've seen it, not yet repaired)" : ""}${r.parkIt ? " — NHTSA says don't drive it" : r.parkOutside ? " — NHTSA says park outside" : ""}`.trim()).join("; ")}`
 			: null,
 	].filter(Boolean);
 	return `- "${v.name}"${bits.length ? ` (${bits.join("; ")})` : ""}${v.notes ? ` Their note: ${v.notes.slice(0, 200)}` : ""}`;

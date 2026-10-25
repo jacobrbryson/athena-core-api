@@ -108,10 +108,51 @@ async function assess(place, config = {}, { now = new Date(), read = {} } = {}) 
 	return out;
 }
 
+/**
+ * Tonight, in a phrase, for the evening report: from now until 7 AM local,
+ * the worst of what the hourly forecast says. { known, calm, phrase } —
+ * "possible snow", "thunderstorms around 11 PM and gusts up to 30 mph".
+ * Unreadable is { known: false }, never calm.
+ */
+async function tonight(place, config = {}, { now = new Date(), read = {} } = {}) {
+	const t = thresholdsOf(config);
+	const hourly = read.hourly || weather.hourlyRows;
+	if (!place || !Number.isFinite(Number(place.latitude)) || !Number.isFinite(Number(place.longitude))) return { known: false, calm: false, phrase: null };
+	const sky = await hourly(place.latitude, place.longitude).catch(() => null);
+	if (!sky?.hours?.length) return { known: false, calm: false, phrase: null };
+	const nowMs = now.getTime();
+	const hours = [];
+	for (const h of sky.hours) {
+		const at = weather.local(h.start);
+		if (!at || at.ms + 3_600_000 <= nowMs) continue;
+		// Stop at the first 7 AM after now.
+		if (at.hour === 7 && at.ms > nowMs) break;
+		if (at.ms - nowMs > 14 * 3_600_000) break;
+		hours.push(h);
+	}
+	if (!hours.length) return { known: false, calm: false, phrase: null };
+	const first = (test) => hours.find(test);
+	const bits = [];
+	const sky_ = (re) => (h) => re.test(h.shortForecast || "");
+	const thunder = first(sky_(/thunder/i));
+	const snow = first(sky_(/snow|flurr|blizzard/i));
+	const ice = first(sky_(/sleet|freezing|ice/i));
+	const rain = first((h) => /rain|shower/i.test(h.shortForecast || "") && (h.precipitationChance ?? 0) >= 40);
+	const gust = hours.reduce((worst, h) => (Number.isFinite(h.windMph) && h.windMph >= t.gustMph && (!worst || h.windMph > worst.windMph) ? h : worst), null);
+	const cold = hours.reduce((low, h) => (Number.isFinite(h.temperatureF) && (!low || h.temperatureF < low.temperatureF) ? h : low), null);
+	if (thunder) bits.push(`thunderstorms around ${clockOf(thunder.start)}`);
+	if (snow) bits.push(`possible snow${/storm|blizzard|heavy/i.test(snow.shortForecast) ? " storms" : ""} from around ${clockOf(snow.start)}`);
+	if (ice) bits.push(`possible freezing rain or sleet from around ${clockOf(ice.start)}`);
+	if (rain && !thunder && !snow && !ice) bits.push(`rain from around ${clockOf(rain.start)}`);
+	if (gust) bits.push(`gusts up to ${gust.windMph} mph`);
+	if (cold && cold.temperatureF <= 32) bits.push(`a freeze, down to ${cold.temperatureF}°F`);
+	return { known: true, calm: bits.length === 0, phrase: bits.length ? bits.slice(0, 3).join(", and ") : null };
+}
+
 /** One phrase for a notification: "a Severe Thunderstorm Warning", "gusts up to 35 mph around 7 PM". */
 function phrase(risk) {
 	if (!risk?.reasons?.length) return "rough weather on the way";
 	return risk.reasons.slice(0, 2).map((r) => r.text).join(" and ");
 }
 
-module.exports = { assess, phrase, thresholdsOf, DEFAULTS, DANGEROUS_ALERT };
+module.exports = { assess, tonight, phrase, thresholdsOf, DEFAULTS, DANGEROUS_ALERT };

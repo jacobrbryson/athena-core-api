@@ -61,6 +61,13 @@ function normalize(input, existing = null) {
       if (vin && !/^[A-HJ-NPR-Z0-9]{11,17}$/.test(vin)) throw bad('That VIN doesn’t look right — it is letters and numbers, without I, O or Q.');
       return vin || null;
     }),
+    registrationState: pick('registrationState', v => {
+      const st = text(v, 2, 'State').toUpperCase();
+      if (st && !/^[A-Z]{2}$/.test(st)) throw bad('Enter the registration state as two letters, like VA.');
+      return st || null;
+    }),
+    registrationNumber: pick('registrationNumber', v => text(v, 40, 'Registration number') || null),
+    inspectionStation: pick('inspectionStation', v => text(v, 100, 'Inspection station') || null),
     odometer: pick('odometer', v => miles(v, 'the odometer')),
     odometerOn: pick('odometerOn', v => day(v, 'the odometer reading', { past: true })),
     serviceDueMiles: pick('serviceDueMiles', v => miles(v, 'the next service mileage')),
@@ -88,13 +95,14 @@ function service(input) {
 }
 
 const iso = v => (v instanceof Date ? v.toISOString() : v ? new Date(`${String(v).replace(' ', 'T')}Z`).toISOString() : null);
-const COLUMNS = `id, uuid, property_uuid, name, year, make, model, color, plate, vin, odometer,
+const COLUMNS = `id, uuid, property_uuid, name, year, make, model, color, plate, vin, registration_state, registration_number, inspection_station, odometer,
   DATE_FORMAT(odometer_on, '%Y-%m-%d') AS odometer_on, DATE_FORMAT(registration_due, '%Y-%m-%d') AS registration_due,
   DATE_FORMAT(inspection_due, '%Y-%m-%d') AS inspection_due, DATE_FORMAT(insurance_due, '%Y-%m-%d') AS insurance_due,
   DATE_FORMAT(service_due, '%Y-%m-%d') AS service_due, service_due_miles, notes, photo IS NOT NULL AS has_photo, created_at, updated_at`;
 const toVehicle = (r, log, recallLog = new Map()) => ({
   uuid: r.uuid, propertyUuid: r.property_uuid, name: r.name, year: r.year, make: r.make, model: r.model, color: r.color,
-  plate: r.plate, vin: r.vin, odometer: r.odometer, odometerOn: r.odometer_on,
+  plate: r.plate, vin: r.vin, registrationState: r.registration_state, registrationNumber: r.registration_number,
+  inspectionStation: r.inspection_station, odometer: r.odometer, odometerOn: r.odometer_on,
   registrationDue: r.registration_due, inspectionDue: r.inspection_due, insuranceDue: r.insurance_due,
   serviceDue: r.service_due, serviceDueMiles: r.service_due_miles, notes: r.notes, hasPhoto: !!r.has_photo,
   createdAt: iso(r.created_at), updatedAt: iso(r.updated_at),
@@ -103,6 +111,7 @@ const toVehicle = (r, log, recallLog = new Map()) => ({
 });
 const existingOf = r => ({
   propertyUuid: r.property_uuid, name: r.name, year: r.year, make: r.make, model: r.model, color: r.color, plate: r.plate, vin: r.vin,
+  registrationState: r.registration_state, registrationNumber: r.registration_number, inspectionStation: r.inspection_station,
   odometer: r.odometer, odometerOn: r.odometer_on, registrationDue: r.registration_due, inspectionDue: r.inspection_due,
   insuranceDue: r.insurance_due, serviceDue: r.service_due, serviceDueMiles: r.service_due_miles, notes: r.notes,
 });
@@ -161,9 +170,9 @@ function handler(fn) {
   };
 }
 
-const FIELDS = ['property_uuid', 'name', 'year', 'make', 'model', 'color', 'plate', 'vin', 'odometer', 'odometer_on',
+const FIELDS = ['property_uuid', 'name', 'year', 'make', 'model', 'color', 'plate', 'vin', 'registration_state', 'registration_number', 'inspection_station', 'odometer', 'odometer_on',
   'registration_due', 'inspection_due', 'insurance_due', 'service_due', 'service_due_miles', 'notes'];
-const values = f => [f.propertyUuid, f.name, f.year, f.make, f.model, f.color, f.plate, f.vin, f.odometer, f.odometerOn,
+const values = f => [f.propertyUuid, f.name, f.year, f.make, f.model, f.color, f.plate, f.vin, f.registrationState, f.registrationNumber, f.inspectionStation, f.odometer, f.odometerOn,
   f.registrationDue, f.inspectionDue, f.insuranceDue, f.serviceDue, f.serviceDueMiles, f.notes];
 
 const list = handler(async profileId => ({ vehicles: await all(profileId) }));
@@ -239,7 +248,7 @@ async function promptVehicles(profileId, limit = 6) {
     const [log, recallLog] = await Promise.all([serviceFor(ids), recalls.forVehicles(ids).catch(() => new Map())]);
     return rows.map(r => {
       const v = toVehicle(r, log, recallLog);
-      return { ...v, service: v.service.slice(0, 2), recalls: v.recalls.filter(x => x.status === 'open').slice(0, 4) };
+      return { ...v, service: v.service.slice(0, 2), recalls: v.recalls.filter(x => x.status === 'open' || x.status === 'acknowledged').slice(0, 4) };
     });
   } catch {
     return [];
