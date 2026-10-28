@@ -139,11 +139,12 @@ function toStrictSchema(schema) {
 /** Reasoning models (gpt-5*, o-series) reject any temperature but the default. */
 const fixedTemperature = (model) => /^(gpt-5|gpt-6|o\d)/.test(String(model));
 
-async function generate(endpoint, { task, contents, json = true, schema = null, temperature }) {
+async function generate(endpoint, { task, contents, json = true, schema = null, temperature, maxOutputTokens }) {
 	const model = endpoint.models[task] || endpoint.models.chat;
 	if (!model) throw new Error(`${endpoint.id} has no model for task "${task}"`);
 
 	const body = { model, messages: [{ role: "system", content: require("../../../security/mission").CORE_MISSION }, ...toMessages(contents)], stream: false };
+	if (Number.isSafeInteger(maxOutputTokens) && maxOutputTokens > 0) body.max_completion_tokens = maxOutputTokens;
 	if (Number.isFinite(temperature) && !fixedTemperature(model)) body.temperature = temperature;
 	if (json) {
 		body.response_format =

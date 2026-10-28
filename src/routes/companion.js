@@ -44,6 +44,10 @@ router.get('/dashboard/alert', requireAuth, require('../controllers/nearbyIncide
 router.post('/dashboard/alert/ack', requireAuth, express.json({ limit: '2kb' }), require('../controllers/nearbyIncidents').acknowledgeAlert);
 // "Acknowledge" on a phone notification — the Android app, with its device token.
 router.post('/dashboard/notifications/:uuid/ack', requireAuthOrDevice, express.json({ limit: '1kb' }), require('../controllers/nearbyIncidents').acknowledgePush);
+// The notification inbox: every push is kept here until acknowledged.
+router.get('/dashboard/inbox', requireAuth, require('../controllers/notifications').list);
+router.post('/dashboard/inbox/ack-all', requireAuth, express.json({ limit: '1kb' }), require('../controllers/notifications').acknowledgeAll);
+router.post('/dashboard/inbox/:uuid/ack', requireAuth, express.json({ limit: '1kb' }), require('../controllers/notifications').acknowledge);
 router.get('/dashboard/incidents/places', requireAuth, require('../controllers/nearbyIncidents').listPlaces);
 router.put('/dashboard/incidents/places', requireAuth, express.json({ limit: '4kb' }), require('../controllers/nearbyIncidents').savePlace);
 router.patch('/dashboard/incidents/places/:uuid', requireAuth, express.json({ limit: '200kb' }), require('../controllers/nearbyIncidents').updatePlace);
@@ -148,6 +152,8 @@ const healthPlan = require('../controllers/healthPlan');
 router.get('/dashboard/health/plan', requireAuth, healthPlan.overview);
 // Bedroom temperature against WHOOP sleep (docs/capabilities/sleep-climate.md).
 router.get('/dashboard/health/sleep-climate', requireAuth, require('../controllers/propertyThermostats').sleepClimate);
+// Research: every study, one read (docs/capabilities/research.md).
+router.get('/research', requireAuth, require('../controllers/research').list);
 router.put('/dashboard/health/program', requireAuth, express.json({ limit: '16kb' }), healthPlan.saveProgram);
 router.delete('/dashboard/health/program', requireAuth, healthPlan.endProgram);
 router.put('/dashboard/health/program/sessions/:uuid/mark', requireAuth, express.json({ limit: '1kb' }), healthPlan.markSession);

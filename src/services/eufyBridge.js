@@ -48,6 +48,25 @@ async function status() {
 }
 
 /**
+ * Can core reach the bridge, and is it working? Never throws.
+ * { reachable: true, state } when it answered (state is the bridge's own:
+ * ready | reconnecting | authorization_required | connecting), or
+ * { reachable: false, error } when nothing answered (host or tailnet down,
+ * timeout, non-2xx). A short timeout: this is a health probe, not a capture.
+ */
+async function health() {
+	if (!configured()) return { reachable: false, error: 'not_configured', configured: false };
+	try {
+		const upstream = await bridge('/v1/status', 10_000);
+		if (!upstream.ok) return { reachable: false, error: `bridge_http_${upstream.status}`, configured: true };
+		const body = await upstream.json();
+		return { reachable: true, state: String(body?.state || 'unknown'), devices: Array.isArray(body?.devices) ? body.devices.length : 0, configured: true };
+	} catch (error) {
+		return { reachable: false, error: error?.name === 'TimeoutError' ? 'timeout' : String(error?.cause?.code || error?.message || 'unreachable').slice(0, 80), configured: true };
+	}
+}
+
+/**
  * A fresh JPEG from one camera, captured for this request. Never a stored
  * thumbnail, never a retained still (the bridge answers 409 for one).
  * Resolves { ok: true, jpeg, capturedAt, latencyMs } or { ok: false, reason }.
@@ -70,4 +89,4 @@ async function freshSnapshot(serial) {
   return { ok: true, jpeg, capturedAt: new Date(), latencyMs: Date.now() - started };
 }
 
-module.exports = { configured, allowed, authorizedProfileIds, bridge, status, freshSnapshot, SERIAL };
+module.exports = { configured, allowed, authorizedProfileIds, bridge, status, health, freshSnapshot, SERIAL };

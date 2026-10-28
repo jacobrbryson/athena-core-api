@@ -6,7 +6,7 @@ where: the left menu → Property → the Vehicles tab → Add vehicle
 status: live
 surfaces: [companion]
 audiences: [adult]
-triggers: [recall, recalls, safety recall, nhtsa, vehicle, vehicles, my car, our cars, truck, van, oil change, registration, registration number, registration renewal, renew registration, tags, state inspection, inspection, acknowledge recall, recall repaired, odometer, mileage, tire rotation, service history, car maintenance, vin, license plate, car insurance]
+triggers: [scan a bill, renewal notice, registration bill, tag and tax, recall, recalls, safety recall, nhtsa, vehicle, vehicles, my car, our cars, truck, van, oil change, registration, registration number, registration renewal, renew registration, tags, state inspection, inspection, acknowledge recall, recall repaired, odometer, mileage, tire rotation, service history, car maintenance, vin, license plate, car insurance]
 ---
 
 ## What I can do
@@ -56,6 +56,14 @@ Initiative on, I tell you when a new one appears.
 If you link the car itself through **Smartcar**, its odometer keeps the
 mileage here current — see [smartcar.md](smartcar.md).
 
+**Scan a bill.** Show me a registration renewal notice (or its receipt) and I
+match it to the right vehicle by its plate, VIN or description, then ask once to
+put the due date on your calendar and set the vehicle's registration date, with
+the amount — and the vehicle tax, where the bill carries one. One approval, one
+card; if I can't tell which vehicle it is, I ask. A receipt offers to mark it
+renewed and move the date a year on, like **Renewed?**. See
+[property-taxes.md](property-taxes.md).
+
 I see your vehicles, what's coming due and the latest work on each whenever
 we talk, so you can just ask "when is the BMW's registration due?" or "what
 should I get done on the car next?". **Ask Athena about it** in a vehicle's
@@ -63,7 +71,8 @@ details starts that conversation for you.
 
 ## Where to find it
 
-Open **Property** in the left menu and choose the **Vehicles** tab. Use **Add
+Open **Property** in the left menu and choose the **Vehicles** tab. Use **Scan a
+bill** to read a registration notice, or **Add
 vehicle**, fill in what you know, and **Save vehicle**. Tap a vehicle's card to
 see its details, add to its service history, **Edit** it, or **Remove vehicle**.
 Vehicles need a property: if you haven't added one, add it from the
@@ -91,7 +100,12 @@ with **Edit**. I don't send push reminders when something comes due; the Home
 banner, the tab and our conversations are where it shows. I don't renew
 registration, book service or buy insurance — I can help you find out how.
 There's no vehicle card on the main dashboard; only the deadline banner, and
-only while a date is close. Up to 20 vehicles per person.
+only while a date is close. If your calendar has an upcoming inspection,
+emissions or registration appointment that names the car (or any such
+appointment when you only have one car in play), I treat that deadline as
+handled and hide the banner until the appointment is over; if the date still
+hasn't moved by then, it comes back. An inspection appointment covers the
+registration too. Up to 20 vehicles per person.
 
 ## Under the hood
 
@@ -101,6 +115,7 @@ only while a date is close. Up to 20 vehicles per person.
   `PATCH /api/v1/projects/property/vehicles/:uuid/recalls/:campaign`;
   trigger `vehicle_recall` in `src/services/initiative/triggers.js`.
 
+- Bill scan: `src/services/billScan.js`, `src/services/actions/billActions.js` (`record_vehicle_bill`); the registration date it sets is `registration_due`, rolled forward server-side by `billRecords.yearAfter` (the same rule as `yearAfter()` in the companion). The Home banner also lists unpaid tax installments (`taxDeadlines()` in `../../../companion/src/api/propertyTaxes.ts`).
 - UI: `../../../companion/src/components/PropertyVehicles.tsx` (list, add/edit drawer, details drawer with service log), `../../../companion/src/components/propertyVehicles.css`; tab entry in `../../../companion/src/components/Property.tsx` (`property-vehicles`), rendered in `HomePage` in `../../../companion/src/components/Dashboard.tsx`. Due-date tones: `dueItems()` in `../../../companion/src/api/propertyVehicles.ts`.
 - Mock: `../../../companion/mock/projects.ts`.
 - API: `src/controllers/propertyVehicles.js`, `src/routes/projects.js` — GET/POST `/api/v1/projects/property/vehicles`, PATCH/DELETE `/:uuid`, GET `/:uuid/photo`, POST `/:uuid/service`, DELETE `/:uuid/service/:serviceUuid`. Adult-only, profile-scoped, every write returns the whole list. A new vehicle goes to the person's first property unless a `propertyUuid` they own is named. Tests: `src/controllers/propertyVehicles.test.js`.

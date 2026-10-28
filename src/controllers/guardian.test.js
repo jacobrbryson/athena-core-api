@@ -80,6 +80,21 @@ test('dispatch answers only a verified caller', async () => {
   expect(ok.json).toHaveBeenCalledWith({ ran: 1, due: 1, runs: [{ run: 'r' }] });
 });
 
+test('the outage check runs only for an outage dispatch, and its failure never fails the dispatch', async () => {
+  const run = jest.fn().mockResolvedValue({ planned: { due: 0 }, ran: [] });
+  const outage = jest.fn().mockResolvedValue({ verdict: 'quiet' });
+  const plain = response();
+  await controller.dispatchWith({ get: () => 'Bearer t', body: { reason: 'incidents job' } }, plain, { verify: async () => true, run, outage });
+  expect(outage).not.toHaveBeenCalled();
+  const woken = response();
+  await controller.dispatchWith({ get: () => 'Bearer t', body: { reason: 'outage:nest_offline' } }, woken, { verify: async () => true, run, outage });
+  expect(outage).toHaveBeenCalledWith({ reason: 'nest_offline' });
+  expect(woken.json).toHaveBeenCalledWith(expect.objectContaining({ outage: { verdict: 'quiet' } }));
+  const failing = response();
+  await controller.dispatchWith({ get: () => 'Bearer t', body: { reason: 'outage backstop' } }, failing, { verify: async () => true, run, outage: jest.fn().mockRejectedValue(new Error('boom')) });
+  expect(failing.json).toHaveBeenCalledWith(expect.objectContaining({ outage: { error: 'boom' } }));
+});
+
 test('dispatch token verification needs the configured audience and account', async () => {
   const { verifyCaller } = require('../services/guardianEngine/dispatch');
   const req = { get: () => 'Bearer abc.def.ghi' };

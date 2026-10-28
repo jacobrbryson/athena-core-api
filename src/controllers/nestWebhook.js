@@ -81,6 +81,12 @@ async function receive(req, res, { verifier } = {}) {
   // The event is stored; everything after this is best-effort and must not
   // ask Pub/Sub to resend it. A missed re-read is covered by the hourly sync,
   // and a missed evaluation by the next scheduled initiative pass.
+  // Several things going quiet at once is a different question from one
+  // thermostat dropping: book the outage watch's delayed check (a Cloud Task;
+  // it never blocks or fails this delivery).
+  if (outcome.wentOffline.length || outcome.wentOnline?.length) {
+    await require('../services/outage').noteNestEvent({ wentOffline: outcome.wentOffline, wentOnline: outcome.wentOnline || [] });
+  }
   const evaluate = new Set(outcome.wentOffline);
   for (const profileId of outcome.resync) {
     try {

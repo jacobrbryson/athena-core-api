@@ -13,6 +13,7 @@ const { CLOSED } = require("./shape");
 const bindings = require("./bindings");
 const { openIssues } = require("../../controllers/propertyIssues");
 const { promptVehicles } = require("../../controllers/propertyVehicles");
+const { promptTaxes } = require("../billRecords");
 
 const MAX_LINES = 18;
 const AREA = { health: "Health", family: "Family", community: "Community", work: "Work", home: "Home" };
@@ -85,8 +86,8 @@ function executionBits(state, p) {
 }
 
 async function promptBlock(profileId) {
-	const [all, issues, vehicles] = await Promise.all([projects.getAll(profileId), openIssues(profileId), promptVehicles(profileId)]);
-	if (!all.projects.length && !all.concerns.length && !issues.length && !vehicles.length) return null;
+	const [all, issues, vehicles, taxes] = await Promise.all([projects.getAll(profileId), openIssues(profileId), promptVehicles(profileId), promptTaxes(profileId)]);
+	if (!all.projects.length && !all.concerns.length && !issues.length && !vehicles.length && !taxes.length) return null;
 	const now = Date.now();
 	const ranks = rank(all, now);
 	const plan = execution.getExecutionPlan(all, { now, ranks, prefs: all.prefs });
@@ -168,6 +169,13 @@ async function promptBlock(profileId) {
 					"",
 					"Vehicles they keep at their property (they edit these on the Property page's Vehicles tab; you can't change them from chat):",
 					...vehicles.map(vehicleLine),
+				]
+			: []),
+		...(taxes.length
+			? [
+					"",
+					"Unpaid tax installments on record (property and vehicle tax, from bills they showed you; they see them on Property → Taxes):",
+					...taxes.map((t) => `- ${t.jurisdiction} ${t.kind === "vehicle" ? "vehicle tax" : "property tax"}${t.taxYear ? ` ${t.taxYear}` : ""} (${t.label}) due ${t.dueOn}${t.amount ? `, $${t.amount}` : ""}`),
 				]
 			: []),
 		...(recentDone.length ? ["", `Finished in the last two weeks: ${recentDone.slice(0, 6).join(", ")}.`] : []),

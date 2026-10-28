@@ -1,0 +1,4 @@
+{
+ "name": "athena-work-runner", "private": true, "type": "module",
+ "scripts": { "start": "node runner.mjs", "test": "node --test tests/*.test.mjs", "build:image": "docker build -t athena-work-runtime:1 ." }
+}

@@ -62,7 +62,7 @@ test('an offline event moves stored rows and reports who to evaluate', async () 
     timestamp: '2026-10-16T14:00:00Z',
     resourceUpdate: { name: NAME, traits: { 'sdm.devices.traits.Connectivity': { status: 'OFFLINE' } } },
   }, { project: P });
-  expect(out).toEqual({ applied: 1, wentOffline: [7], resync: [] });
+  expect(out).toEqual({ applied: 1, wentOffline: [7], wentOnline: [], resync: [] });
   const [sql, params] = pool.query.mock.calls[1];
   expect(sql).toMatch(/UPDATE athena_nest_device/);
   expect(params[0]).toBe('OFFLINE');
@@ -81,7 +81,7 @@ test('an event older than the stored state is ignored, so redelivery cannot rewi
 
 test('foreign devices are refused; unknown ones and relation changes re-read linked profiles', async () => {
   expect(await nest.recordEvent({ timestamp: '2026-10-16T14:00:00Z', resourceUpdate: { name: 'enterprises/evil/devices/x', traits: {} } }, { project: P }))
-    .toEqual({ applied: 0, wentOffline: [], resync: [] });
+    .toEqual({ applied: 0, wentOffline: [], wentOnline: [], resync: [] });
   expect(pool.query).not.toHaveBeenCalled();
 
   pool.query.mockResolvedValueOnce([[]]).mockResolvedValueOnce([[{ profile_id: 7 }, { profile_id: 9 }]]);

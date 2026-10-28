@@ -5,6 +5,8 @@
 .git
 .gitignore
 node_modules
+work-runner/.runner-token.json
+work-runner/node_modules
 npm-debug.log*
 *.log
 Dockerfile

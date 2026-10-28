@@ -156,10 +156,15 @@ Topic shortcuts open our chat
 with an editable question; you choose when to send it. What is waiting for
 your approval lives on the bell in the top bar, visible from any screen —
 there is no separate Notifications card any more. The bell opens Notifications:
+every notification I have pushed to your phone or browser that you haven't
+acknowledged yet (each stays until you tap Acknowledge here or on the phone
+notification's own Acknowledge button, so tapping a notification and losing it
+no longer happens; the last week of acknowledged ones is listed underneath),
 every proposal waiting for your approval, which you can approve or decline right
 there, and the questions my dreaming left me holding, which I'll ask when you
-tap Answer in chat. Its badge counts both. What I may do and what I have done
-is one tap further, under Actions & permissions.
+tap Answer in chat. Its badge counts all three. What I may do and what I have done
+is one tap further, under Actions & permissions. Swiping a phone notification
+away does not acknowledge it; it is still waiting in the bell.
 
 While your calendar says you're working, a banner sits across the top of the
 Dashboard: where you're working ("Home"), until when, and the one thing the day
@@ -383,7 +388,7 @@ in memory and are cleared on sign-in, sign-out, access errors, and updates.
   initiative triggers and chat prompt never see a location as a meeting either.
   Deploy core_api before the companion; an older API sends no locations and the
   banner simply stays hidden.
-- Notifications panel: `../../../companion/src/components/NotificationsPanel.tsx`
+- Notifications panel: `../../../companion/src/components/NotificationsPanel.tsx`; inbox: `src/services/notifications/inbox.js` (table `athena_notification`, migration 0100), written by `push.sendToProfile` so every push is kept; routes `/dashboard/inbox`.
   (approvals via `useActions`, questions via `../../../companion/src/athena/useDreamQuestions.ts`).
 - Folding and headlines: `card()` and `headlines` in `Dashboard.tsx`; state in
   `localStorage` key `athena.dashboard.collapsed`; styles at the end of `dashboard.css`.

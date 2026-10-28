@@ -3,6 +3,7 @@
  * router's status + device manifest, paired devices, and camera perception.
  */
 const memoryStore = require("../services/memoryStore");
+const billScan = require("../services/billScan");
 const perception = require("../services/perception");
 const devices = require("../services/devices");
 const push = require("../services/push");
@@ -101,6 +102,13 @@ async function rememberPhoto(req, res) {
 	if (!who) return;
 	try {
 		const body = req.body || {};
+		// A bill is read for a proposal instead of being kept as a photo memory
+		// (it carries plate and account numbers). `skipBill` is the person's
+		// "keep it as a photo" choice.
+		if (!body.skipBill) {
+			const bill = await billScan.scanIfBill(who.profileId, { imageBase64: body.imageBase64, mimeType: body.mimeType, hint: body.caption, today: body.today });
+			if (bill) return res.status(200).json({ success: true, bill });
+		}
 		const event = await memoryStore.rememberPhoto(who.profileId, who.familyId, {
 			imageBase64: body.imageBase64,
 			mimeType: body.mimeType,

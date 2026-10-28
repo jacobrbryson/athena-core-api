@@ -133,6 +133,7 @@ module.exports = (clients) => {
 	router.use("/finance", require("./finance"));
 	router.use("/trading", require("./trading"));
 	router.use("/projects", require("./projects"));
+	router.use("/work-items", require("./workItems"));
 	router.use("/integrations", integrationRouter);
 	router.use("/", companionRouter);
 

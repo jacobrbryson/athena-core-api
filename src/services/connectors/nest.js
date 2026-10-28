@@ -303,25 +303,26 @@ async function linkedProfiles() {
  */
 async function recordEvent(event, { project = projectId() } = {}) {
 	const at = new Date(event?.timestamp);
-	if (Number.isNaN(at.getTime())) return { applied: 0, wentOffline: [], resync: [] };
+	if (Number.isNaN(at.getTime())) return { applied: 0, wentOffline: [], wentOnline: [], resync: [] };
 
-	if (event.relationUpdate) return { applied: 0, wentOffline: [], resync: await linkedProfiles() };
+	if (event.relationUpdate) return { applied: 0, wentOffline: [], wentOnline: [], resync: await linkedProfiles() };
 
 	const name = event.resourceUpdate?.name;
 	const traits = event.resourceUpdate?.traits;
 	if (!isDeviceName(name, project) || !traits || typeof traits !== "object") {
-		return { applied: 0, wentOffline: [], resync: [] };
+		return { applied: 0, wentOffline: [], wentOnline: [], resync: [] };
 	}
 
 	const [rows] = await pool.query(
 		"SELECT id, profile_id, connectivity, offline_since, online_since, readings, event_at FROM athena_nest_device WHERE device_name = ?",
 		[name]
 	);
-	if (!rows.length) return { applied: 0, wentOffline: [], resync: await linkedProfiles() };
+	if (!rows.length) return { applied: 0, wentOffline: [], wentOnline: [], resync: await linkedProfiles() };
 
 	const googleStatus = connectivityOf(traits);
 	const fresh = readingsOf(traits);
 	const wentOffline = [];
+	const wentOnline = [];
 	let applied = 0;
 	for (const row of rows) {
 		// Pub/Sub may redeliver or reorder. An event older than what this row
@@ -340,8 +341,9 @@ async function recordEvent(event, { project = projectId() } = {}) {
 		applied += 1;
 		await history.record(Number(row.profile_id), name, seen.readings, at);
 		if (next.connectivity === "OFFLINE" && row.connectivity !== "OFFLINE") wentOffline.push(Number(row.profile_id));
+		if (next.connectivity === "ONLINE" && row.connectivity === "OFFLINE") wentOnline.push(Number(row.profile_id));
 	}
-	return { applied, wentOffline: [...new Set(wentOffline)], resync: [] };
+	return { applied, wentOffline: [...new Set(wentOffline)], wentOnline: [...new Set(wentOnline)], resync: [] };
 }
 
 // ---------------------------------------------------------------------------

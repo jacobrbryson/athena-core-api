@@ -11,6 +11,12 @@ triggers: [investigate, look into the code, fix it, fix that, fix the bug, your 
 
 ## What I can do
 
+For configured client work, **Work → a Jira issue** has two explicit approvals:
+prepare an isolated plan, then post the reviewed plan to Jira and implement it
+locally. Those use the client's company keys and paired Docker runner and never
+allow standing approval or publishing code. See **Jira work runs** for setup,
+evidence and the initial implementation's limits.
+
 Most of what I do is read and answer. This is the part where I can change
 something — but never on my own.
 
@@ -47,6 +53,11 @@ Things I can propose today:
   Only for adults authorized for household security, and only those settings;
   turning the sweep off, cameras and who is told stay in Settings. See
   [guardian.md](guardian.md).
+- **Record a scanned bill** — a vehicle registration renewal or a property tax
+  bill you photographed: add the due dates to your calendar, update the
+  vehicle's registration date or the tax record, with one approval. I only
+  offer these from a bill you show me, never from conversation, and never on a
+  standing "yes". See [property-taxes.md](property-taxes.md).
 - **Save a fact** to my long-term memory, when you ask me to remember
   something specific.
 - **Log a family health update** — start a health watch ("Thomas has a
@@ -158,8 +169,10 @@ Approval cards work on your paired phone or car too, not just in this browser.
 - **A fix can't be undone with a tap.** Once merged it's live; reversing it
   is another fix. That's why I ask every time and never take a standing "yes"
   for it.
-- **Coding agents only work in my four app repositories**, and every
-  investigation or fix opens an issue on GitHub there.
+- **My self-repair coding agents only work in my four app repositories**, and
+  every self-repair investigation or fix opens an issue on GitHub there. Client
+  Work runs use a separate approved local environment and never expand that
+  self-repair allowlist.
 - **Children and Guardians can't approve anything**, and I won't offer them
   actions at all. This is the account owner's decision.
 - **A look can't be undone.** Adding an event or saving a fact are things you
@@ -174,6 +187,7 @@ Approval cards work on your paired phone or car too, not just in this browser.
 
 **Never sent to a model.** The map for the next coding agent:
 
+- Bill scan actions (owner-authorized 2026-10-28): `src/services/actions/billActions.js` — `record_vehicle_bill`, `record_property_tax_bill`; scanner-only (`ctx.billScan`), never standing, events derived in `normalize()`.
 - Executor: `src/services/actions/index.js` — propose / confirm / decline,
   standing approvals, expiry. The only path to a provider call.
 - Registry: `src/services/actions/registry.js` — one descriptor per action.

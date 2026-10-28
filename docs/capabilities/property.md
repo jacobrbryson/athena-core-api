@@ -51,7 +51,7 @@ you can tap. Delete a note with its ✕. I see the latest few notes on each open
 issue when we talk.
 The **Active issues** card counts open issues, and Recent activity lists issues
 reported and resolved beside project updates.
-The rounded navigation bar has icons for **Overview**, **Issues**, **Vehicles**, **Projects**, **Concerns**,
+The rounded navigation bar has icons for **Overview**, **Issues**, **Vehicles**, **Taxes**, **Projects**, **Concerns**,
 **Property Map** and **Seasonal focus**. Selecting a tab replaces the content
 below the bar and highlights the tab in cyan. The selected highlight fills its
 entire segment, following the bar's rounded outer edges. **Overview** shows the
@@ -113,7 +113,8 @@ area's projects also count.
 
 Recent activity shows project updates, not a complete audit trail. Seasonal focus
 uses existing project seasonal months. The **Vehicles** tab keeps the cars at
-this property (see Vehicles). Otherwise I do not add asset inventories, recurring
+this property (see Vehicles), and the **Taxes** tab keeps property tax bills
+I've read from your photos (see property-taxes). Otherwise I do not add asset inventories, recurring
 maintenance, documents or finances here.
 Weather is an hourly forecast, not a live thermometer. I use Google Maps to
 locate the saved address and the US National Weather Service to retrieve its

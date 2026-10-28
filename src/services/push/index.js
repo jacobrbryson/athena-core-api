@@ -34,6 +34,7 @@ const crypto = require("../../helpers/crypto");
 const fcm = require("./fcm");
 const webpush = require("./webpush");
 const sms = require("./sms");
+const inbox = require("../notifications/inbox");
 
 /** Providers we can actually deliver to. A device may only register these. */
 const PROVIDERS = new Set(["fcm", "fcm-actions", "webpush", "twilio"]);
@@ -458,6 +459,10 @@ async function pushEnabledFor(profileId) {
  */
 async function sendToProfile(profileId, { title, body, data, collapseKey, ttlSeconds } = {}) {
 	if (!profileId || !title || !body) return { sent: 0, failed: 0, devices: 0 };
+	// Kept before any gate: tapping a phone notification clears it and opens
+	// the app before it can be read, so the inbox — not the tray — is where it
+	// stays until acknowledged. Present even with push off or no device.
+	await inbox.record(profileId, { title, body, data });
 	if (!(await pushEnabledFor(profileId))) return { sent: 0, failed: 0, devices: 0, skipped: "not enabled" };
 
 	const devices = await reachableDevices(profileId);

@@ -17,6 +17,14 @@ const codeAgents = require('./codeAgents');
 // at execute time because it had already left the inbox still counts, which
 // is rare enough to live with, and noted here so nobody is surprised.
 const MINUTES = {
+  plan_work_item: 0,
+  implement_work_item: 0,
+  // Project execution records are coordination, not independently measured savings.
+  update_project_step: 0,
+  schedule_project_work: 0,
+  record_project_session: 0,
+  put_project_session_on_calendar: 0,
+  close_out_project: 0,
   create_calendar_event: 2, // open Calendar, type the title, pick the time
   file_travel_or_school_email: 2.5, // the event above, plus labelling the email
   file_receipt_email: 0.5, // label and archive one email
@@ -31,6 +39,10 @@ const MINUTES = {
   look_through_camera: 0, // no fair hand-done equivalent to price yet
   remind_at_place: 0, // nothing you'd do by hand that this replaces, so nothing to price
   remind_at_time: 0, // the same reminder you'd set on your phone, so nothing to price
+  // Per approval: finding the due date, two calendar entries, and updating the record by hand.
+  record_vehicle_bill: 3,
+  record_property_tax_bill: 3,
+  record_vehicle_notice: 1, // typing the letter's key points into a note
   set_guardian_reports: 0, // changing a setting; nothing done by hand that this replaces
   // Per approval, not per item: a batch stores grocery_items, which the count
   // below doesn't read, so ten items count once — an undercount, on purpose.

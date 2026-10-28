@@ -2,7 +2,7 @@
 id: sleep-climate
 title: Bedroom temperature and sleep
 summary: With Nest and WHOOP linked, I compare your bedroom's temperature on each night with how you slept and recovered, and say which range suits you.
-where: Health → Bedroom & sleep; choose the thermostat under Property → Utilities → Thermostats → Use for sleep
+where: Research → Bedroom & sleep; choose the thermostat under Property → Utilities → Thermostats → Use for sleep
 status: partial
 surfaces: [companion]
 audiences: [adult]
@@ -23,8 +23,9 @@ thermostat card for you to approve.
 
 ## Where to find it
 
-**Health → Bedroom & sleep**, below Wellness. It appears once both Google Nest
-and WHOOP are linked (⋯ menu → **Connected apps**).
+**Research → Bedroom & sleep** (left navigation). It used to sit on Health and
+no longer does. It shows once both Google Nest and WHOOP are linked (⋯ menu →
+**Connected apps**); until then it says what's missing.
 
 I use the thermostat with "bed" in its name or room, or your only thermostat.
 If that's wrong, go to **Property → Utilities → Thermostats** and tap **Use
@@ -58,6 +59,7 @@ for sleep** on the right one.
   `PUT /api/v1/projects/property/thermostats/sleep-device` (both in
   `src/controllers/propertyThermostats.js`).
 - Prompt: `sleepClimate.promptLine` rides in the WHOOP and Nest context blocks.
-- Frontend: `../../../companion/src/components/SleepClimatePanel.tsx`,
+- Frontend: `../../../companion/src/components/SleepClimatePanel.tsx` (rendered by
+  `ResearchPage.tsx`, see `research.md`),
   "Use for sleep" in `../../../companion/src/components/PropertyThermostats.tsx`.
 - Tests: `src/services/sleepClimate.test.js`, `src/services/nestHistory.test.js`.

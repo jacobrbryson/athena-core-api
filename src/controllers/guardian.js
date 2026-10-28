@@ -81,12 +81,21 @@ const incidentAction = action => guarded(async (req, res, actor) => {
 });
 
 /** The job's or Cloud Tasks' call: observe what's due. Answers only to allowed service accounts. */
-async function dispatchDue(req, res, { verify = dispatch.verifyCaller, run = engine.runDue } = {}) {
+async function dispatchDue(req, res, { verify = dispatch.verifyCaller, run = engine.runDue, outage = args => require('../services/outage').run(args) } = {}) {
   res.set('Cache-Control', 'no-store');
   if (!(await verify(req))) return res.status(401).json({ message: 'Unauthorized' });
   try {
     const out = await run({});
-    return res.json({ ran: out.ran.length, due: out.planned.due, runs: out.ran });
+    // The outage watch rides the same authenticated wake-up: only a dispatch
+    // that says it is for the outage check runs it, and a failure there never
+    // fails the Guardian dispatch (Cloud Tasks would retry the sweep for it).
+    let outageResult = null;
+    const reason = String(req.body?.reason || '');
+    if (reason.startsWith('outage')) {
+      outageResult = await outage({ reason: reason.startsWith('outage:') ? reason.slice(7, 47) : 'backstop' })
+        .then(r => ({ verdict: r.verdict }), error => ({ error: String(error?.message || error).slice(0, 120) }));
+    }
+    return res.json({ ran: out.ran.length, due: out.planned.due, runs: out.ran, ...(outageResult ? { outage: outageResult } : {}) });
   } catch (error) {
     console.error('[guardian] dispatch failed', { message: error?.message });
     // 503 makes Cloud Tasks retry; the planner reports anything still missed.

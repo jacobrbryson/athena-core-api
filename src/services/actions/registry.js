@@ -372,6 +372,9 @@ async function projectSession(ctx, row, { on, step, timeZone, pastOnly = false }
 }
 
 const ACTIONS = [
+	...require('../workItems/actions'),
+	// Bill scan (owner-authorized 2026-10-28): billActions.js says how narrow these are.
+	...require('./billActions'),
 	{
 		id: "update_grocery_list",
 		label: "Update the grocery list",

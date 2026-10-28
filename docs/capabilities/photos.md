@@ -18,6 +18,12 @@ moment in my memory, so it comes back later when it's relevant.
 The photo itself stays on your device; what I keep is what I saw and what you
 told me about it.
 
+**Bills.** If the photo is a vehicle registration renewal or a property tax bill
+(or its receipt), I don't keep it as a photo memory — it carries plate and
+account numbers. I read it and show you one approval card instead; **Keep it as
+a photo instead** saves it as an ordinary photo. See
+[property-taxes.md](property-taxes.md).
+
 ## Where to find it
 
 In Chat, the **… input menu** to the left of the message box → **Show a photo**. Choose or take one,
@@ -46,6 +52,7 @@ optionally give it a caption, and I'll look. Kept photos show up under
   ~1024px JPEG before upload.
 - Route: `POST /api/v1/memory/photos`; the moment lands in
   `src/services/memoryStore/events.js`.
+- Bills: `rememberPhoto` in `src/controllers/companion.js` first tries `billScan.scanIfBill()` (one extra vision call per photo) and returns `{ bill }` for a bill; `skipBill: true` goes straight to the memory path.
 - Vision runs through the router's `vision` task (`src/services/llm`), local
   first.
 - Related but separate: `src/services/perception.js` is the LIVE camera path

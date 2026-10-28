@@ -35,7 +35,7 @@ unavailable rather than as an empty inbox.
 
 ## Limits
 
-I do not change issues or projects. I read up to ten issues from each of up to five sites, with at most twenty-five in the summary. Counts describe this bounded snapshot, not all work in your organization. Jira Server and Data Center are not supported. A failed site is marked as a partial result.
+The Work issue sidebar can read descriptions and paginated comments. With a configured local work environment and your explicit implementation approval, the work-items workflow can post the exact reviewed plan as a comment before editing the isolated checkout; it does not change issue status or projects. See Jira work runs for setup and limits. I read a bounded set of assigned issues, with at most twenty-five in the summary. Counts describe this snapshot, not all work in your organization. Jira Server and Data Center are not supported. A failed site is marked as a partial result.
 The implementation is available, but an account is not connected until the
 provider authorization has succeeded.
 

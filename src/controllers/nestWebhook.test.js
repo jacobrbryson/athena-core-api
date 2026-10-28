@@ -1,6 +1,7 @@
 jest.mock('../helpers/db', () => ({ query: jest.fn() }));
 jest.mock('../services/connectors/nest', () => ({ recordEvent: jest.fn(), sync: jest.fn(), offlineDevices: jest.fn() }));
 jest.mock('../services/initiative', () => ({ evaluateProfile: jest.fn() }));
+jest.mock('../services/outage', () => ({ noteNestEvent: jest.fn(async () => ({ booked: false })) }));
 const pool = require('../helpers/db');
 const nest = require('../services/connectors/nest');
 const initiative = require('../services/initiative');

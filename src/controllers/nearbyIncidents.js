@@ -163,6 +163,11 @@ async function acknowledgePush(req, res) {
   }
   const uuid = String(req.params.uuid || '').slice(0, 36);
   try {
+    // The inbox copy, whichever way it was acknowledged: the phone button
+    // sends the sender's id, which the inbox also answers to.
+    const inboxCleared = await require('../services/notifications/inbox')
+      .acknowledge(profileId, uuid, req.user?.kind === 'device' ? 'phone' : 'app')
+      .catch(() => 0);
     const out = await watch.acknowledgeNudge(profileId, uuid);
     let status = null;
     try {
@@ -170,7 +175,7 @@ async function acknowledgePush(req, res) {
     } catch {
       // Already reacted to, expired, or not a nudge of theirs: nothing to record.
     }
-    return res.json({ success: true, ...out, status });
+    return res.json({ success: true, ...out, status, inboxCleared });
   } catch (err) {
     return fail(res, err);
   }

@@ -73,6 +73,16 @@ router.post('/property/vehicles/:uuid/service', json, vehicles.addService);
 router.delete('/property/vehicles/:uuid/service/:serviceUuid', vehicles.removeService);
 router.patch('/property/vehicles/:uuid/recalls/:campaign', json, vehicles.setRecall);
 
+// Property taxes and "Scan a bill" (docs/capabilities/property-taxes.md). The photo
+// arrives as base64 JSON; the 8 MB parser in server.js covers /projects/property.
+const taxes = require('../controllers/propertyTaxes');
+const bills = require('../controllers/propertyBills');
+router.get('/property/taxes', taxes.list);
+router.patch('/property/taxes/:uuid/installments/:installmentUuid', json, taxes.setPaid);
+router.delete('/property/taxes/:uuid', taxes.remove);
+router.post('/property/bills/scan', bills.scan);
+router.post('/property/bills/review', json, bills.review);
+
 router.post('/concerns', json, c.createConcern);
 router.patch('/concerns/:uuid', json, c.updateConcern);
 router.delete('/concerns/:uuid', c.removeConcern);

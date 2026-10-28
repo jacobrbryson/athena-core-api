@@ -41,7 +41,7 @@ const { withTransaction } = require("./parent-helpers");
  * the missing names turned the whole Integrations panel into a 400.
  */
 const { PROVIDER_IDS } = require("./connectors/registry");
-const PROVIDERS = new Set([...PROVIDER_IDS, "openai", "vesync", "google_keep", "webull"]);
+const PROVIDERS = new Set([...PROVIDER_IDS, "openai", "anthropic", "github", "work_login", "vesync", "google_keep", "webull"]);
 const KINDS = new Set(["oauth2", "api_key"]);
 
 const STATUS_ACTIVE = "active";

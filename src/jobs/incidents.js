@@ -114,6 +114,26 @@ async function guardianPass() {
 }
 
 /**
+ * The outage watch's backstop (services/outage). When the home internet is
+ * out nothing can say so, so detection is by absence and the first signal
+ * books a delayed check; this is the net under it. DB only here: if no
+ * assessment ran in the last hour (every 15 minutes while an outage is open),
+ * ask the core service to run one — it alone reaches the camera bridge. This
+ * is the existing job's rhythm, not a new poller. Never fails the pass.
+ */
+async function outagePass() {
+	if (args.status || args.dryRun) return;
+	try {
+		const reason = await require("../services/outage").backstopDue();
+		if (!reason) return;
+		const sent = await require("../services/guardianEngine/dispatch").dispatchNow({ reason });
+		log(`outage watch: ${sent.ok ? `ran (${sent.body?.outage?.verdict || sent.body?.outage?.error || "?"})` : `not delivered (${sent.skipped || sent.status || sent.error})`}`);
+	} catch (error) {
+		log("outage watch failed:", error.message);
+	}
+}
+
+/**
  * The trading monitor's backstop (services/trading/monitor.js). During market
  * hours, with someone's trading notifications on, ask the core service for a
  * tick; it ignores the ask while its own Cloud Tasks chain is alive, so this
@@ -134,7 +154,12 @@ async function pass() {
 	await reminderBackstop();
 	await weatherAlertPass();
 	await guardianPass();
+	await outagePass();
 	await tradingPass();
+	if (!args.dryRun) {
+		try { await require('../services/workItems/engine').sweep(); }
+		catch (err) { if (err.code !== 'ER_NO_SUCH_TABLE') log('Work notifications unavailable:', err.message); }
+	}
 	const out = await watch.runOnce({ dryRun: args.dryRun, force: args.force });
 	const { results } = out;
 	if (out.skipped) return log(`not due (every ${minutes(out.everyMs)}, ${out.why}); next in ${minutes(out.nextInMs)}`);

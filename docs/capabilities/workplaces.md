@@ -90,8 +90,10 @@ workspace is greyed out with that workspace's name.
 - The agents panel shows only the code investigations and fixes you approved
   in the last week; there are no other background agents to show yet.
 - Linking says what a connection is for; it doesn't change which account I use.
-  I can't yet switch between a company's own accounts or keys when you're
-  working on that company's things.
+  General chat still cannot switch between a company's own accounts or keys.
+  The dedicated Work runs workflow can use an explicitly selected company
+  OpenAI/Anthropic key and GitHub read token; configure those under Work →
+  Development environments & keys.
 - An email address you link is a label, not a mailbox: I read only the Gmail
   you've connected, so a work address helps only for mail that reaches it.
 
