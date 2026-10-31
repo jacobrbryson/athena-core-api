@@ -377,12 +377,13 @@ function waitingStatusFor(actor) {
  * Add a step to a running mission. Self-contained: the instruction must say
  * what, where and by when, and proof_required says what counts as done.
  */
-async function createStep(familyId, missionId, { actorKey = null, capKey = null, instruction, place = null, proofRequired = "photo", dueAt = null, batchKey = null, needsReapproval = false, audience = "parent_only", planKey = null, phase = null, afterKeys = null, dueMinutes = null }) {
+async function createStep(familyId, missionId, { actorKey = null, capKey = null, instruction, place = null, proofRequired = "photo", dueAt = null, batchKey = null, needsReapproval = false, audience = "parent_only", actorId = null, planKey = null, phase = null, afterKeys = null, dueMinutes = null }) {
 	const mission = await missionById(missionId);
 	if (!mission || Number(mission.family_id) !== Number(familyId)) throw failure("Unknown mission.", 404);
 	const text = String(instruction || "").trim();
 	if (text.length < 10) throw failure("A step needs a self-contained instruction.");
-	const actor = actorKey ? await actorByKey(familyId, actorKey) : null;
+	// By id when a plan named someone from a partner family.
+	const actor = actorId ? (await pool.query("SELECT * FROM athena_gm_actor WHERE id = ?", [actorId]))[0][0] : actorKey ? await actorByKey(familyId, actorKey) : null;
 	const cap = capKey ? await capabilityByKey(familyId, capKey) : null;
 	if (cap && !mission.capabilityIds.includes(Number(cap.id))) throw failure(`${cap.name} is not one of this mission's capabilities.`, 403);
 	const [[{ next }]] = await pool.query("SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM athena_gm_mission_step WHERE mission_id = ?", [mission.id]);

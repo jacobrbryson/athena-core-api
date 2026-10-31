@@ -32,7 +32,7 @@ app.post('/internal/workspace-review/pass', express.json({ limit: '4kb' }), requ
 // Image-bearing routes (photo memories, camera keyframes, project photos) get a larger body
 // limit; everything else keeps the 100kb default. body-parser skips a body
 // that is already parsed, so the global parser below is a no-op for these.
-app.use(["/memory/photos", "/vision/observe", "/vision/describe", "/projects/:uuid/entries", "/projects/property", "/dashboard/health/nutrition/scan", "/guardian-missions/steps/:uuid/photos"], express.json({ limit: "8mb" }));
+app.use(["/memory/photos", "/vision/observe", "/vision/describe", "/projects/:uuid/entries", "/projects/property", "/dashboard/health/nutrition/scan", "/guardian-missions/steps/:uuid/photos", "/guardian-missions/my-steps/:uuid/photo"], express.json({ limit: "8mb" }));
 app.use('/dashboard/family/people/:factUuid/portrait', express.json({ limit: '200kb' }));
 app.use(express.json());
 

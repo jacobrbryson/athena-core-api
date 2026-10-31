@@ -1,5 +1,6 @@
 # Capability ledger
 
+- 2026-10-31 — Guardians: families can join a mission together once a parent accepts; a step can be proven with one photo; a template can let kids press Go with parents told at once; the owner's switches for templates and chat agreements are on the page, and voiceprints can be saved and matched on the server. Needs migration 0115 — `guardians-missions.md` (status: partial)
 - 2026-10-31 — Camera alerts each have an on/off switch, and strange cars can be chosen when adding an alert — `sightings.md` (status: partial)
 - 2026-10-31 — Camera alerts for strangers now push on every camera event, and a new strange-car alert covers any vehicle not in the gallery — `sightings.md` (status: partial)
 - 2026-10-31 — Guardians: approved zones let kids scout on their own, and owner-approved mission templates let any adult start a draft inside their limits; templates are off until switched on. Needs migration 0114 — `guardians-missions.md` (status: partial)

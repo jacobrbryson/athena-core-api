@@ -20,8 +20,10 @@ const pool = require("../../helpers/db");
 const consent = require("./consent");
 const debrief = require("./debrief");
 const identity = require("./identity");
+const partners = require("./partners");
 const missions = require("./index");
 const proof = require("./proof");
+const settings = require("./settings");
 const templates = require("./templates");
 const dispatch = require("../guardianEngine/dispatch");
 
@@ -29,7 +31,7 @@ const MAX_STEPS = 40;
 const MIN_DEADLINE_MINUTES = 5;
 const PHASES = new Set(["prep", "live"]);
 // The proof a plan may ask for: the kinds something can actually complete.
-const PROOFS = new Set(["none", "photo_set", "kid_confirm", "parent_confirm", "code"]);
+const PROOFS = new Set(["none", "photo", "photo_set", "kid_confirm", "parent_confirm", "code"]);
 
 function failure(message, status = 400, extra = {}) {
 	return Object.assign(new Error(message), { status, ...extra });
@@ -131,15 +133,15 @@ function preflight({ mission, steps, actors, agreements, contacts, capabilities,
 	if (people.length && !capabilities.some((c) => c.cap_key === "push_notification")) problems.push("This mission contacts people but doesn't list push notifications.");
 	for (const id of people) {
 		const actor = actors.find((a) => Number(a.id) === id);
-		if (!actor || Number(actor.family_id) !== Number(mission.family_id)) {
-			problems.push("Someone in this plan is in another family, and missions across families aren't supported yet.");
+		if (!actor) {
+			problems.push("Someone in this plan is in a family that hasn't accepted.");
 			continue;
 		}
 		if (!agreements[id]?.allowed) problems.push(`${actor.display_name} hasn't agreed to help train Athena.`);
 		if (!(contacts[id] || []).some((c) => c.reachable)) problems.push(`There's no way to reach ${actor.display_name} yet.`);
 	}
 	if (supervisor) {
-		if (supervisor.kind !== "parent" || Number(supervisor.family_id) !== Number(mission.family_id)) problems.push("The supervisor has to be an adult in this family.");
+		if (supervisor.kind !== "parent" || !actors.some((a) => Number(a.id) === Number(supervisor.id))) problems.push("The supervisor has to be an adult in this mission's families.");
 		else if (!agreements[supervisor.id]?.allowed) problems.push(`${supervisor.display_name} hasn't agreed to help train Athena.`);
 	}
 	return [...new Set(problems)];
@@ -205,13 +207,13 @@ async function advance(familyId, missionId, deliver) {
 async function onApproved(familyId, mission, deliver) {
 	const plan = parse(mission.plan);
 	if (!plan) return;
-	const actors = await familyActors(familyId);
+	const actors = await partners.people(mission);
 	const [caps] = mission.capabilityIds.length ? await pool.query("SELECT cap_key FROM athena_gm_capability WHERE id IN (?)", [mission.capabilityIds]) : [[]];
 	const capabilityKeys = caps.map((c) => c.cap_key);
 	const [skillRows] = await pool.query("SELECT cap_key FROM athena_gm_capability WHERE family_id = ? AND kind = 'skill'", [familyId]);
 	const problems = [
-		...validatePlan(plan, { capabilityKeys, actors: Object.fromEntries(actors.map((a) => [a.actor_key, a])) }),
-		...debrief.validateCriteria(parse(mission.pass_criteria), { capabilityKeys, skillKeys: skillRows.map((c) => c.cap_key), actorKeys: actors.map((a) => a.actor_key) }),
+		...validatePlan(plan, { capabilityKeys, actors: Object.fromEntries(actors.map((a) => [partners.planKey(a, familyId), a])) }),
+		...debrief.validateCriteria(parse(mission.pass_criteria), { capabilityKeys, skillKeys: skillRows.map((c) => c.cap_key), actorKeys: actors.map((a) => partners.planKey(a, familyId)) }),
 	];
 	const [wishes] = await pool.query("SELECT name FROM athena_gm_wish WHERE mission_id = ? AND status = 'wanted'", [mission.id]);
 	for (const w of wishes) problems.push(`This plan needs something that hasn't been built: ${w.name}.`);
@@ -219,11 +221,12 @@ async function onApproved(familyId, mission, deliver) {
 		await missions.stopMission(familyId, mission.uuid, { reason: "the plan failed its checks" });
 		throw failure(problems[0], 409, { problems });
 	}
+	const byPlanKey = Object.fromEntries(actors.map((a) => [partners.planKey(a, familyId), a]));
 	// Approving a stopped mission again carries on from the steps it already has.
 	const written = (await stepsOf(mission.id)).some((s) => s.plan_key);
 	for (const s of written ? [] : plan.steps) {
 		await missions.createStep(familyId, mission.id, {
-			actorKey: s.actor,
+			actorId: byPlanKey[s.actor]?.id,
 			capKey: s.capability || null,
 			instruction: s.instruction,
 			place: s.place || null,
@@ -249,14 +252,12 @@ async function onApproved(familyId, mission, deliver) {
 
 /** Everything preflight reads, for one mission in its own family. */
 async function preflightFor(mission, supervisor = null) {
-	const [steps, actors, capabilities, control, contacts] = await Promise.all([
-		stepsOf(mission.id),
-		familyActors(mission.family_id),
-		capabilitiesOf(mission),
-		missions.control(mission.family_id),
-		identity.contactsByActor(mission.family_id),
-	]);
-	const [agreements, codes] = await Promise.all([consent.standingsFor(mission.family_id, actors), proof.codesSet(steps.map((s) => s.id))]);
+	const [steps, actors, capabilities, control] = await Promise.all([stepsOf(mission.id), partners.people(mission), capabilitiesOf(mission), missions.control(mission.family_id)]);
+	const families = [...new Set(actors.map((a) => Number(a.family_id)))];
+	const reads = await Promise.all(families.map(async (id) => ({ contacts: await identity.contactsByActor(id), agreements: await consent.standingsFor(id, actors.filter((a) => Number(a.family_id) === id)) })));
+	const contacts = Object.assign({}, ...reads.map((r) => r.contacts));
+	const agreements = Object.assign({}, ...reads.map((r) => r.agreements));
+	const codes = await proof.codesSet(steps.map((s) => s.id));
 	const zoneUuid = parse(mission.plan)?.zone;
 	const zone = zoneUuid ? await templates.zoneByUuid(mission.family_id, zoneUuid) : null;
 	return preflight({ mission, steps, actors, agreements, contacts, capabilities, control, supervisor, codes, zone, daylight: templates.isDaylight() });
@@ -271,12 +272,50 @@ async function go(familyId, missionUuid, { by, supervisorUuid, deliver }) {
 	if (!standing.allowed) throw failure("You need to agree to help train Athena before starting a mission.", 403);
 	const problems = await preflightFor(mission, supervisor);
 	if (problems.length) throw failure(problems[0], 409, { problems });
+	await startLive(familyId, mission, by, supervisor, deliver);
+}
+
+async function startLive(familyId, mission, by, supervisor, deliver) {
 	await pool.query(
 		"UPDATE athena_gm_mission SET phase = 'live', go_by_actor_id = ?, go_at = NOW(), supervisor_actor_id = ? WHERE id = ? AND phase = 'ready'",
 		[by.id, supervisor.id, mission.id]
 	);
-	await missions.log(familyId, "mission_go", { actorId: by.id, missionId: mission.id, detail: { supervisor: supervisor.actor_key } });
+	await missions.log(familyId, "mission_go", { actorId: by.id, missionId: mission.id, detail: { supervisor: supervisor.actor_key, by: by.kind } });
 	await advance(familyId, mission.id, deliver);
+}
+
+/** Ready missions this kid may start: under a live template that allows it, and with them in the plan. */
+async function kidGoMissions(actor) {
+	const [rows] = await pool.query(
+		`SELECT m.* FROM athena_gm_mission m JOIN athena_gm_template t ON t.id = m.template_id
+		 WHERE m.family_id = ? AND m.phase = 'ready' AND m.status = 'running' AND t.allow_kid_go = 1 AND t.retired_at IS NULL`,
+		[actor.family_id]
+	);
+	return rows.filter((m) => (parse(m.plan)?.steps || []).some((s) => s.actor === actor.actor_key));
+}
+
+/**
+ * A kid starts a ready mission, only where the owner's template says they may.
+ * Preflight still applies, the first agreed parent supervises, and every agreed
+ * parent is told straight away by `tellAdults`.
+ */
+async function kidGo(actor, missionUuid, { deliver, tellAdults }) {
+	const familyId = Number(actor.family_id);
+	const ready = await kidGoMissions(actor);
+	const row = ready.find((m) => m.uuid === missionUuid);
+	if (!row) throw failure("That mission can't be started from here.", 403);
+	if (!(await settings.isOn("templates"))) throw failure("That mission can't be started from here.", 403);
+	const standing = await consent.standingFor(actor);
+	if (!standing.allowed) throw failure("You need to agree to help train Athena first.", 403);
+	const mission = await missions.missionByUuid(familyId, missionUuid);
+	const adults = (await partners.people(mission)).filter((a) => a.kind === "parent" && Number(a.family_id) === familyId);
+	const agreed = await consent.standingsFor(familyId, adults);
+	const present = adults.filter((a) => agreed[a.id]?.allowed);
+	if (!present.length) throw failure("A parent needs to agree first.", 409);
+	const problems = await preflightFor(mission, present[0]);
+	if (problems.length) throw failure(problems[0], 409);
+	await startLive(familyId, mission, actor, present[0], deliver);
+	await tellAdults(present, `${actor.display_name} started "${mission.title}".`);
 }
 
 /**
@@ -314,4 +353,4 @@ async function stepDone(familyId, step, deliver) {
 	await advance(familyId, step.mission_id, deliver);
 }
 
-module.exports = { stepDone, validatePlan, nextSteps, phaseDone, preflight, preflightFor, advance, onApproved, go, tick };
+module.exports = { kidGo, kidGoMissions, stepDone, validatePlan, nextSteps, phaseDone, preflight, preflightFor, advance, onApproved, go, tick };

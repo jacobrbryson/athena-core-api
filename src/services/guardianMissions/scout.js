@@ -369,4 +369,12 @@ async function verify(familyId, stepUuid, { matches, note = null, actorId = null
 	return missions.stepByUuid(familyId, stepUuid);
 }
 
-module.exports = { requestScout, savePhoto, analyzeSet, verify, deliverer, instructionFor, landmarkBearings, labelKey, DIRECTIONS };
+/** Keep one proof photo in the same private bucket as scouting sets. */
+async function storeProofPhoto(step, buf, contentType) {
+	const uuid = randomUUID();
+	const name = `guardian-missions/${new Date().toISOString().slice(0, 10)}/${step.uuid}/proof-${uuid}.${contentType.split("/")[1]}`;
+	await storage().bucket(BUCKET()).file(name).save(buf, { contentType, resumable: false, metadata: { cacheControl: "private, max-age=0" } });
+	return { uuid, path: `gs://${BUCKET()}/${name}` };
+}
+
+module.exports = { storeProofPhoto, requestScout, savePhoto, analyzeSet, verify, deliverer, instructionFor, landmarkBearings, labelKey, DIRECTIONS };

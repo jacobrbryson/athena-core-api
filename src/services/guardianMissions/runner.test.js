@@ -106,13 +106,14 @@ describe("preflight", () => {
 	});
 
 	test("the supervisor must be an agreed adult in this family", () => {
-		expect(preflight({ ...base(), supervisor: thomas }).join(" ")).toMatch(/adult in this family/);
-		expect(preflight({ ...base(), supervisor: jenny }).join(" ")).toMatch(/adult in this family/);
+		expect(preflight({ ...base(), supervisor: thomas }).join(" ")).toMatch(/adult in this mission/);
+		expect(preflight({ ...base(), supervisor: jenny }).join(" ")).toMatch(/adult in this mission/);
 	});
 
-	test("another family's kid stops Go", () => {
-		const plan = { ...base(), steps: [{ assigned_actor_id: 7 }], actors: [ross, thomas, lena], agreements: { 2: { allowed: true }, 7: { allowed: true } }, contacts: { 7: [{ reachable: true }] } };
-		expect(preflight(plan).join(" ")).toMatch(/another family/);
+	test("a kid from a family that hasn't accepted stops Go; an accepted one doesn't", () => {
+		const plan = { ...base(), steps: [{ assigned_actor_id: 7 }], agreements: { 2: { allowed: true }, 7: { allowed: true } }, contacts: { 7: [{ reachable: true }] } };
+		expect(preflight(plan).join(" ")).toMatch(/hasn't accepted/);
+		expect(preflight({ ...plan, actors: [ross, thomas, lena] })).toEqual([]);
 	});
 });
 

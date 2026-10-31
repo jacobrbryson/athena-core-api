@@ -36,7 +36,13 @@ can then scout on their own inside it, with a parent told if they go outside or
 it's after dark. The owner can also approve a template: a kind of mission with
 limits on tools, people, zones and time. A draft inside a template's limits can
 be started by any adult without the owner reviewing it. Someone still clicks,
-and Go still applies. Templates can be retired at any time.
+and Go still applies. Templates can be retired at any time, and if the owner
+allows it on a template, a kid can press Go themselves and their parents are
+told at once.
+
+Two families can run a mission together: invite the other family from a waiting
+plan, and once their parent joins I can include their kids. A step can also be
+proven with a single photo, which I look at and may ask you to retake.
 
 A step can be proven with a secret code, like a PIN on a card. An adult sets it
 and I never see it, so I can give hints but can't give it away. Before a mission
@@ -120,7 +126,8 @@ good a kid is.
   waiting. If the agreement changes, I wait until they agree again. Safety
   alerts don't depend on this.
 - I never contact a kid before an adult has pressed Go.
-- A mission can only include one family for now.
+- A mission can include another family only after that family's parent accepts,
+  and nobody can add someone else's kid. If they leave, the mission stops.
 - I can't contact anyone else for a mission: no vendors, no outside people.
 - My abilities rise only when my tools pass tests. Time and attempts don't count,
   and a strength doesn't change what I'm allowed to do. They start very low on
@@ -142,13 +149,14 @@ good a kid is.
 - Approval: direct action `approve_guardian_mission` in `src/services/actions/registry.js` (owner-authorized 2026-10-29, never standing, never model-proposable) → `markApproved`.
 - The First Watch ended 2026-10-30: `ended: true` in `src/config/missions.js` closes it for the kids (no more clues; a late card still reads), migration 0107 marks its row completed here.
 - Runner: `src/services/guardianMissions/runner.js`, migration `db/migrations/0111_gm_mission_runner` (locked plan, prep/ready/live/debrief, step dependencies). `go` in `src/controllers/guardianMissions.js`; deadlines reach `POST /internal/guardian-missions/tick` by one-off Cloud Task with the Guardian dispatch caller check, and `src/jobs/incidents.js` is the backstop.
-- Templates and zones: `src/services/guardianMissions/templates.js`, migration `db/migrations/0114_gm_templates_and_zones`, actions `approve_guardian_template` and `start_templated_mission` in `src/services/actions/registry.js` (owner-authorized 2026-10-31, never standing, never model-proposable), `../../../companion/src/components/GuardiansHandoff.tsx`. Off unless `GM_TEMPLATES_ENABLED=on`. Only `athena_gm_actor.can_create_templates` may create one, and no route sets it.
+- Templates and zones: `src/services/guardianMissions/templates.js`, migration `db/migrations/0114_gm_templates_and_zones`, actions `approve_guardian_template` and `start_templated_mission` in `src/services/actions/registry.js` (owner-authorized 2026-10-31, never standing, never model-proposable), `../../../companion/src/components/GuardiansHandoff.tsx`. On or off by the owner's switch, or `GM_TEMPLATES_ENABLED=on`. Only `athena_gm_actor.can_create_templates` may create one, and no route sets it.
 - Planning: `src/services/guardianMissions/planning.js`, migration `db/migrations/0113_gm_planning`, `../../../companion/src/components/GuardiansPlanning.tsx`. Nightly drafts run from `src/jobs/nightly.js`. A model's draft is normalized and checked by code; it can't set reach, status or family.
-- Proof and debrief: `src/services/guardianMissions/proof.js`, `src/services/guardianMissions/debrief.js`, migration `db/migrations/0112_gm_proof_and_debrief`. Kid side: `/guardian-missions/my-steps`, `../../../guardians/src/components/MissionSteps.tsx`. Plans can ask for no proof, kid or parent confirmation, a photo set, or a code; single-photo proof isn't built.
+- Proof and debrief: `src/services/guardianMissions/proof.js`, `src/services/guardianMissions/debrief.js`, migration `db/migrations/0112_gm_proof_and_debrief`. Kid side: `/guardian-missions/my-steps`, `../../../guardians/src/components/MissionSteps.tsx`. Plans can ask for no proof, kid or parent confirmation, a photo, a photo set, or a code.
 - Abilities: `src/services/guardianMissions/abilities.js`, migration `db/migrations/0110_gm_abilities` (abilities, capability links by `cap_key`, mission `reach_rung`, skill `athena_via`). Scores come from `athena_gm_test_result` and are never stored.
-- Opt-in: `src/services/guardianMissions/consent.js`, migration `db/migrations/0109_gm_consent` (immutable versioned terms, append-only events with the terms hash). `gate.mayUse` refuses a recipient without an agreement and anyone not a Guardian or parent, so contact is default-deny. Chat enforcement in `src/controllers/message.js` is off until `GM_CONSENT_ENFORCED=on`; the stop word works in chat regardless. Kid routes `/guardian-missions/my-consent` verify the Guardians token themselves. UI: `../../../companion/src/components/GuardiansConsent.tsx`, `../../../guardians/src/components/ConsentPrompt.tsx`.
+- Opt-in: `src/services/guardianMissions/consent.js`, migration `db/migrations/0109_gm_consent` (immutable versioned terms, append-only events with the terms hash). `gate.mayUse` refuses a recipient without an agreement and anyone not a Guardian or parent, so contact is default-deny. Chat enforcement in `src/controllers/message.js` follows the owner's switch or `GM_CONSENT_ENFORCED=on`; the stop word works in chat regardless. Kid routes `/guardian-missions/my-consent` verify the Guardians token themselves. UI: `../../../companion/src/components/GuardiansConsent.tsx`, `../../../guardians/src/components/ConsentPrompt.tsx`.
 - Channel identity: `src/services/guardianMissions/identity.js` (`whoIs`, `whoIsNumber`, `reachFor`, `syncDevices`, contact events), migration `db/migrations/0108_gm_contact_identity`. Contact points reference `paired_device`; numbers and tokens stay there. Inbound texts are recorded from `src/controllers/sms.js`.
-- Voiceprint storage: `src/services/guardianMissions/voiceprints.js`, encrypted, needs a consent record, never in a prompt. Nothing captures or matches a voice yet.
+- Voiceprints: `src/services/guardianMissions/voiceprints.js`, encrypted, needs a consent record, never in a prompt. `/guardian-missions/voice/print` stores one and `/voice/who` suggests a speaker within a family. Nothing computes a print on a device yet, so this has no users.
+- Partners, switches, kid Go: `src/services/guardianMissions/partners.js`, `settings.js`, `runner.kidGo`, migration `db/migrations/0115_gm_partners_and_switches`. Chat consent refuses to turn on while a Guardian login has no actor.
 - Migration `db/migrations/0103_guardian_missions` (tables `athena_gm_*`), seeds capabilities, mission ideas, actors and the old Guardians-app missions (history; their runtime is untouched) plus First Watch clue titles (never codes).
 - Phone: `native-runtime/AndroidCompanion~/AthenaDashboard.androidlib` — `MissionNotifications`, `ScoutCaptureActivity`, `ScoutUploads`/`ScoutUploadJob`; push data `kind: gm_scout|gm_step`, `step`.
 - Home: `eufy-bridge/server.mjs` POST `/v1/devices/:sn/ptz|talk`, `/v1/porch-light[/morse]`, only with `EUFY_BRIDGE_CONTROL=on`; porch light via `eufy-bridge/tuya/porch.py` (TinyTuya, compose profile `porch`).

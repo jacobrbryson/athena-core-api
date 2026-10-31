@@ -65,7 +65,7 @@ describe("plans and proof", () => {
 	const flight = (extra = {}) => preflight({ mission: { approval_state: "approved", status: "running", family_id: 1 }, steps: [{ id: 5, proof_required: "code" }], actors: [], agreements: {}, contacts: {}, capabilities: [], control: {}, ...extra });
 
 	test("a plan can't ask for proof nothing can complete", () => {
-		expect(validatePlan({ steps: [{ ...base, proof: "photo" }] }, ctx)[0]).toMatch(/proof/);
+		expect(validatePlan({ steps: [{ ...base, proof: "camera_check" }] }, ctx)[0]).toMatch(/proof/);
 		expect(validatePlan({ steps: [{ ...base, proof: "code" }] }, ctx)).toEqual([]);
 	});
 

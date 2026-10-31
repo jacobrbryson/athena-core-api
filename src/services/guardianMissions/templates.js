@@ -7,7 +7,7 @@
  * click, without the owner reviewing that mission. Nothing starts by itself, a
  * model can't start one, and Go and preflight still apply.
  *
- * Templates are off unless GM_TEMPLATES_ENABLED=on, and a template can be
+ * Templates run only while the owner's switch is on, and a template can be
  * retired at any time. A tool needing a parent's approval each time can't go in
  * one: a template never relaxes a per-call approval.
  *
@@ -18,6 +18,7 @@ const { randomUUID } = require("node:crypto");
 const pool = require("../../helpers/db");
 const geo = require("./geo");
 const missions = require("./index");
+const settings = require("./settings");
 
 const DAY_START_HOUR = 8;
 const DAY_END_HOUR = 18;
@@ -37,7 +38,7 @@ const parse = (v) => {
 	}
 };
 
-const enabled = () => process.env.GM_TEMPLATES_ENABLED === "on";
+const enabled = () => settings.isOn("templates");
 const text = (v, max) => String(v ?? "").trim().slice(0, max);
 
 /** Pure: is it daytime where the family is? */
@@ -128,15 +129,15 @@ async function normalizeTemplate(raw, owner) {
 	for (const uuid of zoneUuids) {
 		if (!(await zoneByUuid(familyId, uuid))) throw failure("One of those zones doesn't exist.");
 	}
-	return { family_id: Number(familyId), by: owner.id, name, capabilityKeys, actorKeys, zoneUuids, maxMinutes };
+	return { family_id: Number(familyId), by: owner.id, name, capabilityKeys, actorKeys, zoneUuids, maxMinutes, allowKidGo: raw?.allowKidGo === true };
 }
 
 async function createTemplate(params, actionUuid) {
 	const uuid = randomUUID();
 	await pool.query(
-		`INSERT INTO athena_gm_template (uuid, family_id, name, capability_keys, actor_keys, zone_uuids, max_minutes, approval_action_uuid, created_by_actor_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		[uuid, params.family_id, params.name, JSON.stringify(params.capabilityKeys), JSON.stringify(params.actorKeys), JSON.stringify(params.zoneUuids), params.maxMinutes, actionUuid, params.by]
+		`INSERT INTO athena_gm_template (uuid, family_id, name, capability_keys, actor_keys, zone_uuids, max_minutes, allow_kid_go, approval_action_uuid, created_by_actor_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		[uuid, params.family_id, params.name, JSON.stringify(params.capabilityKeys), JSON.stringify(params.actorKeys), JSON.stringify(params.zoneUuids), params.maxMinutes, params.allowKidGo ? 1 : 0, actionUuid, params.by]
 	);
 	await missions.log(params.family_id, "template_created", { actorId: params.by, detail: { uuid, name: params.name } });
 	return uuid;
@@ -155,7 +156,7 @@ async function activeTemplates(familyId) {
 
 /** The first template this waiting draft fits, if templates are on. */
 async function fitFor(mission) {
-	if (!enabled() || mission.status !== "proposed") return null;
+	if (mission.status !== "proposed" || !(await enabled())) return null;
 	const [caps] = mission.capabilityIds.length ? await pool.query("SELECT cap_key FROM athena_gm_capability WHERE id IN (?)", [mission.capabilityIds]) : [[]];
 	const [[{ wishes }]] = await pool.query("SELECT COUNT(*) AS wishes FROM athena_gm_wish WHERE mission_id = ? AND status = 'wanted'", [mission.id]);
 	const draft = { plan: parse(mission.plan), capabilityKeys: caps.map((c) => c.cap_key), wishes: Number(wishes), reach: mission.reach_rung };
@@ -177,11 +178,13 @@ async function overview(familyId, viewer) {
 		pool.query("SELECT uuid, name, off_limits, daylight_only, max_minutes, lat, radius_m FROM athena_gm_zone WHERE family_id = ? AND retired_at IS NULL ORDER BY name", [familyId]),
 		activeTemplates(familyId),
 	]);
+	const owner = viewer?.can_create_templates === 1;
 	return {
-		enabled: enabled(),
-		canCreate: viewer?.can_create_templates === 1,
+		enabled: await enabled(),
+		canCreate: owner,
+		switches: owner ? { templates: await enabled(), chatConsent: await settings.isOn("chat_consent"), notSetUp: await settings.guardiansNotSetUp().catch(() => null) } : null,
 		zones: zones.map((z) => ({ uuid: z.uuid, name: z.name, offLimits: z.off_limits, daylightOnly: z.daylight_only === 1, maxMinutes: z.max_minutes, mapped: z.lat != null, radiusM: z.radius_m })),
-		templates: templates.map((t) => ({ uuid: t.uuid, name: t.name, capabilities: parse(t.capability_keys) || [], people: parse(t.actor_keys) || [], zones: parse(t.zone_uuids) || [], maxMinutes: t.max_minutes })),
+		templates: templates.map((t) => ({ uuid: t.uuid, name: t.name, capabilities: parse(t.capability_keys) || [], people: parse(t.actor_keys) || [], zones: parse(t.zone_uuids) || [], maxMinutes: t.max_minutes, allowKidGo: t.allow_kid_go === 1 })),
 	};
 }
 

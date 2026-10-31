@@ -9,6 +9,7 @@ jest.mock("uuid", () => ({ v4: () => "00000000-0000-4000-8000-000000000000" }));
 jest.mock("../../helpers/db", () => ({ query: jest.fn() }));
 jest.mock("../guardianEngine/dispatch", () => ({ wakeAt: jest.fn() }));
 jest.mock("../../helpers/crypto", () => ({ encrypt: jest.fn(), decrypt: jest.fn() }));
+jest.mock("./settings", () => ({ isOn: jest.fn(async () => process.env.GM_TEMPLATES_ENABLED === "on"), guardiansNotSetUp: jest.fn() }));
 jest.mock("./index", () => ({ capabilityByKey: jest.fn(), actorByKey: jest.fn(), log: jest.fn(), parentActor: jest.fn(), missionByUuid: jest.fn() }));
 
 const template = { capability_keys: '["push_notification","clue_planning"]', actor_keys: '["ross","thomas"]', zone_uuids: '["z1"]', max_minutes: 90 };
@@ -60,7 +61,7 @@ describe("creating a template", () => {
 		await expect(templates.normalizeTemplate(body, owner)).rejects.toThrow(/isn't in this family/);
 		missions.actorByKey.mockResolvedValue({ id: 3 });
 		const out = await templates.normalizeTemplate({ ...body, status: "approved", family_id: 9 }, owner);
-		expect(out).toEqual({ family_id: 1, by: 2, name: "Yard hunts", capabilityKeys: ["clue_planning"], actorKeys: ["thomas"], zoneUuids: [], maxMinutes: 60 });
+		expect(out).toEqual({ family_id: 1, by: 2, name: "Yard hunts", capabilityKeys: ["clue_planning"], actorKeys: ["thomas"], zoneUuids: [], maxMinutes: 60, allowKidGo: false });
 	});
 
 	test("only the flagged owner can, whatever their family role", async () => {

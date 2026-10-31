@@ -9,6 +9,9 @@ const proof = require('../services/guardianMissions/proof');
 const debrief = require('../services/guardianMissions/debrief');
 const planning = require('../services/guardianMissions/planning');
 const templates = require('../services/guardianMissions/templates');
+const partners = require('../services/guardianMissions/partners');
+const settings = require('../services/guardianMissions/settings');
+const voiceprints = require('../services/guardianMissions/voiceprints');
 const dispatch = require('../services/guardianEngine/dispatch');
 const actions = require('../services/actions');
 const push = require('../services/push');
@@ -197,28 +200,89 @@ const kidSteps = async (actor) => {
   const [rows] = await require('../helpers/db').query(
     `SELECT s.uuid, s.instruction, s.place, s.proof_required, s.due_at, m.title AS mission
      FROM athena_gm_mission_step s JOIN athena_gm_mission m ON m.id = s.mission_id
-     WHERE m.family_id = ? AND m.status = 'running' AND m.phase = 'live' AND s.phase = 'live'
+     WHERE m.status = 'running' AND m.phase = 'live' AND s.phase = 'live'
        AND s.assigned_actor_id = ? AND s.sent_at IS NOT NULL AND s.status = 'waiting_kids'
      ORDER BY s.seq`,
-    [actor.family_id, actor.id]
+    [actor.id]
   );
-  return { steps: rows.map((r) => ({ uuid: r.uuid, instruction: r.instruction, place: r.place, proof: r.proof_required, dueAt: r.due_at, mission: r.mission })) };
+  const ready = await runner.kidGoMissions(actor);
+  return { ready: ready.map((m) => ({ uuid: m.uuid, title: m.title })), steps: rows.map((r) => ({ uuid: r.uuid, instruction: r.instruction, place: r.place, proof: r.proof_required, dueAt: r.due_at, mission: r.mission })) };
 };
 
 const mySteps = asGuardian(async (req, res, { actor }) => res.json(await kidSteps(actor)));
 
 const myCode = asGuardian(async (req, res, { actor }) => {
   if (!actor) return res.status(409).json({ success: false, message: 'Your family has not joined yet.' });
-  const out = await proof.submitCode(Number(actor.family_id), req.params.uuid, req.body?.code, actor);
+  const out = await proof.submitCode(await partners.stepFamilyFor(actor, req.params.uuid), req.params.uuid, req.body?.code, actor);
   return res.json({ ...out, ...(await kidSteps(actor)) });
 });
 
 const myDone = asGuardian(async (req, res, { actor }) => {
   if (!actor) return res.status(409).json({ success: false, message: 'Your family has not joined yet.' });
-  const step = await missions.stepByUuid(Number(actor.family_id), req.params.uuid);
+  const familyId = await partners.stepFamilyFor(actor, req.params.uuid);
+  const step = await missions.stepByUuid(familyId, req.params.uuid);
   if (Number(step.assigned_actor_id) !== Number(actor.id)) return res.status(403).json({ success: false, message: 'That step is for someone else.' });
-  await missions.replyToStep(Number(actor.family_id), req.params.uuid, { actorId: actor.id, reply: 'done', via: 'app' });
+  await missions.replyToStep(familyId, req.params.uuid, { actorId: actor.id, reply: 'done', via: 'app' });
   return res.json(await kidSteps(actor));
+});
+
+const myPhoto = asGuardian(async (req, res, { actor }) => {
+  if (!actor) return res.status(409).json({ success: false, message: 'Your family has not joined yet.' });
+  const familyId = await partners.stepFamilyFor(actor, req.params.uuid);
+  const out = await proof.submitPhoto(familyId, req.params.uuid, { imageBase64: req.body?.image, contentType: req.body?.contentType }, actor, llm);
+  return res.json({ ...out, ...(await kidSteps(actor)) });
+});
+
+/** A kid presses Go, where a template allows it. Their parents hear about it at once. */
+const myGo = asGuardian(async (req, res, { actor }) => {
+  if (!actor) return res.status(409).json({ success: false, message: 'Your family has not joined yet.' });
+  await runner.kidGo(actor, req.params.uuid, {
+    deliver: scout.deliverer(push),
+    tellAdults: (adults, body) => Promise.all(adults.filter((a) => a.profile_id).map((a) => push.sendToProfile(a.profile_id, { title: 'Athena', body }).catch(() => null))),
+  });
+  return res.json(await kidSteps(actor));
+});
+
+/** A person's own voiceprint, computed on their device. Needs their agreement. */
+const saveVoice = asMember(async (req, res, { familyId, actor }) => {
+  const print = req.body?.print;
+  if (!voiceprints.validPrint(print)) return res.status(400).json({ success: false, message: 'That isn\'t a usable voiceprint.' });
+  const standing = await consent.standingFor(actor);
+  if (!standing.allowed) return res.status(403).json({ success: false, message: 'Agree to help train Athena first.' });
+  const [[row]] = await require('../helpers/db').query("SELECT MAX(id) AS id FROM athena_gm_consent_event WHERE subject_actor_id = ? AND role = 'self' AND action = 'agree'", [actor.id]);
+  await voiceprints.saveVoiceprint({ familyId, actorId: actor.id, model: req.body?.model, print, sampleCount: Number(req.body?.samples) || 1, consentEventId: row?.id });
+  return res.json({ saved: true });
+});
+
+/** Who might be speaking, inside this family only. A suggestion, and it authorizes nothing. */
+const whoSpoke = asMember(async (req, res, { familyId }) => {
+  if (!voiceprints.validPrint(req.body?.print)) return res.status(400).json({ success: false, message: 'That isn\'t a usable voiceprint.' });
+  const best = voiceprints.bestMatch(req.body.print, await voiceprints.readVoiceprints(familyId, String(req.body?.model || '').slice(0, 80)));
+  if (!best) return res.json({ person: null });
+  const [rows] = await require('../helpers/db').query('SELECT uuid, display_name FROM athena_gm_actor WHERE id = ?', [best.actorId]);
+  return res.json({ person: rows[0] ? { uuid: rows[0].uuid, name: rows[0].display_name } : null, score: Number(best.score.toFixed(3)) });
+});
+
+const invite = asParent(async (req, res, { familyId, actor }) => {
+  await partners.invite(familyId, req.params.uuid, req.body?.family, actor);
+  return res.json(await planning.workspace(familyId));
+});
+
+const invitations = asParent(async (req, res, { familyId }) => res.json({ missions: await partners.forFamily(familyId) }));
+
+const answerInvite = asParent(async (req, res, { familyId, actor }) => {
+  await partners.respond(familyId, req.params.uuid, req.body?.accept === true, actor);
+  return res.json({ missions: await partners.forFamily(familyId) });
+});
+
+const leaveMission = asParent(async (req, res, { familyId, actor }) => {
+  await partners.leave(familyId, req.params.uuid, actor);
+  return res.json({ missions: await partners.forFamily(familyId) });
+});
+
+const setSwitch = asParent(async (req, res, { familyId, actor }) => {
+  await settings.setSwitch(req.params.key, req.body?.on === true, actor);
+  return res.json(await templates.overview(familyId, actor));
 });
 
 /**
@@ -409,4 +473,4 @@ const testCapability = asParent(async (req, res, { familyId, actor }) => {
   return res.json({ result: { ok: result.ok, error: result.error || null, latencyMs: result.latencyMs }, overview: await missions.overview(familyId) });
 });
 
-module.exports = { handoff, addZone, retireZone, addTemplate, retireTemplate, startTemplated, planningOverview, draft, revise, decideWish, go, tick, setCode, finish, submitCode, mySteps, myCode, myDone, consentOverview, agree, withdraw, myConsent, myAgree, myWithdraw, cameras, testCapability, overview, saveControl, saveCapability, saveRecipient, saveSkill, approve, decline, stop, stopEverything, pause, requestScout, reply, photo, verify, send };
+module.exports = { myPhoto, myGo, saveVoice, whoSpoke, invite, invitations, answerInvite, leaveMission, setSwitch, handoff, addZone, retireZone, addTemplate, retireTemplate, startTemplated, planningOverview, draft, revise, decideWish, go, tick, setCode, finish, submitCode, mySteps, myCode, myDone, consentOverview, agree, withdraw, myConsent, myAgree, myWithdraw, cameras, testCapability, overview, saveControl, saveCapability, saveRecipient, saveSkill, approve, decline, stop, stopEverything, pause, requestScout, reply, photo, verify, send };

@@ -18,6 +18,7 @@
  */
 const pool = require("../../helpers/db");
 const missions = require("./index");
+const partners = require("./partners");
 
 const KINDS = new Set(["all_steps_done", "nothing_stuck", "within_minutes", "predictions_close", "person_steps_done"]);
 const PREDICTION_MISS_FACTOR = 2;
@@ -128,8 +129,9 @@ async function run(familyId, missionId) {
 		 WHERE p.mission_id = ?`,
 		[mission.id]
 	);
-	const [actors] = await pool.query("SELECT id, actor_key FROM athena_gm_actor WHERE family_id = ?", [familyId]);
-	const actorIds = Object.fromEntries(actors.map((a) => [a.actor_key, a.id]));
+	const actors = await partners.people(mission);
+	const actorIds = Object.fromEntries(actors.map((a) => [partners.planKey(a, familyId), a.id]));
+	const familyOf = Object.fromEntries(actors.map((a) => [a.id, a.family_id]));
 
 	const { results, weaknesses } = grade({ criteria, steps, predictions, goAt: mission.go_at, endedAt: mission.ended_at || new Date(), actorIds });
 	const passed = results.filter((r) => r.passed).length;
@@ -139,7 +141,8 @@ async function run(familyId, missionId) {
 	const anchor = (capKey) => (steps.find((s) => s.cap_key === capKey && s.assigned_actor_id) || steps[steps.length - 1])?.id ?? null;
 	for (const r of results) {
 		if (r.capability) await missions.recordTest(familyId, r.capability, { stepId: anchor(r.capability), stage: "debrief", passed: r.passed, notes: r.text });
-		if (r.skill && r.passed && actorIds[r.actor]) await creditSkill(familyId, mission, actorIds[r.actor], r.skill);
+		// A skill sits on the person's own family's record.
+		if (r.skill && r.passed && actorIds[r.actor]) await creditSkill(familyOf[actorIds[r.actor]], mission, actorIds[r.actor], r.skill);
 	}
 	// A later pass on the same tool closes what an earlier mission showed.
 	for (const r of results.filter((x) => x.passed && x.capability)) {

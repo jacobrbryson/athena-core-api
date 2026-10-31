@@ -26,6 +26,7 @@ const abilities = require("./abilities");
 const consent = require("./consent");
 const debrief = require("./debrief");
 const missions = require("./index");
+const partners = require("./partners");
 const runner = require("./runner");
 const templates = require("./templates");
 
@@ -56,7 +57,7 @@ const STEP_SCHEMA = {
 		capability: { type: "string" },
 		instruction: { type: "string" },
 		place: { type: "string" },
-		proof: { type: "string", enum: ["none", "photo_set", "kid_confirm", "parent_confirm", "code"] },
+		proof: { type: "string", enum: ["none", "photo", "photo_set", "kid_confirm", "parent_confirm", "code"] },
 		after: { type: "array", items: { type: "string" } },
 		dueMinutes: { type: "integer" },
 		predictMinutes: { type: "number" },
@@ -162,10 +163,11 @@ function reviewDraft(draft, { skillKeys, actors, zones = [] }) {
 	if (draft.title.length < 3) problems.push("It has no title.");
 	if (!draft.goal) problems.push("It has no goal.");
 	if (!draft.reason) problems.push("It doesn't say why it's worth doing.");
-	const byKey = Object.fromEntries(actors.map((a) => [a.actor_key, a]));
+	const keyOf = (a) => a.planKey || a.actor_key;
+	const byKey = Object.fromEntries(actors.map((a) => [keyOf(a), a]));
 	problems.push(...runner.validatePlan(draft.plan, { capabilityKeys: draft.capabilities, actors: byKey }));
-	problems.push(...debrief.validateCriteria(draft.passCriteria, { capabilityKeys: draft.capabilities, skillKeys, actorKeys: actors.map((a) => a.actor_key) }));
-	problems.push(...validateSafety(draft.plan, Object.fromEntries(actors.map((a) => [a.actor_key, a.kind]))));
+	problems.push(...debrief.validateCriteria(draft.passCriteria, { capabilityKeys: draft.capabilities, skillKeys, actorKeys: actors.map(keyOf) }));
+	problems.push(...validateSafety(draft.plan, Object.fromEntries(actors.map((a) => [keyOf(a), a.kind]))));
 	const kidScouting = draft.plan.steps.some((s) => s.capability === "scout_geography" && byKey[s.actor]?.kind === "kid");
 	if (kidScouting && !zones.includes(draft.plan.zone)) problems.push("Kids can only scout inside an approved zone.");
 	return problems;
@@ -218,7 +220,7 @@ async function gather(familyId) {
 function promptFor(ctx, { note = null, existing = null, count }) {
 	const tools = ctx.capabilities.filter((c) => c.kind === "system").map((c) => ({ key: c.key, name: c.name, status: c.status, about: c.description }));
 	const skills = ctx.capabilities.filter((c) => c.kind === "skill").map((c) => ({ key: c.key, name: c.name }));
-	const people = ctx.actors.map((a) => ({ key: a.actor_key, kind: a.kind }));
+	const people = ctx.actors.map((a) => ({ key: a.planKey || a.actor_key, kind: a.kind }));
 	const evaluation = selfEvaluation(ctx.abilityRows, ctx.weaknesses);
 	const known = ctx.drafts.map((d) => d.title);
 	return `You are Athena, planning a real-world mission for a family to test or add to what you can do.
@@ -239,7 +241,7 @@ Rules:
 - A kid can scout (scout_geography, photo_set) only as a live step inside an approved zone. With no zone, an adult scouts.
 - Contact only the people listed. Nobody else, no vendors, no outsiders, no spending.
 - Every step has a short unique key, an instruction that stands on its own, and a deadline in dueMinutes. Give predictMinutes for how long you honestly expect it to take.
-- "proof" is one of none, photo_set, kid_confirm, parent_confirm, code. Use code only on live steps.
+- "proof" is one of none, photo, photo_set, kid_confirm, parent_confirm, code. Use code only on live steps.
 - Pass criteria are what will grade you, so make them honest and hard to pass by accident. Each "kind" is one of all_steps_done, nothing_stuck, within_minutes (with value), predictions_close (with value), person_steps_done (with actor and skill). Every kind except person_steps_done names a capability from this plan.
 - Say in safety where it happens, who supervises, and what's off limits. Keep kids safe: daylight, known places, an adult nearby.
 - If you need something you don't have, list it in "wishes" with why and a rough cost, and don't put it in capabilities. Never pretend to have it.
@@ -320,6 +322,7 @@ async function revise(familyId, missionUuid, { llm, note, by }) {
 	const mission = await missions.missionByUuid(familyId, missionUuid);
 	if (mission.status !== "proposed" || mission.source !== "athena") throw failure("Only a waiting draft can be revised.", 409);
 	const ctx = await gather(familyId);
+	ctx.actors = (await partners.people(mission)).map((a) => ({ ...a, planKey: partners.planKey(a, familyId) }));
 	const review = contextForReview(ctx);
 	const existing = { title: mission.title, goal: mission.goal, reason: mission.notes, purpose: mission.purpose, plan: parse(mission.plan), passCriteria: parse(mission.pass_criteria) };
 	const [item] = await askModel(llm, promptFor({ ...ctx, drafts: [] }, { note: value, existing, count: 1 }));
@@ -368,7 +371,8 @@ async function workspace(familyId) {
 			readiness: readiness({ draft: { plan, capabilities: stepCaps }, actors: ctx.actors, agreements: ctx.agreements, capabilities: ctx.capabilities, wishes: own }),
 		};
 	}));
-	return { evaluation: selfEvaluation(ctx.abilityRows, ctx.weaknesses), drafts, wishes: wishes.filter((w) => w.status === "wanted"), maxDrafts: MAX_OPEN_DRAFTS };
+	const families = await partners.otherFamilies(familyId);
+	return { evaluation: selfEvaluation(ctx.abilityRows, ctx.weaknesses), drafts, wishes: wishes.filter((w) => w.status === "wanted"), maxDrafts: MAX_OPEN_DRAFTS, families };
 }
 
 /** After the nightly review: drafts for each family with tools. Never contacts anyone. */

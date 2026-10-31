@@ -3,6 +3,7 @@ const consent = require("./consent");
 
 jest.mock("../../helpers/db", () => ({ query: jest.fn() }));
 jest.mock("../../helpers/crypto", () => ({ encrypt: jest.fn(), decrypt: jest.fn() }));
+jest.mock("./settings", () => ({ isOn: jest.fn(async () => process.env.GM_CONSENT_ENFORCED === "on") }));
 
 const terms = { adult: { id: 1, audience: "adult", body_sha256: "a" }, parent_for_child: { id: 2, audience: "parent_for_child", body_sha256: "p" }, child: { id: 3, audience: "child", body_sha256: "c" } };
 const parent = { id: 2, kind: "parent", family_id: 1, display_name: "Ross" };

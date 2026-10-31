@@ -11,12 +11,13 @@
  * people must keep getting a freeze warning whatever they decided about
  * missions.
  *
- * Chat is enforced separately by chatMayProceed, behind GM_CONSENT_ENFORCED, so
+ * Chat is enforced separately by chatMayProceed, behind the owner's switch, so
  * that turning it on is a decision made once agreements are collected rather
  * than a side effect of deploying this. Mission contact is always enforced.
  */
 const { randomUUID } = require("node:crypto");
 const pool = require("../../helpers/db");
+const settings = require("./settings");
 const voiceprints = require("./voiceprints");
 
 /** All anyone who hasn't agreed gets back. Fixed, so no model is involved. */
@@ -171,8 +172,8 @@ const enforced = () => process.env.GM_CONSENT_ENFORCED === "on";
  * closed for anyone it covers.
  */
 async function chatMayProceed({ guardianId = null, profileId = null }) {
-	if (!enforced()) return { allowed: true };
 	if (!guardianId && !profileId) return { allowed: true };
+	if (!(await settings.isOn("chat_consent"))) return { allowed: true };
 	try {
 		const actor = guardianId ? await actorForGuardian(guardianId) : await actorForProfile(profileId);
 		if (!actor) return guardianId ? { allowed: false, reply: FIXED_REPLY } : { allowed: true };
