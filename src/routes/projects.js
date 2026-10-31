@@ -48,6 +48,7 @@ router.post('/property/security/subjects/:id/photos', json, security.addSubjectP
 router.delete('/property/security/subjects/:id/photos/:mediaId', security.removeSubjectPhoto);
 router.put('/property/security/zones/:serial', json, security.setZones);
 router.post('/property/security/rules', json, security.createRule);
+router.patch('/property/security/rules/:id', json, security.updateRule);
 router.delete('/property/security/rules/:id', security.removeRule);
 // Guardian Engine: nightly sweep, storm umbrella watch, incidents (docs/architecture/guardian-engine.md).
 const guardian = require('../controllers/guardian');

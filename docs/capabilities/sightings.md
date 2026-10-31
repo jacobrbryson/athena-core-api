@@ -30,7 +30,9 @@ per occurrence (a dog seen three times in ten minutes is one alert), and held
 until quiet hours end. Alerts for strangers and strange cars (any vehicle not in
 the gallery) are different: every camera event is its own alert, so a busy
 evening can mean a lot of pushes. Naming your own cars with **This is…** stops
-them counting as strange.
+them counting as strange. Each alert has an on/off switch: while it's off the
+cameras still log everything, and nothing from that time is sent when you turn
+it back on.
 
 ## Where to find it
 

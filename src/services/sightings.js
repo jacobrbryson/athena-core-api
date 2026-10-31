@@ -582,7 +582,7 @@ async function chatBlock(query, { timeZone } = {}) {
 async function listRules(profileId) {
 	const [rows] = await pool.query(
 		`SELECT r.*, s.uuid AS subject_uuid, s.name AS subject_name FROM athena_sighting_rule r
-		 LEFT JOIN athena_sighting_subject s ON s.id = r.subject_id WHERE r.profile_id = ? ORDER BY r.created_at`,
+		 LEFT JOIN athena_sighting_subject s ON s.id = r.subject_id WHERE r.profile_id = ? ORDER BY r.id`,
 		[profileId],
 	);
 	return rows.map((r) => ({ id: r.uuid, subjectId: r.subject_uuid, subjectName: r.subject_name, label: r.label, deviceSerial: r.device_serial, zone: r.zone, enabled: !!r.enabled }));
@@ -608,6 +608,18 @@ async function removeRule(profileId, uuid) {
 	if (!r.affectedRows) throw bad("That alert isn't yours or is gone.", 404);
 }
 
+/**
+ * Pause or resume one of the person's own rules. A rule ignores anything from
+ * before created_at, so resuming moves it to now: what the cameras saw while
+ * it was paused stays in the log and isn't pushed afterwards.
+ */
+async function setRuleEnabled(profileId, uuid, enabled) {
+	const on = enabled ? 1 : 0;
+	// Assigned left to right: created_at has to read the old `enabled`.
+	const [r] = await pool.query("UPDATE athena_sighting_rule SET created_at = IF(enabled = 0 AND ? = 1, ?, created_at), enabled = ? WHERE uuid = ? AND profile_id = ?", [on, new Date(), on, uuid, profileId]);
+	if (!r.affectedRows) throw bad("That alert isn't yours or is gone.", 404);
+}
+
 const matchesSubject = (rule, s) => {
 	if (rule.subject_id) return Number(s.subject_id) === Number(rule.subject_id);
 	if (rule.label === STRANGE_CAR) return s.kind === "vehicle" && !s.subject_id;
@@ -618,6 +630,8 @@ const matches = (rule, s) =>
 	matchesSubject(rule, s) &&
 	(!rule.device_serial || s.device_serial === rule.device_serial) &&
 	(!rule.zone || (s.zone || "").toLowerCase() === rule.zone.toLowerCase());
+
+const beforeRule = (rule, s) => !!rule.created_at && new Date(s.seen_at) < new Date(rule.created_at);
 
 /** Profiles whose enabled rules match any of these new sightings. */
 async function profilesToAlert(rows) {
@@ -646,7 +660,7 @@ async function activeAlerts(profileId, { now = new Date() } = {}) {
 	const out = [];
 	for (const rule of rules) {
 		if (EVERY_EVENT.has(rule.label)) continue;
-		const hits = rows.filter((s) => matches(rule, s));
+		const hits = rows.filter((s) => matches(rule, s) && !beforeRule(rule, s));
 		if (!hits.length || now - new Date(hits[0].seen_at) > OCCURRENCE_GAP_MS) continue;
 		let start = hits[0];
 		for (const h of hits.slice(1)) {
@@ -673,7 +687,7 @@ async function oldestUnsaid(profileId, rules, rows, { now, since }) {
 	for (const s of [...rows].reverse()) {
 		if (now - new Date(s.seen_at) > OCCURRENCE_GAP_MS) continue;
 		for (const rule of rules) {
-			if (rule.created_at && new Date(s.seen_at) < new Date(rule.created_at)) continue;
+			if (beforeRule(rule, s)) continue;
 			if (matches(rule, s) && !keys.has(alertKey(rule.uuid, s.event_id))) return { rule: rule.uuid, occurrence: s.event_id, latest: s };
 		}
 	}
@@ -703,7 +717,7 @@ module.exports = {
 	listSubjects, knownPeople, linkPerson, createSubject, updateSubject, removeSubject, addPhoto, removePhoto,
 	listZones, setZones,
 	identify, cleanSubjects, record, list, page, openFrame, chatBlock, teachFromSighting, addEntityFromSighting,
-	listRules, createRule, removeRule, profilesToAlert, activeAlerts, matches, alertKey,
+	listRules, createRule, setRuleEnabled, removeRule, profilesToAlert, activeAlerts, matches, alertKey,
 	prune, RETENTION_DAYS, KINDS, FRAME_KINDS, PACKAGE, STRANGE_CAR, storage: () => storage(), BUCKET,
 	_setStorage: (s) => (storageClient = s),
 };

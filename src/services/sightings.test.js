@@ -152,6 +152,23 @@ describe("alerts", () => {
 			expect(sightings.matches(car, { kind: "person", subject_id: null, label: "stranger" })).toBe(false);
 		});
 	});
+	describe("pausing a rule", () => {
+		test("the update is scoped to the person, and resuming passes the time", async () => {
+			pool.query.mockResolvedValueOnce([{ affectedRows: 1 }]);
+			await sightings.setRuleEnabled(1, "r1", true);
+			const [sql, args] = pool.query.mock.calls.at(-1);
+			expect(sql).toMatch(/created_at = IF\(enabled = 0 AND \? = 1, \?, created_at\), enabled = \?/);
+			expect(args).toEqual([1, expect.any(Date), 1, "r1", 1]);
+		});
+		test("someone else's rule is refused", async () => {
+			pool.query.mockResolvedValueOnce([{ affectedRows: 0 }]);
+			await expect(sightings.setRuleEnabled(2, "r1", false)).rejects.toMatchObject({ status: 404 });
+		});
+		test("a named rule ignores what was seen before it resumed", async () => {
+			pool.query.mockResolvedValueOnce([[{ ...rule, created_at: at(1) }]]).mockResolvedValueOnce([[{ uuid: "a", subject_id: 7, label: "Wynter", zone: "outside the back fence", seen_at: at(5) }]]);
+			expect(await sightings.activeAlerts(1, { now })).toEqual([]);
+		});
+	});
 	test("a stranger rule matches by label, scoped to a camera", () => {
 		const r = { subject_id: null, label: "stranger", device_serial: "T8213D", zone: null };
 		expect(sightings.matches(r, { label: "stranger", device_serial: "T8213D" })).toBe(true);

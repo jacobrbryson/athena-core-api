@@ -172,6 +172,11 @@ const addSubjectPhoto = guarded(async (req, res) => {
 const removeSubjectPhoto = guarded(async (req, res) => { await sightings.removePhoto(req.params.id, req.params.mediaId); return res.status(204).end(); });
 const setZones = guarded(async (req, res) => { await sightings.setZones(req.params.serial, req.body?.zones); return res.status(204).end(); });
 const createRule = guarded(async (req, res, actor) => res.status(201).json({ id: await sightings.createRule(actor.profileId, req.body || {}) }));
+const updateRule = guarded(async (req, res, actor) => {
+  if (typeof req.body?.enabled !== 'boolean') return res.status(400).json({ message: 'Say whether the alert is on or off.' });
+  await sightings.setRuleEnabled(actor.profileId, req.params.id, req.body.enabled);
+  return res.status(204).end();
+});
 const removeRule = guarded(async (req, res, actor) => { await sightings.removeRule(actor.profileId, req.params.id); return res.status(204).end(); });
 /** "This is…": the owner names one unnamed sighting (and any others they ticked). */
 const teachSighting = guarded(async (req, res, actor) => {
@@ -198,4 +203,4 @@ const sightingFrame = guarded(async (req, res, actor) => {
 });
 
 module.exports = { list, snapshot, clip, listMedia, getMedia, updateMedia, removeMedia, BASE, actorFor,
-  sightingsOverview, createSubject, updateSubject, linkSubjectPerson, removeSubject, addSubjectPhoto, removeSubjectPhoto, setZones, createRule, removeRule, sightingFrame, teachSighting, addSightingEntity };
+  sightingsOverview, createSubject, updateSubject, linkSubjectPerson, removeSubject, addSubjectPhoto, removeSubjectPhoto, setZones, createRule, updateRule, removeRule, sightingFrame, teachSighting, addSightingEntity };

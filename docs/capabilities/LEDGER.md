@@ -1,5 +1,7 @@
 # Capability ledger
 
+- 2026-10-31 — Camera alerts each have an on/off switch, and strange cars can be chosen when adding an alert — `sightings.md` (status: partial)
+- 2026-10-31 — Camera alerts for strangers now push on every camera event, and a new strange-car alert covers any vehicle not in the gallery — `sightings.md` (status: partial)
 - 2026-10-31 — Guardians: approved zones let kids scout on their own, and owner-approved mission templates let any adult start a draft inside their limits; templates are off until switched on. Needs migration 0114 — `guardians-missions.md` (status: partial)
 - 2026-10-31 — Guardians: Plan a mission on the Missions tab: Athena reviews her weakest abilities and weaknesses, drafts missions on request and nightly with no notification, revises them from your notes, labels each ready, needs testing, needs building or blocked, and keeps a wishlist that grants nothing. Needs migration 0113 — `guardians-missions.md` (status: partial)
 - 2026-10-31 — Guardians: steps can be proven with a secret code Athena never sees; her time predictions lock at approval; finished missions are graded by code and feed her abilities, weaknesses and kids' skills; kids see their steps in the Guardians app. Needs migration 0112 — `guardians-missions.md` (status: partial)
