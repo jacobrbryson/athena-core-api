@@ -25,6 +25,7 @@ const { randomUUID } = require("node:crypto");
 const pool = require("../../helpers/db");
 const missions = require("./index");
 const geo = require("./geo");
+const story = require("./story");
 const templates = require("./templates");
 
 const BUCKET = () => process.env.PROJECT_MEDIA_BUCKET || "athena-project-media";
@@ -89,8 +90,9 @@ function deliverer(push) {
 		if (!actor?.profile_id) return actor?.guardian_credential_id ? inApp : { sent: 0, skipped: "that person has no phone linked" };
 		const scouting = step.cap_key === "scout_geography" && step.proof_required === "photo_set";
 		const pushed = await push.sendToProfile(actor.profile_id, {
-			title: scouting ? "Athena: scouting request" : "Athena",
-			body: step.instruction,
+			title: scouting && actor.kind !== "kid" ? "Athena: scouting request" : "Athena",
+			// A push is the first thing a kid reads, so it's the quest's words, not the plan's.
+			body: actor.kind === "kid" ? story.forKid(parse(step.mission_plan), { planKey: step.plan_key, instruction: step.instruction }).instruction : step.instruction,
 			data: {
 				kind: scouting ? "gm_scout" : "gm_step",
 				step: step.uuid,

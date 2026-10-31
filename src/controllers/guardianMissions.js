@@ -10,6 +10,7 @@ const debrief = require('../services/guardianMissions/debrief');
 const planning = require('../services/guardianMissions/planning');
 const templates = require('../services/guardianMissions/templates');
 const partners = require('../services/guardianMissions/partners');
+const story = require('../services/guardianMissions/story');
 const settings = require('../services/guardianMissions/settings');
 const voiceprints = require('../services/guardianMissions/voiceprints');
 const dispatch = require('../services/guardianEngine/dispatch');
@@ -198,7 +199,7 @@ const submitCode = asMember(async (req, res, { familyId, actor }) => res.json(aw
 const kidSteps = async (actor) => {
   if (!actor) return { steps: [] };
   const [rows] = await require('../helpers/db').query(
-    `SELECT s.uuid, s.instruction, s.place, s.proof_required, s.due_at, m.title AS mission
+    `SELECT s.uuid, s.plan_key, s.instruction, s.place, s.proof_required, s.due_at, m.title AS mission, m.plan
      FROM athena_gm_mission_step s JOIN athena_gm_mission m ON m.id = s.mission_id
      WHERE m.status = 'running' AND m.phase = 'live' AND s.phase = 'live'
        AND s.assigned_actor_id = ? AND s.sent_at IS NOT NULL AND s.status = 'waiting_kids'
@@ -206,7 +207,20 @@ const kidSteps = async (actor) => {
     [actor.id]
   );
   const ready = await runner.kidGoMissions(actor);
-  return { ready: ready.map((m) => ({ uuid: m.uuid, title: m.title })), steps: rows.map((r) => ({ uuid: r.uuid, instruction: r.instruction, place: r.place, proof: r.proof_required, dueAt: r.due_at, mission: r.mission })) };
+  const [ended] = await require('../helpers/db').query(
+    `SELECT DISTINCT m.uuid, m.title, m.plan
+     FROM athena_gm_mission m JOIN athena_gm_mission_step s ON s.mission_id = m.id
+     WHERE s.assigned_actor_id = ? AND s.sent_at IS NOT NULL AND m.status IN ('completed','stopped')
+       AND m.ended_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)`,
+    [actor.id]
+  );
+  const planOf = (row) => (typeof row.plan === 'string' ? JSON.parse(row.plan) : row.plan);
+  return {
+    ready: ready.map((m) => ({ uuid: m.uuid, title: story.forKid(planOf(m), { title: m.title }).mission })),
+    steps: rows.map((r) => ({ uuid: r.uuid, ...story.forKid(planOf(r), { planKey: r.plan_key, title: r.mission, instruction: r.instruction }), place: r.place, proof: r.proof_required, dueAt: r.due_at })),
+    // What they really helped with, for a while after it ended, however it ended.
+    reveals: ended.map((m) => ({ uuid: m.uuid, ...planOf(m)?.story })).filter((m) => m.reveal).map(({ uuid, title, reveal }) => ({ uuid, title, reveal })),
+  };
 };
 
 const mySteps = asGuardian(async (req, res, { actor }) => res.json(await kidSteps(actor)));

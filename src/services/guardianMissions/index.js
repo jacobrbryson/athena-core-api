@@ -288,6 +288,8 @@ async function markApproved(familyId, missionUuid, profileId, actionUuid) {
 	if (!["proposed", "declined", "stopped", "completed"].includes(mission.status) && mission.approval_state === "approved") {
 		throw failure("That mission is already approved.", 409);
 	}
+	const unfit = runner ? await runner.storyProblems(mission) : [];
+	if (unfit.length) throw failure(unfit[0], 409);
 	await pool.query(
 		`UPDATE athena_gm_mission SET approval_state = 'approved', approved_by_profile_id = ?, approved_at = NOW(),
 		   approval_action_uuid = ?, status = 'running', started_at = COALESCE(started_at, NOW()), ended_at = NULL,
@@ -411,7 +413,7 @@ async function createStep(familyId, missionId, { actorKey = null, capKey = null,
 async function stepByUuid(familyId, uuid) {
 	if (!UUID.test(String(uuid || ""))) throw failure("Unknown step.", 404);
 	const [rows] = await pool.query(
-		`SELECT s.*, m.family_id, m.uuid AS mission_uuid, m.title AS mission_title, a.actor_key, a.display_name AS actor_name, a.kind AS actor_kind, c.cap_key
+		`SELECT s.*, m.family_id, m.uuid AS mission_uuid, m.title AS mission_title, m.plan AS mission_plan, a.actor_key, a.display_name AS actor_name, a.kind AS actor_kind, c.cap_key
 		 FROM athena_gm_mission_step s
 		 JOIN athena_gm_mission m ON m.id = s.mission_id
 		 LEFT JOIN athena_gm_actor a ON a.id = s.assigned_actor_id

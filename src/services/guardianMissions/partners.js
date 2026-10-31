@@ -53,12 +53,12 @@ async function invite(familyId, missionUuid, partnerFamilyId, by) {
 /** What this family has been invited to or joined. */
 async function forFamily(familyId) {
 	const [rows] = await pool.query(
-		`SELECT m.uuid, m.title, m.goal, m.status AS mission_status, m.phase, f.status
+		`SELECT m.uuid, m.title, m.goal, m.plan, m.status AS mission_status, m.phase, f.status
 		 FROM athena_gm_mission_family f JOIN athena_gm_mission m ON m.id = f.mission_id
 		 WHERE f.family_id = ? AND f.status IN ('invited','accepted') AND m.status NOT IN ('completed','stopped','declined','archived')`,
 		[familyId]
 	);
-	return rows.map((r) => ({ uuid: r.uuid, title: r.title, goal: r.goal, status: r.status, missionStatus: r.mission_status, phase: r.phase }));
+	return rows.map((r) => ({ uuid: r.uuid, title: r.title, goal: r.goal, story: (typeof r.plan === "string" ? JSON.parse(r.plan) : r.plan)?.story || null, status: r.status, missionStatus: r.mission_status, phase: r.phase }));
 }
 
 async function membership(familyId, missionUuid) {

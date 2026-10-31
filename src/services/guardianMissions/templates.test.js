@@ -139,7 +139,8 @@ describe("zones", () => {
 			goal: "See the yard.",
 			reason: "Scouting is unproven.",
 			capabilities: ["push_notification", "scout_geography"],
-			steps: [{ key: "scout", phase: "live", actor: "thomas", capability: "scout_geography", instruction: "Photograph the yard in four directions.", proof: "photo_set", dueMinutes: 20 }],
+			steps: [{ key: "scout", phase: "live", actor: "thomas", capability: "scout_geography", instruction: "Photograph the yard in four directions.", quest: "Survey the watch post in all four directions.", proof: "photo_set", dueMinutes: 20 }],
+			story: { title: "The Watch Post", premise: "The Network needs fresh eyes on the watch post.", reveal: "This quest helped me practice reading your yard." },
 			passCriteria: [{ key: "d", kind: "all_steps_done", text: "It got done", capability: "scout_geography" }],
 			safety: { where: "Yard", supervision: "A parent", offLimits: "The road" },
 		};

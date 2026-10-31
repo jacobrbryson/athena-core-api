@@ -28,6 +28,7 @@ const debrief = require("./debrief");
 const missions = require("./index");
 const partners = require("./partners");
 const runner = require("./runner");
+const story = require("./story");
 const templates = require("./templates");
 
 const MAX_OPEN_DRAFTS = 3;
@@ -56,6 +57,7 @@ const STEP_SCHEMA = {
 		actor: { type: "string" },
 		capability: { type: "string" },
 		instruction: { type: "string" },
+		quest: { type: "string" },
 		place: { type: "string" },
 		proof: { type: "string", enum: ["none", "photo", "photo_set", "kid_confirm", "parent_confirm", "code"] },
 		after: { type: "array", items: { type: "string" } },
@@ -80,6 +82,7 @@ const DRAFT_SCHEMA = {
 					weaknessId: { type: "integer" },
 					capabilities: { type: "array", items: { type: "string" } },
 					steps: { type: "array", items: STEP_SCHEMA },
+					story: story.STORY_SCHEMA,
 					passCriteria: {
 						type: "array",
 						items: {
@@ -143,12 +146,14 @@ function normalize(raw, capabilityKeys) {
 				actor: s?.actor,
 				capability: s?.capability || null,
 				instruction: text(s?.instruction, 2000),
+				quest: s?.phase === "live" && s?.quest ? text(s.quest, 1000) : null,
 				place: s?.place ? text(s.place, 255) : null,
 				proof: s?.proof || "none",
 				after: Array.isArray(s?.after) ? s.after : [],
 				dueMinutes: s?.dueMinutes,
 				predictMinutes: s?.predictMinutes ?? null,
 			})),
+			story: story.normalizeStory(raw?.story),
 			zone: raw?.zone ? text(raw.zone, 36) : null,
 			safety: { where: text(raw?.safety?.where, 300), supervision: text(raw?.safety?.supervision, 300), offLimits: text(raw?.safety?.offLimits, 300) },
 		},
@@ -167,7 +172,9 @@ function reviewDraft(draft, { skillKeys, actors, zones = [] }) {
 	const byKey = Object.fromEntries(actors.map((a) => [keyOf(a), a]));
 	problems.push(...runner.validatePlan(draft.plan, { capabilityKeys: draft.capabilities, actors: byKey }));
 	problems.push(...debrief.validateCriteria(draft.passCriteria, { capabilityKeys: draft.capabilities, skillKeys, actorKeys: actors.map(keyOf) }));
-	problems.push(...validateSafety(draft.plan, Object.fromEntries(actors.map((a) => [keyOf(a), a.kind]))));
+	const kinds = Object.fromEntries(actors.map((a) => [keyOf(a), a.kind]));
+	problems.push(...validateSafety(draft.plan, kinds));
+	problems.push(...story.validateStory(draft.plan, kinds));
 	const kidScouting = draft.plan.steps.some((s) => s.capability === "scout_geography" && byKey[s.actor]?.kind === "kid");
 	if (kidScouting && !zones.includes(draft.plan.zone)) problems.push("Kids can only scout inside an approved zone.");
 	return problems;
@@ -176,7 +183,7 @@ function reviewDraft(draft, { skillKeys, actors, zones = [] }) {
 /** Pure: the label for a draft. Worst first. */
 function readiness({ draft, actors, agreements, capabilities, wishes }) {
 	const keys = new Set(draft.plan.steps.map((s) => s.actor));
-	const reasons = [];
+	const reasons = story.validateStory(draft.plan, Object.fromEntries(actors.map((a) => [a.actor_key, a.kind])));
 	for (const a of actors) {
 		if (keys.has(a.actor_key) && !agreements[a.id]?.allowed) reasons.push(`${a.display_name} hasn't agreed to help train Athena.`);
 	}
@@ -245,6 +252,17 @@ Rules:
 - Pass criteria are what will grade you, so make them honest and hard to pass by accident. Each "kind" is one of all_steps_done, nothing_stuck, within_minutes (with value), predictions_close (with value), person_steps_done (with actor and skill). Every kind except person_steps_done names a capability from this plan.
 - Say in safety where it happens, who supervises, and what's off limits. Keep kids safe: daylight, known places, an adult nearby.
 - If you need something you don't have, list it in "wishes" with why and a rough cost, and don't put it in capabilities. Never pretend to have it.
+
+The kids' side:
+Any plan with a kid in it is a Guardian quest. Kids never see your title, goal, reason, instructions or pass criteria. The instructions stay plain, for the parent. Write the kids' words too:
+- "story": "title" is the quest's name; "premise" is two to four sentences a kid reads first; "reveal" is what they read afterwards.
+- Every kid step has a "quest": what that kid reads instead of the instruction. It asks for exactly the same real action in the same real place, nothing more or less, and a kid must be able to do it from those words alone.
+- World: ${story.WORLD}
+- Warm and adventurous for a child, never frightening. Nobody is really hurt, lost or in danger.
+- The kids' words never mention tests, training, scores or how you work, never ask a kid to keep anything from an adult, and never dare a kid past a safety rule. Adults knowing is part of the game.
+- The kids' words carry no hints about what you are or what you want. Those are written by hand elsewhere; never improvise one.
+- "reveal" drops the story and says plainly what the kids helped you practice, and thanks them.
+- If you're revising and the parent didn't ask to change the story, keep it.
 ${existing ? `\nRevise this plan as the parent asks, keeping what still works: ${JSON.stringify(existing)}\n` : ""}${note ? `\nThe parent says: ${JSON.stringify(text(note, 1000))}\n` : ""}
 Write ${count} plan${count === 1 ? "" : "s"}. Return ONLY JSON matching: ${JSON.stringify(DRAFT_SCHEMA)}`;
 }
@@ -365,6 +383,7 @@ async function workspace(familyId) {
 			purpose: m.purpose,
 			version: m.plan_version,
 			steps: plan.steps,
+			story: plan.story || null,
 			safety: plan.safety || null,
 			passCriteria: parse(m.pass_criteria) || [],
 			template: fit ? { name: fit.name } : null,

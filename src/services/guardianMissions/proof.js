@@ -11,6 +11,16 @@ const { randomBytes, scryptSync, timingSafeEqual } = require("node:crypto");
 const pool = require("../../helpers/db");
 const missions = require("./index");
 const scout = require("./scout");
+const story = require("./story");
+
+const parse = (v) => {
+	if (v == null || typeof v === "object") return v;
+	try {
+		return JSON.parse(v);
+	} catch {
+		return null;
+	}
+};
 
 const MAX_WRONG = 10;
 const TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -114,7 +124,12 @@ async function submitPhoto(familyId, stepUuid, { imageBase64, contentType }, act
 		throw failure("Athena couldn't look at that photo. Try again in a bit.", 503);
 	}
 	await missions.recordTest(familyId, "photo_proof", { stepId: step.id, stage: "check", passed: verdict.shows_it, notes: String(verdict.why || "").slice(0, 200), actorId: actor.id });
-	if (!verdict.shows_it) return { correct: false, why: String(verdict.why || "").slice(0, 200) };
+	if (!verdict.shows_it) {
+		const why = String(verdict.why || "").slice(0, 200);
+		// She wrote this about the real instruction, so a kid only sees it if it doesn't give the quest away.
+		const hidden = actor.kind === "kid" && (story.questFor(parse(step.mission_plan), step.plan_key) || story.kidWordsProblem(why));
+		return { correct: false, why: hidden ? "That photo didn't quite show it. Try again." : why };
+	}
 	await missions.completeStep(familyId, step, { actorId: actor.id, proof: { kind: "photo", photo: stored.uuid, by: actor.actor_key } });
 	return { correct: true };
 }

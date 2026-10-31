@@ -17,8 +17,9 @@ const raw = (over = {}) => ({
 	capabilities: keys,
 	steps: [
 		{ key: "hide", phase: "prep", actor: "ross", instruction: "Hide the card by the porch.", dueMinutes: 60, predictMinutes: 10 },
-		{ key: "find", phase: "live", actor: "thomas", capability: "clue_planning", instruction: "Find the card and enter its code.", proof: "code", after: ["hide"], dueMinutes: 30 },
+		{ key: "find", phase: "live", actor: "thomas", capability: "clue_planning", instruction: "Find the card and enter its code.", quest: "A Network courier left a card near the porch. Find it and read me its code.", proof: "code", after: ["hide"], dueMinutes: 30 },
 	],
+	story: { title: "The Porch Courier", premise: "A Network courier passed through last night and left something behind.", reveal: "This quest helped me practice planning clues. Thank you." },
 	passCriteria: [{ key: "done", kind: "all_steps_done", text: "Every step finished", capability: "clue_planning" }],
 	safety: { where: "The back yard", supervision: "A parent at home", offLimits: "The road" },
 	...over,

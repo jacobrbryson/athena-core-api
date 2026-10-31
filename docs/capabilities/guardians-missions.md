@@ -140,6 +140,7 @@ good a kid is.
   how many I send. "Can't right now" is a normal answer, not a failure.
 - Compass headings are approximate (roughly 10–20°) and drift near metal.
 - Kids can't see this page yet; it is for parents.
+- A mission with a kid in it reaches them as a Guardian quest. Parents read the real plan beside the kids' words before approving. The story never hides where it happens, what's off limits or who's supervising, it never asks a kid to keep anything from an adult, and kids are told afterwards what they helped me practice.
 - A number or a phone tells me whose it is, not who is holding it. On a shared
   device I say who it might be, and I can't confirm who someone is by voice.
 
@@ -150,6 +151,7 @@ good a kid is.
 - The First Watch ended 2026-10-30: `ended: true` in `src/config/missions.js` closes it for the kids (no more clues; a late card still reads), migration 0107 marks its row completed here.
 - Runner: `src/services/guardianMissions/runner.js`, migration `db/migrations/0111_gm_mission_runner` (locked plan, prep/ready/live/debrief, step dependencies). `go` in `src/controllers/guardianMissions.js`; deadlines reach `POST /internal/guardian-missions/tick` by one-off Cloud Task with the Guardian dispatch caller check, and `src/jobs/incidents.js` is the backstop.
 - Templates and zones: `src/services/guardianMissions/templates.js`, migration `db/migrations/0114_gm_templates_and_zones`, actions `approve_guardian_template` and `start_templated_mission` in `src/services/actions/registry.js` (owner-authorized 2026-10-31, never standing, never model-proposable), `../../../companion/src/components/GuardiansHandoff.tsx`. On or off by the owner's switch, or `GM_TEMPLATES_ENABLED=on`. Only `athena_gm_actor.can_create_templates` may create one, and no route sets it.
+- Quests: `src/services/guardianMissions/story.js`, stored in the locked plan (`plan.story`, `plan.steps[].quest`), so no migration. Pushes, `/my-steps`, kid Go and photo messages read it; grading and photo checks keep the real instruction. A draft with a kid and no story can't be approved until it's revised.
 - Planning: `src/services/guardianMissions/planning.js`, migration `db/migrations/0113_gm_planning`, `../../../companion/src/components/GuardiansPlanning.tsx`. Nightly drafts run from `src/jobs/nightly.js`. A model's draft is normalized and checked by code; it can't set reach, status or family.
 - Proof and debrief: `src/services/guardianMissions/proof.js`, `src/services/guardianMissions/debrief.js`, migration `db/migrations/0112_gm_proof_and_debrief`. Kid side: `/guardian-missions/my-steps`, `../../../guardians/src/components/MissionSteps.tsx`. Plans can ask for no proof, kid or parent confirmation, a photo, a photo set, or a code.
 - Abilities: `src/services/guardianMissions/abilities.js`, migration `db/migrations/0110_gm_abilities` (abilities, capability links by `cap_key`, mission `reach_rung`, skill `athena_via`). Scores come from `athena_gm_test_result` and are never stored.

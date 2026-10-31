@@ -24,6 +24,7 @@ const partners = require("./partners");
 const missions = require("./index");
 const proof = require("./proof");
 const settings = require("./settings");
+const story = require("./story");
 const templates = require("./templates");
 const dispatch = require("../guardianEngine/dispatch");
 
@@ -199,6 +200,14 @@ async function advance(familyId, missionId, deliver) {
 	}
 }
 
+/** Before an approval: a plan with a kid in it needs its kid-facing words. Refusing here leaves the draft revisable. */
+async function storyProblems(mission) {
+	const plan = parse(mission.plan);
+	if (!plan) return [];
+	const actors = await partners.people(mission);
+	return story.validateStory(plan, Object.fromEntries(actors.map((a) => [partners.planKey(a, mission.family_id), a.kind])));
+}
+
 /**
  * The plan was approved: write its steps and open the first ones. A plan that
  * fails its checks doesn't start, and the approval is withdrawn so it can't sit
@@ -313,7 +322,8 @@ async function kidGo(actor, missionUuid, { deliver, tellAdults }) {
 	const present = adults.filter((a) => agreed[a.id]?.allowed);
 	if (!present.length) throw failure("A parent needs to agree first.", 409);
 	const problems = await preflightFor(mission, present[0]);
-	if (problems.length) throw failure(problems[0], 409);
+	// A kid reads this, and the reasons name her tools. A parent sees them on the page.
+	if (problems.length) throw failure("This quest isn't ready yet. Ask a parent.", 409);
 	await startLive(familyId, mission, actor, present[0], deliver);
 	await tellAdults(present, `${actor.display_name} started "${mission.title}".`);
 }
@@ -353,4 +363,4 @@ async function stepDone(familyId, step, deliver) {
 	await advance(familyId, step.mission_id, deliver);
 }
 
-module.exports = { kidGo, kidGoMissions, stepDone, validatePlan, nextSteps, phaseDone, preflight, preflightFor, advance, onApproved, go, tick };
+module.exports = { storyProblems, kidGo, kidGoMissions, stepDone, validatePlan, nextSteps, phaseDone, preflight, preflightFor, advance, onApproved, go, tick };
