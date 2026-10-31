@@ -25,10 +25,14 @@ app.post('/internal/guardian/dispatch', express.json({ limit: '4kb' }), require(
 // Trading monitor ticks (Cloud Tasks chain + incidents-job backstop), same
 // caller check as the Guardian dispatch (services/trading/monitor.js).
 app.post('/internal/trading/tick', express.json({ limit: '4kb' }), require('./controllers/tradingMonitor').tick);
+// A Guardians mission step's deadline (services/guardianMissions/runner.js), same caller check.
+app.post('/internal/guardian-missions/tick', express.json({ limit: '4kb' }), require('./controllers/guardianMissions').tick);
+// One background pass of a company PR review (Cloud Tasks), same caller check.
+app.post('/internal/workspace-review/pass', express.json({ limit: '4kb' }), require('./controllers/workspaceReviews').pass);
 // Image-bearing routes (photo memories, camera keyframes, project photos) get a larger body
 // limit; everything else keeps the 100kb default. body-parser skips a body
 // that is already parsed, so the global parser below is a no-op for these.
-app.use(["/memory/photos", "/vision/observe", "/vision/describe", "/projects/:uuid/entries", "/projects/property", "/dashboard/health/nutrition/scan"], express.json({ limit: "8mb" }));
+app.use(["/memory/photos", "/vision/observe", "/vision/describe", "/projects/:uuid/entries", "/projects/property", "/dashboard/health/nutrition/scan", "/guardian-missions/steps/:uuid/photos"], express.json({ limit: "8mb" }));
 app.use('/dashboard/family/people/:factUuid/portrait', express.json({ limit: '200kb' }));
 app.use(express.json());
 

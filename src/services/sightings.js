@@ -20,7 +20,7 @@
  * face that is not in the gallery is never matched against anything else —
  * only the owner naming a row ("This is…", teachFromSighting) changes one.
  */
-const { randomUUID } = require("node:crypto");
+const { createHash, randomUUID } = require("node:crypto");
 const pool = require("../helpers/db");
 const llm = require("./llm");
 const securityMedia = require("./securityMedia");
@@ -34,6 +34,14 @@ const KINDS = ["person", "animal", "vehicle"];
  */
 const FRAME_KINDS = [...KINDS, "package"];
 const PACKAGE = "package";
+/** A rule label, never a sighting's: any vehicle the gallery doesn't hold. */
+const STRANGE_CAR = "strange car";
+/**
+ * Alerted per camera event instead of per run of sightings. The owner,
+ * 2026-10-31: "push notifications everytime a stranger or strange car is
+ * recorded". A half-hour run would fold a whole evening of visitors into one.
+ */
+const EVERY_EVENT = new Set(["stranger", STRANGE_CAR]);
 const RETENTION_DAYS = 30;
 const MAX_PHOTOS_PER_SUBJECT = 3;
 const MAX_SUBJECTS_IN_PROMPT = 24;
@@ -586,7 +594,8 @@ async function createRule(profileId, body) {
 	if (body.subjectId) subjectId = (await subjectRow(body.subjectId)).id;
 	else if (body.label === "stranger") label = "stranger";
 	else if (body.label === PACKAGE) label = PACKAGE;
-	else throw bad("Pick someone from the gallery, strangers, or packages.");
+	else if (body.label === STRANGE_CAR) label = STRANGE_CAR;
+	else throw bad("Pick someone from the gallery, strangers, strange cars, or packages.");
 	const serial = body.deviceSerial ? String(body.deviceSerial) : null;
 	if (serial && !/^[A-Za-z0-9_-]{4,40}$/.test(serial)) throw bad("Unknown camera.");
 	const uuid = randomUUID();
@@ -599,8 +608,14 @@ async function removeRule(profileId, uuid) {
 	if (!r.affectedRows) throw bad("That alert isn't yours or is gone.", 404);
 }
 
+const matchesSubject = (rule, s) => {
+	if (rule.subject_id) return Number(s.subject_id) === Number(rule.subject_id);
+	if (rule.label === STRANGE_CAR) return s.kind === "vehicle" && !s.subject_id;
+	return s.label === rule.label;
+};
+
 const matches = (rule, s) =>
-	(rule.subject_id ? Number(s.subject_id) === Number(rule.subject_id) : s.label === rule.label) &&
+	matchesSubject(rule, s) &&
 	(!rule.device_serial || s.device_serial === rule.device_serial) &&
 	(!rule.zone || (s.zone || "").toLowerCase() === rule.zone.toLowerCase());
 
@@ -616,14 +631,21 @@ async function profilesToAlert(rows) {
  * with a match in the last OCCURRENCE_GAP_MS, each as one occurrence keyed by
  * where its run of sightings began — so a dog wandering past three times in
  * ten minutes is one alert, and the same dog out again after an hour is a new one.
+ * Stranger and strange-car rules are EVERY_EVENT: see oldestUnsaid.
  */
 async function activeAlerts(profileId, { now = new Date() } = {}) {
 	const [rules] = await pool.query("SELECT * FROM athena_sighting_rule WHERE profile_id = ? AND enabled = 1", [profileId]);
 	if (!rules.length) return [];
 	const since = new Date(now.getTime() - 6 * 60 * 60_000);
 	const [rows] = await pool.query("SELECT * FROM athena_sighting WHERE seen_at >= ? ORDER BY seen_at DESC", [since]);
+	const everyEvent = rules.filter((r) => EVERY_EVENT.has(r.label));
+	if (everyEvent.length) {
+		const unsaid = await oldestUnsaid(profileId, everyEvent, rows, { now, since });
+		if (unsaid) return [unsaid];
+	}
 	const out = [];
 	for (const rule of rules) {
+		if (EVERY_EVENT.has(rule.label)) continue;
 		const hits = rows.filter((s) => matches(rule, s));
 		if (!hits.length || now - new Date(hits[0].seen_at) > OCCURRENCE_GAP_MS) continue;
 		let start = hits[0];
@@ -634,6 +656,28 @@ async function activeAlerts(profileId, { now = new Date() } = {}) {
 		out.push({ rule: rule.uuid, occurrence: start.uuid, latest: hits[0] });
 	}
 	return out;
+}
+
+/** The dedupe key initiative's sighting_alert trigger makes for one alert on its own. */
+const alertKey = (rule, occurrence) => `sighting:${createHash("sha1").update(`${rule}@${occurrence}`).digest("hex")}`;
+
+/**
+ * One alert at a time, oldest first, so two events landing together are two
+ * pushes rather than the later one standing in for both. A row in the nudge
+ * table is what marks an event as said; the webhook keeps asking until
+ * nothing is left, and the scheduled pass catches any it didn't reach.
+ */
+async function oldestUnsaid(profileId, rules, rows, { now, since }) {
+	const [said] = await pool.query("SELECT dedupe_key FROM athena_nudge WHERE profile_id = ? AND trigger_id = 'sighting_alert' AND created_at >= ?", [profileId, since]);
+	const keys = new Set(said.map((r) => r.dedupe_key));
+	for (const s of [...rows].reverse()) {
+		if (now - new Date(s.seen_at) > OCCURRENCE_GAP_MS) continue;
+		for (const rule of rules) {
+			if (rule.created_at && new Date(s.seen_at) < new Date(rule.created_at)) continue;
+			if (matches(rule, s) && !keys.has(alertKey(rule.uuid, s.event_id))) return { rule: rule.uuid, occurrence: s.event_id, latest: s };
+		}
+	}
+	return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -659,7 +703,7 @@ module.exports = {
 	listSubjects, knownPeople, linkPerson, createSubject, updateSubject, removeSubject, addPhoto, removePhoto,
 	listZones, setZones,
 	identify, cleanSubjects, record, list, page, openFrame, chatBlock, teachFromSighting, addEntityFromSighting,
-	listRules, createRule, removeRule, profilesToAlert, activeAlerts, matches,
-	prune, RETENTION_DAYS, KINDS, FRAME_KINDS, PACKAGE, storage: () => storage(), BUCKET,
+	listRules, createRule, removeRule, profilesToAlert, activeAlerts, matches, alertKey,
+	prune, RETENTION_DAYS, KINDS, FRAME_KINDS, PACKAGE, STRANGE_CAR, storage: () => storage(), BUCKET,
 	_setStorage: (s) => (storageClient = s),
 };

@@ -114,6 +114,28 @@ Browser notifications deep-link to the run. The existing Android notification
 renderer may open the app's default screen instead; the ready run remains under
 Work. Native APK deep-link updates are not part of this implementation.
 
+## Database checks for PR reviews
+
+A PR review with `.sql` files can try them on a disposable database. This needs
+only Docker, this runner and a backup file. It doesn't need a Work environment,
+`WORK_ARTIFACT_BUCKET` or `WORK_BACKUP_PREFIXES`, and the backup stays here.
+
+Put the backup in a folder named for the GitHub owner, in lowercase. The newest
+file is used, and a `.sql`, `.sql.gz` or pg_dump custom archive all work:
+
+```text
+%USERPROFILE%\.athena-work\db-backups\vivacity-tech\sterilized.sql.gz
+```
+
+Set `ATHENA_DB_BACKUPS` to use a different root. It's outside this repository on
+purpose, so company data can't be committed or built into an image. The runner
+polls while idle; a Work Item run takes priority, and a review that waits more
+than eight minutes goes ahead without the check.
+
+Each check runs `postgres:17` with `--network none`, 2 GB of memory and no host
+mounts, then removes the container and its data. PR SQL runs as superuser inside
+that container, so assume it can do anything there and nothing outside it.
+
 ## Isolation and recovery
 
 Only the trusted daemon controls Docker. Application/agent containers run as a
@@ -151,6 +173,8 @@ management is not implemented yet.
 node --test tests/operations.test.mjs
 node tests/docker-smoke.mjs
 node tests/mysql-smoke.mjs
+node --test tests/db-check.test.mjs
+node tests/db-check-smoke.mjs
 ```
 
 From core_api run the work-items, actions, credentials, model adapters and

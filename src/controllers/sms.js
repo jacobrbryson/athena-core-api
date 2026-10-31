@@ -32,6 +32,7 @@ const crypto = require("node:crypto");
 const secrets = require("../services/secrets");
 const push = require("../services/push");
 const sms = require("../services/push/sms");
+const identity = require("../services/guardianMissions/identity");
 const sessionService = require("../services/session");
 const messageService = require("../services/message");
 const { processAiResponse } = require("./gemini");
@@ -141,6 +142,7 @@ async function inbound(req, res) {
 	// never arrives, with nothing in the logs to say why.
 	noReply(res);
 
+	identity.recordInboundText(owner.deviceId);
 	answer(owner.profileId, from, text).catch((err) =>
 		console.error("[sms] could not answer an inbound message:", err.message)
 	);

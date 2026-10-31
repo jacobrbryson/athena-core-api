@@ -207,6 +207,24 @@ async function archiveMessages(profileId, ids) {
 }
 
 /**
+ * Undo of archiveMessages: put messages back in the inbox (add INBOX) and
+ * nothing else. Owner-authorized 2026-10-28 for the Mail page's Undo.
+ */
+async function unarchiveMessages(profileId, ids) {
+	for (let i = 0; i < ids.length; i += 1000) {
+		try {
+			await providerRequest(profileId, PROVIDER, "/users/me/messages/batchModify", {
+				method: "POST",
+				body: { ids: ids.slice(i, i + 1000), addLabelIds: ["INBOX"] },
+			});
+		} catch (err) {
+			throw asWriteAuthError(err);
+		}
+	}
+	return ids.length;
+}
+
+/**
  * Move a message to Gmail's Trash — NOT users.messages.delete. Trash is
  * recoverable there for about 30 days before Gmail purges it, same as
  * dragging something to Trash by hand; a true permanent, unrecoverable
@@ -276,6 +294,7 @@ module.exports = {
 	createDraft,
 	headerValue,
 	archiveMessages,
+	unarchiveMessages,
 	mailboxHistoryId,
 	history,
 	PROVIDER,

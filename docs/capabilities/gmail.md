@@ -18,32 +18,52 @@ the Mail page turn that into bundles, so one approval clears many emails:
 
 - **Archive promos and updates** — out of the inbox, still in All Mail and
   Gmail search. Nothing is deleted.
-- **File receipts** — labelled "Receipts" and logged to your spending.
+- **File receipts** — labelled "Receipts" and logged to your spending. You can
+  see every receipt you've filed under **Family → Finance → Receipts**: date,
+  merchant, category, amount and the email's subject, with each month's total
+  per currency. It's a read-only list, and a receipt with no amount is listed
+  as "not found" rather than guessed.
 - **Unsubscribe** from senders whose promos keep piling up (three or more
   waiting) and who offer a one-click unsubscribe — then archive what they sent.
   This is the one bundle that can't be undone from here.
 - **Add events** from travel and school emails where I found a date — up to
   10 per approval, each listed with its date and time so you can catch a
-  wrong one. Emails with no date stay one-at-a-time so you can type it in.
-- **Needs you** — who is waiting on a reply, and what they're asking for.
-  Open one and press **Draft a reply**: I write a first draft you can edit,
+  wrong one. I check your calendars first: an event whose date has already
+  passed, or that's already on a calendar under the same name that day (a
+  Google Calendar notification email, say), isn't offered. Emails with no
+  date aren't in the bundle; open one from the dashboard's Mail card to type
+  the date in.
+- **Needs you** — on the dashboard's Mail card, who is waiting on a reply
+  and what they're asking for. Open one and press **Draft a reply**: I write a first draft you can edit,
   with anything only you know left in [brackets], and saving puts it in
   Gmail's Drafts in the same thread. I never send it — you do, from Gmail.
 
+The Mail page opens with an **Inbox Assistant** header: how many suggestions I
+found, when I last read your inbox, and how many emails are waiting to be
+sorted, with the **Scan more** button right there.
+Under it all four bundles always show, side by side, so one with nothing in it
+says so instead of disappearing. Each bundle is its own card with its emails
+listed — sender, date, subject, and for receipts the amount — plus a
+**Reversible** or **Not reversible** badge, a "selected of" count with Select
+all, and a button that names exactly what it will do ("Archive 3 emails").
+Unsubscribe is red and says plainly that it can't be undone. Below the cards,
+**Recent activity** lists the mail actions you've approved, ten to a page with
+Previous and Next — what, when, and whether it can be undone. An archive has an **Undo** button: it shows a card
+saying how many emails I'll move back to the inbox, and nothing moves until you
+approve it. Once it's done the row says Undone. Receipts, calendar events and
+unsubscribes have no Undo button here yet; unsubscribing can't be reversed at all.
+
 Pressing a bundle shows exactly what I'll do, and nothing changes in Gmail
-until you press Approve. On the Mail page, **Review** opens a bundle so you can
-untick any email first. Any single email can also be archived, filed, moved to
+until you press Approve. On the Mail page, untick any email in a bundle
+first. On the dashboard's Mail card, any single email can also be archived, filed, moved to
 Trash or hidden from the list from its own view.
 
-New mail arrives by itself. I check Gmail for changes whenever you open the
-dashboard (if I haven't in five minutes) and every fifteen minutes in the
-background, and I sort anything new within about fifteen minutes — it shows
-as **Sorting…** until then. If you archive, delete or read-and-file something
-in the Gmail app, it drops off my list too.
-
-Your older mail — the backlog from before I started keeping up — I only sort
-when you ask: **Scan more** takes the next batch, newest first, and sorts any
-new mail still waiting before it reaches into the backlog.
+I check Gmail for new mail whenever you open the dashboard (if I haven't in
+five minutes), but I only sort it when you press **Scan more** on the Mail
+page. Until then new mail shows as **Sorting…** and doesn't appear in any
+bundle. **Scan more** sorts the mail still waiting first, newest first, then
+reaches into your older mail. If you archive, delete or read-and-file
+something in the Gmail app, it drops off my list too.
 
 ## Where to find it
 
@@ -52,12 +72,13 @@ Google screen; leave it ticked and it's linked to the account you signed in
 with. To connect it separately, or to use a different account, open Connected
 apps from the ⋯ menu, find the Google card, and press Connect on the Gmail row.
 Then open **System** in the left navigation and choose the **Mail** tab, or tap
-the Mail card on the dashboard. Tap any email to see it and what I propose to do with it.
+the Mail card on the dashboard. The Mail page is the four bundles and the
+activity list; the dashboard card is where you open a single email.
 
 ## When it doesn't work
 
-- **"Sorting…" for longer than half an hour.** The background mail job may not
-  be running; press Scan more to sort it now.
+- **Bundles are empty and the inbox says "Sorting…".** Nothing sorts new mail
+  on its own; press Scan more on the Mail page to sort it.
 - **Filing or Trash fails with "reconnect".** Accounts linked before I could
   file mail only gave me read access; reconnect Gmail in Connected apps and
   approve the new permission.
@@ -80,7 +101,7 @@ the Mail card on the dashboard. Tap any email to see it and what I propose to do
 - One approval covers at most 100 emails to archive, 25 receipts, 10 events
   or 10 senders;
   the rest come up in the next bundle.
-- Background sorting covers new mail only; the backlog waits for Scan more.
+- I sort mail only when you press Scan more; there is no scheduled sorting.
 - One connected mailbox.
 
 ## Under the hood
@@ -88,9 +109,11 @@ the Mail card on the dashboard. Tap any email to see it and what I propose to do
 - Triage: `../../src/services/emailTriage.js` (classify → extract → `email_triage`; `pending` rows from sync; Scan more sorts pending first)
 - Sync: `../../src/services/emailSync.js` (Gmail history from `email_sync_state.history_id`; `gone` status when a message leaves the inbox; 404 cursor → bootstrap reconcile; daily reconcile backstop) — design in `../architecture/mail-card.md`
 - Job: `../../src/jobs/mail.js`, scheduled by `../../../deploy/scripts/setup-mail-sync.sh` (every 15 min, per-profile access context); migration `../../db/migrations/0049_email_sync.up.sql`
+- Receipts list: `../../src/services/receiptLedger.js` (read-only, scoped to the caller), `GET /dashboard/email/receipts` (`receipts` in `../../src/controllers/email.js`), `../../../companion/src/components/FamilyReceipts.tsx` on Family → Finance. Test: `../../src/services/receiptLedger.test.js`
 - Reads/writes: `../../src/services/connectors/gmail.js` (`archiveMessages` = batchModify remove INBOX); actions `archive_emails` (phase 2, 1-100, reversible), `add_email_events` (phase 3, 1-10, each item through `file_travel_or_school_email`'s normalize), `unsubscribe_senders` (phase 4, irreversible, link read from the stored row, never params), `draft_reply` (phase 5, `users.drafts.create`, covered by `gmail.modify`; no send path exists) — none standing-approvable, `file_receipt_email`, `file_travel_or_school_email`, `delete_email`, `dismiss_email` in `../../src/services/actions/registry.js`
 - Bundles: `emailTriage.bundles()` — archive = open `promo` + `notification`; categories also `needs_reply` (with a model-written `ask`, display only) and `fyi`; old `other` rows are re-sorted 50 per job pass (`resortOld`)
 - Unsubscribe: `../../src/services/unsubscribe.js` (RFC 8058 one-click https only; public-address check before the request; fixed body, no redirects, 10 s). Drafts: `../../src/services/emailDraft.js` (model writes editable text; `replyMime` strips CR/LF from copied headers)
+- Undo (owner-authorized 2026-10-28): action `unarchive_emails` (never standing; `normalize()` only accepts rows still `archived` under the caller's profile; `execute()` adds INBOX back and sets them `new`), `gmail.unarchiveMessages`, `POST /dashboard/email/undo-archive` (`proposeUndoArchive` reads the emails from the recorded archive action, never the request), `../../../companion/src/components/MailActivity.tsx`. Tests: `../../src/services/actions/unarchiveEmails.test.js`, `../../src/controllers/email.undo.test.js`
 - API: `../../src/controllers/email.js`; dashboard card: `../../src/services/dashboard.js` (syncs first when stale)
 - OAuth: `../../src/services/connectors/registry.js`, `../../src/services/connectors/oauth.js`
 - Frontend: `../../../companion/src/components/MailBundles.tsx`, `../../../companion/src/components/Dashboard.tsx`, `../../../companion/src/components/EmailPanel.tsx`

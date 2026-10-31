@@ -6,6 +6,7 @@ const engine = require("../services/workItems/engine");
 const jira = require("../services/workItems/jira");
 const v = require("../services/workItems/validation");
 const { Storage } = require("@google-cloud/storage");
+const reviews = require("../services/workspaceReviews");
 const storage = new Storage();
 function handler(fn, runner = false) {
   return async (req, res) => {
@@ -126,6 +127,22 @@ const claim = handler(async (a, r) => {
   await engine.notify(a.profileId).catch(() => undefined);
   return { run: await store.claim(a.profileId, r.user.deviceUuid) };
 }, true);
+const claimReviewCheck = handler(
+  async (a, r) => ({
+    check: await reviews.claimCheck(a.profileId, r.user.deviceUuid),
+  }),
+  true,
+);
+const finishReviewCheck = handler(
+  (a, r) =>
+    reviews.finishCheck(
+      a.profileId,
+      r.user.deviceUuid,
+      r.params.uuid,
+      r.body || {},
+    ),
+  true,
+);
 const heartbeat = handler(
   async (a, r) => ({
     active: await store.heartbeat(
@@ -390,6 +407,8 @@ module.exports = {
   propose,
   stop,
   claim,
+  claimReviewCheck,
+  finishReviewCheck,
   heartbeat,
   transition,
   step,

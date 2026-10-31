@@ -1,5 +1,45 @@
 # Capability ledger
 
+- 2026-10-31 — Guardians: approved zones let kids scout on their own, and owner-approved mission templates let any adult start a draft inside their limits; templates are off until switched on. Needs migration 0114 — `guardians-missions.md` (status: partial)
+- 2026-10-31 — Guardians: Plan a mission on the Missions tab: Athena reviews her weakest abilities and weaknesses, drafts missions on request and nightly with no notification, revises them from your notes, labels each ready, needs testing, needs building or blocked, and keeps a wishlist that grants nothing. Needs migration 0113 — `guardians-missions.md` (status: partial)
+- 2026-10-31 — Guardians: steps can be proven with a secret code Athena never sees; her time predictions lock at approval; finished missions are graded by code and feed her abilities, weaknesses and kids' skills; kids see their steps in the Guardians app. Needs migration 0112 — `guardians-missions.md` (status: partial)
+- 2026-10-31 — Guardians: approving a plan now starts adult preparation, and any adult presses Go after a checklist of what's in the way; steps open as proof arrives, deadlines remind once and then flag a parent, and kids hear nothing before Go. Needs migration 0111 — `guardians-missions.md` (status: partial)
+- 2026-10-31 — Guardians: the Skills tab is now Athena's seven abilities, scored only from passed tests; the six team skills and a "who can do what" grid moved to Team, and Morse is split into reading and sending. Needs migration 0110 — `guardians-missions.md` (status: partial)
+- 2026-10-31 — Guardians: mission contact now needs an opt-in that records the exact words agreed to; adults agree at sign-in, a child needs a parent and themselves, anyone can leave, and Athena contacts only Guardians and their parents. Needs migration 0109 — `guardians-missions.md` (status: partial)
+- 2026-10-31 — Guardians: Field Kit shows how Athena can reach each person, and she records who each mission message went to or came from; needs migration 0108 — `guardians-missions.md` (status: partial)
+- 2026-10-30 — Guardians: tap a Guardian, a skill or a mission for a side drawer with its details; the pause and kill switch moved to Field Kit — `guardians-missions.md` (status: partial)
+- 2026-10-30 — Guardians page redesigned: hero with Today's Focus, eight tabs, the whole team with levels and roles, six skills worked out from what the Guardians app recorded, recent activity and upcoming plans — `guardians-missions.md` (status: partial)
+- 2026-10-30 — PR reviews try a pull request's SQL on a disposable copy of the sterilized backup on the local work runner, and report what happened — `workspace-reviews.md` (status: live)
+- 2026-10-30 — Workspace PR reviews now run in the background, in parts for large diffs, and show their progress in Athena's Agents; a review that runs out of output room says so — `workspace-reviews.md` (status: live)
+
+- 2026-10-30 — Workspace PR descriptions now use the same HTML cleanup as discussion entries — `workspace-reviews.md` (status: live)
+
+- 2026-10-30 — Workspace PR discussion entries now start collapsed with author, time and Comment/Approval/Requested changes labels; expanded bodies show readable text without raw HTML markup — `workspace-reviews.md` (status: live)
+
+- 2026-10-30 — Property Projects redesigned with project summary cards, search/status/category/priority/season filters, grouped photo cards, list/timeline views, deadlines, category chart, monthly seasonal work, recent update dates, and filtered CSV export; reuses saved project data and the existing editor — `property.md` (status: live)
+
+- 2026-10-30 — Family, individual Property and Workspace pages now place their existing tabs below the header and above the metrics, matching System's existing layout — `companion-dashboard.md`, `property.md`, `workplaces.md` (status: live)
+
+- 2026-10-30 — Workspace editing now uses a pencil-only button beside the name, with an Edit workspace tooltip and an accessible company-specific label — `workplaces.md`, `workspace-reviews.md` (status: live)
+
+- 2026-10-30 — Edit beside the workspace name now opens a combined drawer for workspace details, company keys, review provider, connected apps/emails and site/project ownership; removed the standalone company-key button from the header — `workplaces.md`, `workspace-reviews.md` (status: live)
+
+- 2026-10-30 — Repository review criteria, company AI key/model management, PR details drawers, company-funded editable AI reviews, and human-confirmed GitHub Comment/Approve/Request Changes submissions (migration 0104) — `workspace-reviews.md` (status: live)
+
+- 2026-10-30 — Workspace metrics now reuse Family/Property's shared Stat cards; the unchanged shared tablist sits below them. Removed the Incidents and Workspace Mail metric cards — `workplaces.md` (status: live)
+
+- 2026-10-30 — Workspace dashboard redesigned with a globe header, shared section tabs, five summary cards, activity/PR/mail filters, deployment and service previews, and quick actions. Vivacity business totals use the owner's supplied figures; previews are labeled pending live data — `workplaces.md` (status: live)
+
+- 2026-10-28 — Receipts you file from Mail now show under Family → Finance → Receipts (read-only, monthly totals); Recent activity also lists filed receipts and Trash moves — `gmail.md` (status: live)
+
+- 2026-10-28 — The Mail page is now just the header (with the Scan more button), the four bundle cards and Recent activity, ten to a page; the inbox list and Needs you block left that page and Needs you stays on the dashboard card — `gmail.md` (status: live)
+
+- 2026-10-28 — Mail is sorted only when you press Scan more; the scheduled mail job was never deployed and the owner chose not to — `gmail.md` (status: live)
+
+- 2026-10-28 — Mail no longer offers to add an event that is already over or already on a calendar; those show under "Not added" with a Dismiss — `gmail.md` (status: live)
+
+- 2026-10-28 — Mail page bundles are now one card each (badge for reversible or not, Select all, button naming the action) with a **Recent activity** list of approved mail actions; an archive has an **Undo** that proposes moving the emails back and needs your approval — `gmail.md` (status: live)
+
 - 2026-10-28 — Scan a bill also reads **letters about a vehicle** (warranty extensions, recall or service-campaign letters): matched to the vehicle by VIN or plate, saved on one approval as a dated line in that vehicle's notes, no calendar event. Bills now also use a "past due after" date when it is later than the billed due date, and escrowed property taxes add no calendar event or Home banner — `property-taxes.md` (status: partial)
 
 - 2026-10-28 — **Scan a bill**: photograph a vehicle registration renewal or a property tax bill (Property → Vehicles / Taxes → Scan a bill, or Chat → Show a photo) and I read it, match it to the right vehicle or your property (asking when it's unclear, never guessing; anything I wasn't sure of is shown to check first), and show ONE approval card: calendar events for the due date(s) with a reminder 14 days earlier, the vehicle's registration date or a new tax record, and the amount. Receipts offer to mark it renewed (rolling the date a year on, like Renewed?) or the payment paid. Scanning the same bill twice does nothing. New Property → Taxes tab; unpaid tax installments close to due join the Home deadline banner. The photo is not kept — only the extracted fields (`athena_bill_scan`). New actions `record_vehicle_bill` / `record_property_tax_bill` (owner-authorized, scanner-only, never standing). Needs migration 0102 (unapplied) and an Android APK rebuild for the phone; not yet tested on a real bill — `property-taxes.md` (status: partial), `vehicles.md`, `photos.md`, `actions.md`, `property.md`
@@ -687,3 +727,9 @@ See [`README.md`](README.md) for the full contract.
 - 2026-10-20 — Community map: zoom in, tap a house, **Add resident** — I read its address from OpenStreetMap and open the neighbor form under the map with it filled in, so you can fill in your street house by house; a house you already have opens for editing — `community.md` (status: live)
 - 2026-10-26 — The Home vehicle-deadline banner hides while your calendar has an upcoming inspection/emissions/registration appointment for that car (an inspection covers the registration too), and returns after the appointment if the date has not moved — `vehicles.md` (status: live)
 - 2026-10-27 — Notifications bell is now an inbox: every push I send is kept there until you acknowledge it (in the app, or with Acknowledge on the phone notification), so tapping one and losing it no longer happens — `companion-dashboard.md` (status: partial)
+
+- 2026-10-28 — Click a workspace card on Work to open that workspace's own dashboard: recent activity, email, pull requests (grouped by repo from the workspace's own GitHub key), Jira, Slack, sites, projects (Jira epics), upcoming work events and agents — `workplaces.md` (status: live)
+
+- 2026-10-29 — A workspace dashboard's pull requests now show every open PR in the organizations its GitHub key belongs to, plus ones that involve you or wait on your review — `workplaces.md` (status: live)
+
+- 2026-10-29 — Guardians: a parent dashboard of my capabilities and the missions that test them, with a master pause, kill switch, per-person mutes and kids' skill badges; first capability is scouting the yard by phone (four photos with GPS and compass, then I describe the spot and someone confirms it) — `guardians-missions.md` (status: partial)

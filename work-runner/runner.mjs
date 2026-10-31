@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { runDbCheck } from "./dbCheck.mjs";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const option = (key) => args[args.indexOf(key) + 1];
@@ -906,6 +907,14 @@ for (;;) {
   try {
     const { run } = await api("/claim", {});
     if (run) await processRun(run);
+    else {
+      const { check } = await api("/review-checks/claim", {});
+      if (check)
+        await api(
+          `/review-checks/${check.uuid}/finish`,
+          await runDbCheck(check, docker),
+        );
+    }
   } catch (e) {
     console.error(e.message);
   }

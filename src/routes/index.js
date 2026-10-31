@@ -134,6 +134,8 @@ module.exports = (clients) => {
 	router.use("/trading", require("./trading"));
 	router.use("/projects", require("./projects"));
 	router.use("/work-items", require("./workItems"));
+	// Companion → Guardians: capabilities, missions and their controls (migration 0103).
+	router.use("/guardian-missions", require("./guardianMissions"));
 	router.use("/integrations", integrationRouter);
 	router.use("/", companionRouter);
 

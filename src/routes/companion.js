@@ -76,6 +76,15 @@ router.get('/dashboard/work/agents', requireAuth, require('../controllers/work')
 router.get('/dashboard/workplaces', requireAuth, require('../controllers/workplaces').list);
 router.post('/dashboard/workplaces', requireAuth, express.json({ limit: '2kb' }), require('../controllers/workplaces').save);
 router.patch('/dashboard/workplaces/:uuid', requireAuth, express.json({ limit: '2kb' }), require('../controllers/workplaces').update);
+router.get('/dashboard/workplaces/:uuid/dashboard', requireAuth, require('../controllers/workplaces').dashboard);
+router.get('/dashboard/workplaces/:uuid/review-settings', requireAuth, require('../controllers/workspaceReviews').settings);
+router.patch('/dashboard/workplaces/:uuid/review-settings', requireAuth, express.json({ limit: '2kb' }), require('../controllers/workspaceReviews').saveSettings);
+router.get('/dashboard/workplaces/:uuid/repository-review', requireAuth, require('../controllers/workspaceReviews').criteria);
+router.patch('/dashboard/workplaces/:uuid/repository-review', requireAuth, express.json({ limit: '80kb' }), require('../controllers/workspaceReviews').saveCriteria);
+router.get('/dashboard/workplaces/:uuid/pull-request', requireAuth, require('../controllers/workspaceReviews').detail);
+router.get('/dashboard/workplaces/:uuid/pull-request/review', requireAuth, require('../controllers/workspaceReviews').status);
+router.post('/dashboard/workplaces/:uuid/pull-request/draft', requireAuth, express.json({ limit: '2kb' }), require('../controllers/workspaceReviews').generate);
+router.post('/dashboard/workplaces/:uuid/pull-request/propose', requireAuth, express.json({ limit: '180kb' }), require('../controllers/workspaceReviews').propose);
 router.delete('/dashboard/workplaces/:uuid', requireAuth, require('../controllers/workplaces').remove);
 router.post('/dashboard/workplaces/:uuid/links', requireAuth, express.json({ limit: '1kb' }), require('../controllers/workplaces').link);
 router.delete('/dashboard/workplaces/:uuid/links/:linkUuid', requireAuth, require('../controllers/workplaces').unlink);
@@ -124,6 +133,7 @@ router.post('/dashboard/places/:uuid/check', requireAuth, require('../controller
 // (to the model / to Gmail via the action layer) so they get their own json
 // limit rather than the bare express.json() used for small bodies elsewhere.
 router.get('/dashboard/email', requireAuth, require('../controllers/email').list);
+router.get('/dashboard/email/receipts', requireAuth, require('../controllers/email').receipts);
 router.get('/dashboard/email/:uuid', requireAuth, require('../controllers/email').detail);
 router.post('/dashboard/email/scan', requireAuth, express.json({ limit: '4kb' }), require('../controllers/email').scan);
 router.post('/dashboard/email/group/propose', requireAuth, express.json({ limit: '16kb' }), require('../controllers/email').proposeGroup);
@@ -131,6 +141,7 @@ router.post('/dashboard/email/delete', requireAuth, express.json({ limit: '4kb' 
 router.post('/dashboard/email/unsubscribe', requireAuth, express.json({ limit: '4kb' }), require('../controllers/email').proposeUnsubscribe);
 router.post('/dashboard/email/events', requireAuth, express.json({ limit: '8kb' }), require('../controllers/email').proposeEvents);
 router.post('/dashboard/email/archive', requireAuth, express.json({ limit: '8kb' }), require('../controllers/email').proposeArchive);
+router.post('/dashboard/email/undo-archive', requireAuth, express.json({ limit: '1kb' }), require('../controllers/email').proposeUndoArchive);
 router.post('/dashboard/email/:uuid/propose', requireAuth, express.json({ limit: '8kb' }), require('../controllers/email').propose);
 router.post('/dashboard/email/:uuid/reply/suggest', requireAuth, express.json({ limit: '1kb' }), require('../controllers/email').suggestReply);
 router.post('/dashboard/email/:uuid/reply/propose', requireAuth, express.json({ limit: '16kb' }), require('../controllers/email').proposeDraft);

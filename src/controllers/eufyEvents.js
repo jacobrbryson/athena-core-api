@@ -5,6 +5,8 @@ const sightings = require('../services/sightings');
 const packageWatch = require('../services/packageWatch');
 const initiative = require('../services/initiative');
 
+const MAX_PASSES = 4;
+
 /**
  * Events from the household Eufy bridge (eufy-bridge/server.mjs), each with
  * at most one frame, for the sightings log (services/sightings.js).
@@ -72,8 +74,12 @@ async function receive(req, res, { record = sightings.record, recheckWith, watch
   // is the backstop for anyone this misses.
   try {
     for (const profileId of await sightings.profilesToAlert(written)) {
-      await evaluateFor(profileId).catch(error =>
-        console.warn('[eufy events] initiative pass failed', { profileId, code: error?.code || null, message: error?.message }));
+      // A pass says one event; keep going while there is another to say.
+      for (let pass = 0; pass < MAX_PASSES; pass += 1) {
+        const outcome = await evaluateFor(profileId).catch(error =>
+          console.warn('[eufy events] initiative pass failed', { profileId, code: error?.code || null, message: error?.message }));
+        if (!outcome?.nudges?.length) break;
+      }
     }
   } catch (error) {
     console.warn('[eufy events] rule check failed', { message: error?.message });

@@ -62,7 +62,7 @@ test("Anthropic uses its native guarded API and preserves reported usage", async
       apiKey: "company-key",
       prompt: "source",
     }),
-  ).toEqual({ text: "{}", model: "chosen", usage });
+  ).toEqual({ text: "{}", model: "chosen", usage, stopReason: null });
   expect(global.fetch).toHaveBeenCalledWith(
     "https://api.anthropic.com/v1/messages",
     expect.objectContaining({
@@ -71,6 +71,23 @@ test("Anthropic uses its native guarded API and preserves reported usage", async
     }),
   );
   expect(openai.generate).not.toHaveBeenCalled();
+});
+test("Anthropic reports why a response stopped, so an empty one can be explained", async () => {
+  global.fetch.mockResolvedValue({
+    ok: true,
+    json: async () => ({
+      content: [{ type: "thinking", thinking: "" }],
+      stop_reason: "max_tokens",
+    }),
+  });
+  await expect(
+    provider.generate({
+      provider: "anthropic",
+      model: "chosen",
+      apiKey: "company-key",
+      prompt: "source",
+    }),
+  ).resolves.toMatchObject({ text: "", stopReason: "max_tokens" });
 });
 test("provider failure cannot fall back to core keys or another vendor", async () => {
   global.fetch.mockResolvedValue({ ok: false, status: 401 });

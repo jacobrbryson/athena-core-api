@@ -1,3 +1,4 @@
+jest.mock("uuid", () => ({ v4: () => "00000000-0000-4000-8000-000000000000" }));
 jest.mock("../helpers/db", () => ({ query: jest.fn() }));
 jest.mock("./location", () => ({ getPref: jest.fn(), recordSample: jest.fn() }));
 jest.mock("./pulsepoint/watch", () => ({ listPlaces: jest.fn() }));

@@ -681,7 +681,7 @@ async function getIndexState(adventureKey) {
 	return {
 		found: rows.length,
 		total: def.entries.length,
-		complete: rows.length >= def.entries.length,
+		complete: Boolean(def.ended) || rows.length >= def.entries.length,
 		act: currentAct(def, firedIds),
 		entries,
 		firedConvergences: fired,
@@ -757,7 +757,7 @@ async function savePendingIndexClue(adventureKey, guardianId, targetEntryId) {
 
 async function issueIndexClue(adventureKey, guardianId) {
 	const def = getIndexDef(adventureKey);
-	if (!def || !guardianId) return null;
+	if (!def || def.ended || !guardianId) return null;
 	const [row, finds, fired] = await Promise.all([
 		loadIndexClueRow(adventureKey, guardianId),
 		loadIndexFinds(adventureKey),
@@ -784,7 +784,7 @@ async function issueIndexClue(adventureKey, guardianId) {
 
 async function getIndexClueState(adventureKey, guardianId) {
 	const def = getIndexDef(adventureKey);
-	if (!def || !guardianId) return null;
+	if (!def || def.ended || !guardianId) return null;
 	const [row, finds, fired] = await Promise.all([
 		loadIndexClueRow(adventureKey, guardianId),
 		loadIndexFinds(adventureKey),

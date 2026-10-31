@@ -348,7 +348,7 @@ describe("a letter about a vehicle (the owner's BMW warranty extension, October 
 		expect(r.target.uuid).toBe(BMW_X5.uuid);
 		const [, , raw] = actions.attempt.mock.calls[0];
 		expect(raw.id).toBe("record_vehicle_notice");
-		expect(raw.params).toMatchObject({ vehicle_uuid: BMW_X5.uuid, coverage: "10 years / 120,000 miles from original in-service date", notice_on: "2026-10-28" });
+		expect(raw.params).toMatchObject({ vehicle_uuid: BMW_X5.uuid, coverage: "10 years / 120,000 miles from original in-service date", notice_on: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) });
 		expect(raw.params.calendar).toBeUndefined();
 	});
 

@@ -613,7 +613,7 @@ describe("keyword gates", () => {
 		["what was my recovery this morning?", ["whoop"]],
 		["how did I sleep last night?", ["whoop"]],
 		["did my training affect my recovery?", ["whoop"]],
-		["what should we have for dinner?", []],
+		["what should we have for dinner?", ["google_keep"]],
 		["tell me a story about dragons", []],
 	];
 
@@ -624,8 +624,8 @@ describe("keyword gates", () => {
 	});
 
 	it("costs nothing for an unrelated message", async () => {
-		expect(context.messageNeedsConnectors("what's for dinner?")).toBe(false);
-		expect(await context.buildContext(PROFILE, { message: "what's for dinner?" })).toBeNull();
+		expect(context.messageNeedsConnectors("tell me a story about dragons")).toBe(false);
+		expect(await context.buildContext(PROFILE, { message: "tell me a story about dragons" })).toBeNull();
 		expect(mockList).not.toHaveBeenCalled();
 		expect(global.fetch).not.toHaveBeenCalled();
 	});

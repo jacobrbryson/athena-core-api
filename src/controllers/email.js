@@ -17,6 +17,7 @@ const emailTriage = require("../services/emailTriage");
 const actions = require("../services/actions");
 const gmail = require("../services/connectors/gmail");
 const emailDraft = require("../services/emailDraft");
+const receiptLedger = require("../services/receiptLedger");
 
 /** Map a service error onto a status, defaulting to 500 rather than 400. */
 function fail(res, err, fallbackMessage) {
@@ -65,6 +66,17 @@ async function list(req, res) {
 		return res.json({ items });
 	} catch (err) {
 		return fail(res, err, "Failed to load your mail list");
+	}
+}
+
+/** The receipts they have filed, with month-by-month totals — read-only, Family → Finance. */
+async function receipts(req, res) {
+	const actor = await requireAdultActor(req, res);
+	if (!actor) return;
+	try {
+		return res.json(await receiptLedger.list(actor.profileId));
+	} catch (err) {
+		return fail(res, err, "Failed to load your receipts");
 	}
 }
 
@@ -272,6 +284,31 @@ async function proposeArchive(req, res) {
 }
 
 /**
+ * Propose undoing a finished archive. The id is the person's own earlier
+ * archive_emails action; the emails come from what was recorded then, never
+ * from the request, so Undo can only reverse something that was approved.
+ */
+async function proposeUndoArchive(req, res) {
+	const actor = await requireAdultActor(req, res);
+	if (!actor) return;
+	try {
+		const original = typeof req.body?.action_uuid === "string" ? await actions.get(actor.profileId, req.body.action_uuid) : null;
+		if (!original || original.action_id !== "archive_emails" || original.status !== "done") {
+			return res.status(404).json({ success: false, message: "That archive can't be undone" });
+		}
+		const uuids = Array.isArray(original.params?.email_triage_uuids) ? original.params.email_triage_uuids : [];
+		const proposed = await actions.propose(actor.profileId, null, {
+			id: "unarchive_emails",
+			params: { email_triage_uuids: uuids, undoes: original.uuid },
+		});
+		if (!proposed) return res.status(422).json({ success: false, message: "Athena couldn't propose that" });
+		return res.json({ success: true, action: proposed });
+	} catch (err) {
+		return fail(res, err, "Failed to propose undoing that archive");
+	}
+}
+
+/**
  * Propose adding the events from several travel/school emails at once (Mail
  * card phase 3). Only open emails where Athena found a date go in; the rest
  * keep the one-at-a-time path, where the person can type the date in.
@@ -349,4 +386,4 @@ async function proposeDraft(req, res) {
 	}
 }
 
-module.exports = { list, detail, scan, propose, proposeGroup, dismiss, deleteEmails, proposeArchive, proposeEvents, proposeUnsubscribe, suggestReply, proposeDraft };
+module.exports = { list, receipts, detail, scan, propose, proposeGroup, dismiss, deleteEmails, proposeArchive, proposeUndoArchive, proposeEvents, proposeUnsubscribe, suggestReply, proposeDraft };

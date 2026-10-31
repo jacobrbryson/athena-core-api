@@ -18,6 +18,9 @@ const codeAgents = require('./codeAgents');
 // is rare enough to live with, and noted here so nobody is surprised.
 const MINUTES = {
   plan_work_item: 0,
+  // Sending a review is the person's own judgment, and undoing an archive saves nothing.
+  submit_workspace_review: 0,
+  unarchive_emails: 0,
   implement_work_item: 0,
   // Project execution records are coordination, not independently measured savings.
   update_project_step: 0,

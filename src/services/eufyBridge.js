@@ -26,7 +26,9 @@ function bridgeDispatcher(root) {
   return tailnetProxy;
 }
 
-async function bridge(path, timeoutMs = 25_000) {
+// `init` (method, body, content type) is for the Guardians house controls,
+// which the bridge accepts only with EUFY_BRIDGE_CONTROL=on.
+async function bridge(path, timeoutMs = 25_000, init = {}) {
   const base = process.env.EUFY_BRIDGE_URL;
   if (!base || !process.env.EUFY_BRIDGE_TOKEN) throw new Error('unconfigured');
   const root = new URL(base);
@@ -35,7 +37,7 @@ async function bridge(path, timeoutMs = 25_000) {
   if (!['http:', 'https:'].includes(root.protocol) || root.username || root.password || root.search || root.hash) throw new Error('invalid_bridge_config');
   const url = new URL(path, root);
   if (url.origin !== root.origin) throw new Error('invalid_bridge_path');
-  return fetch(url, { headers: { Authorization: `Bearer ${process.env.EUFY_BRIDGE_TOKEN}` }, signal: AbortSignal.timeout(timeoutMs), dispatcher: bridgeDispatcher(root) });
+  return fetch(url, { method: init.method || 'GET', body: init.body, headers: { Authorization: `Bearer ${process.env.EUFY_BRIDGE_TOKEN}`, ...(init.contentType ? { 'Content-Type': init.contentType } : {}) }, signal: AbortSignal.timeout(timeoutMs), dispatcher: bridgeDispatcher(root) });
 }
 
 const SERIAL = /^[A-Za-z0-9_-]{4,40}$/;

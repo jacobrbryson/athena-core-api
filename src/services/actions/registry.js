@@ -372,6 +372,7 @@ async function projectSession(ctx, row, { on, step, timeZone, pastOnly = false }
 }
 
 const ACTIONS = [
+	require('./workspaceReview'),
 	...require('../workItems/actions'),
 	// Bill scan (owner-authorized 2026-10-28): billActions.js says how narrow these are.
 	...require('./billActions'),
@@ -1739,6 +1740,61 @@ const ACTIONS = [
 			return { ref: open.map((r) => r.uuid).join(","), detail: { archived: open.length } };
 		},
 	},
+	// Undo for archive_emails, added on the owner's explicit instruction
+	// 2026-10-28 ("Authorize undo"). It goes through the same propose / confirm /
+	// audit sequence as everything else: the Undo button only proposes it, and a
+	// person's Approve runs it. It adds INBOX back to mail Athena itself marked
+	// archived and nothing else.
+	{
+		id: "unarchive_emails",
+		label: "Move emails back to the inbox",
+		provider: "gmail",
+		consentType: "action_authority",
+		// Archive is the same move the other way, from Gmail's own "Archive".
+		reversible: true,
+		// Never a standing approval: it is the owner's call, not this code's.
+		standing: false,
+		describe:
+			"Put emails Athena archived back in the inbox — only when the person asks " +
+			'to undo or put back an archive ("put those back", "undo that archive"). ' +
+			"Only mail Athena archived can be moved back.",
+		params: {
+			email_triage_uuids: "Array of 1-100 email_triage uuids that were archived. Required.",
+			undoes: "The uuid of the archive_emails action this undoes, if known. Optional.",
+		},
+
+		async normalize(raw = {}, ctx = {}) {
+			const uuids = Array.isArray(raw.email_triage_uuids) ? raw.email_triage_uuids : [];
+			if (!uuids.length) throw invalid("Needs at least one email");
+			if (uuids.length > 100) throw invalid("Too many emails in one proposal");
+			const clean = [...new Set(uuids.map((u) => {
+				const email_triage_uuid = str(u, 36);
+				if (!email_triage_uuid) throw invalid("Each entry needs an email_triage_uuid");
+				return email_triage_uuid;
+			}))];
+			// Vouched against the person's own rows: only mail Athena archived.
+			const rows = await emailTriage.getRowsByUuids(ctx.profileId, clean);
+			const archived = rows.filter((r) => r.status === "archived").map((r) => r.uuid);
+			if (!archived.length) throw invalid("None of those emails were archived by Athena");
+			const undoes = str(raw.undoes, 36);
+			return { email_triage_uuids: archived, ...(undoes ? { undoes } : {}) };
+		},
+
+		summarize(p) {
+			const n = p.email_triage_uuids.length;
+			return `Move ${n === 1 ? "this email" : `${n} emails`} back to your inbox`;
+		},
+
+		async execute(profileId, params) {
+			const rows = await emailTriage.getRowsByUuids(profileId, params.email_triage_uuids);
+			// Only what is still archived here; anything already moved on is skipped.
+			const archived = rows.filter((r) => r.status === "archived");
+			if (!archived.length) throw new Error("None of these emails are archived any more");
+			await gmail.unarchiveMessages(profileId, archived.map((r) => r.gmail_message_id));
+			await emailTriage.markStatus(profileId, archived.map((r) => r.uuid), "new");
+			return { ref: archived.map((r) => r.uuid).join(","), detail: { restored: archived.length } };
+		},
+	},
 	// Projects (services/projects), added on the owner's instruction 2026-10-13
 	// (projects phase 1b: "add and update projects from chat"). The same writes
 	// the Projects page makes, so "I finished the gutters" or "add a step to the
@@ -2643,6 +2699,106 @@ const DIRECT_ACTIONS = [
 			} catch (err) {
 				throw choreWriteError(err);
 			}
+		},
+	},
+	{
+		// Owner-authorized 2026-10-29: one approval of a mission's plan, then
+		// Athena runs it within the capabilities the plan lists. Direct only -
+		// a model can never propose it - and never standing. Anything a step
+		// does that spends money or contacts an outsider still asks per call.
+		id: "approve_guardian_mission",
+		label: "Approve a Guardians mission plan",
+		provider: null,
+		consentType: null,
+		reversible: true,
+		standing: false,
+		direct: true,
+		describe: "Approve a proposed Guardians mission (Companion → Guardians), which starts its adult preparation.",
+		params: { mission: "The mission's uuid." },
+		sameAs: false,
+		async availableTo(profileId) {
+			return Boolean(await require("../guardianMissions").parentActor(profileId));
+		},
+		async normalize(raw = {}, ctx = {}) {
+			const missions = require("../guardianMissions");
+			const parent = await missions.parentActor(ctx.profileId);
+			if (!parent) throw invalid("Only a parent can approve a mission");
+			const mission = await missions.missionByUuid(parent.family_id, raw.mission);
+			if (mission.source === "legacy") throw invalid("That mission runs in the Guardians app");
+			if (mission.status === "running" || mission.status === "paused") throw invalid("That mission is already running");
+			return { mission: mission.uuid, title: mission.title, family_id: Number(parent.family_id) };
+		},
+		summarize(p) {
+			return `Approve the Guardians mission "${p.title}"`.slice(0, 500);
+		},
+		async execute(profileId, params, ctx = {}) {
+			const missions = require("../guardianMissions");
+			const done = await missions.markApproved(params.family_id, params.mission, profileId, ctx.actionUuid);
+			return { ref: done.uuid, detail: `Now ${done.status}` };
+		},
+	},
+	// Owner-authorized 2026-10-31. The owner approves a kind of mission once, with
+	// limits; a person's click is recorded each time. Neither of these is standing
+	// or model-proposable, and templates are off unless GM_TEMPLATES_ENABLED=on.
+	{
+		id: "approve_guardian_template",
+		label: "Approve a Guardians mission template",
+		provider: null,
+		consentType: null,
+		reversible: true,
+		standing: false,
+		direct: true,
+		describe: "Approve a kind of Guardians mission once, with limits on tools, people, zones and time.",
+		params: { template: "The template's name and limits." },
+		sameAs: false,
+		async availableTo(profileId) {
+			const parent = await require("../guardianMissions").parentActor(profileId);
+			return parent?.can_create_templates === 1;
+		},
+		async normalize(raw = {}, ctx = {}) {
+			const owner = await require("../guardianMissions").parentActor(ctx.profileId);
+			if (owner?.can_create_templates !== 1) throw invalid("Only the owner can create a template");
+			return require("../guardianMissions/templates").normalizeTemplate(raw, owner);
+		},
+		summarize(p) {
+			return `Approve the Guardians template "${p.name}"`.slice(0, 500);
+		},
+		async execute(profileId, params, ctx = {}) {
+			const uuid = await require("../guardianMissions/templates").createTemplate(params, ctx.actionUuid);
+			return { ref: uuid, detail: "Template approved" };
+		},
+	},
+	{
+		id: "start_templated_mission",
+		label: "Start a Guardians mission under a template",
+		provider: null,
+		consentType: null,
+		reversible: true,
+		standing: false,
+		direct: true,
+		describe: "Start a waiting Guardians draft that stays inside an approved template's limits.",
+		params: { mission: "The mission's uuid." },
+		sameAs: false,
+		async availableTo(profileId) {
+			return Boolean(await require("../guardianMissions").parentActor(profileId));
+		},
+		async normalize(raw = {}, ctx = {}) {
+			const missions = require("../guardianMissions");
+			const parent = await missions.parentActor(ctx.profileId);
+			if (!parent) throw invalid("Only a parent can start a mission");
+			const mission = await missions.missionByUuid(parent.family_id, raw.mission);
+			const template = await require("../guardianMissions/templates").fitFor(mission);
+			if (!template) throw invalid("That draft isn't inside an approved template");
+			return { mission: mission.uuid, title: mission.title, template: template.uuid, family_id: Number(parent.family_id) };
+		},
+		summarize(p) {
+			return `Start the Guardians mission "${p.title}" under its template`.slice(0, 500);
+		},
+		async execute(profileId, params, ctx = {}) {
+			const missions = require("../guardianMissions");
+			await require("../guardianMissions/templates").recordStart(params.family_id, params.mission, params.template);
+			const done = await missions.markApproved(params.family_id, params.mission, profileId, ctx.actionUuid);
+			return { ref: done.uuid, detail: `Now ${done.status}` };
 		},
 	},
 ];

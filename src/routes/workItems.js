@@ -11,6 +11,8 @@ router.post("/keys/:credentialUuid/revoke", c.revokeKey);
 router.get("/runs", c.listRuns);
 router.post("/runs", c.createRun);
 router.post("/claim", c.claim);
+router.post("/review-checks/claim", c.claimReviewCheck);
+router.post("/review-checks/:uuid/finish", c.finishReviewCheck);
 router.get("/runs/:uuid", c.getRun);
 router.post("/runs/:uuid/propose", c.propose);
 router.post("/runs/:uuid/stop", c.stop);

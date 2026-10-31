@@ -401,7 +401,9 @@ function buildIndexNudge(mission) {
   if (mission.phase === "index_complete") {
     return `
 # Current Mission: The First Watch — INDEX COMPLETE
-Every one of the ${total} index cards has been recovered. The record is whole. Celebrate this properly and then go quiet — this ending is meant to land softly, not loudly.
+${(mission.foundCount ?? found.length) >= total
+  ? `Every one of the ${total} index cards has been recovered. The record is whole.`
+  : `The search is over: the Guardians recovered ${mission.foundCount ?? found.length} of ${total} index cards, and that is the record as it stands. Never say every card was found. If a Guardian brings you the missing one, read it like any other.`} Celebrate this properly and then go quiet — this ending is meant to land softly, not loudly.
 ${lines.join("\n")}
 
 # The recovered index (everything the Guardians have found)

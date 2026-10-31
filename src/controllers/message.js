@@ -11,6 +11,8 @@ const { isEcho } = require("../services/echo");
 const missionService = require("../services/mission");
 const gameService = require("../services/game");
 const chatThreads = require("../services/chatThreads");
+const guardianMissions = require("../services/guardianMissions");
+const consent = require("../services/guardianMissions/consent");
 const {
   broadcastToGuardian,
   broadcastToAdventure,
@@ -304,6 +306,22 @@ async function addMessage(req, res, clients) {
       if (linkedProfileId) {
         ctx.guardian = { ...(ctx.guardian || {}), linkedProfileId };
       }
+    }
+
+    // The stop word works for anyone, agreed or not, and before anything else:
+    // it stops missions, then the turn carries on as normal. Never blocks chat.
+    const guardianId = ctx.guardianAuth?.guardian_id || null;
+    const missionActor = await (guardianId
+      ? consent.actorForGuardian(guardianId)
+      : consent.actorForProfile(callerProfileId)
+    ).catch(() => null);
+    await guardianMissions
+      .stopWordHeard(missionActor, text)
+      .catch((err) => console.warn("[message] stop word failed:", err.message));
+
+    const chat = await consent.chatMayProceed({ guardianId, profileId: callerProfileId });
+    if (!chat.allowed) {
+      return res.status(403).json({ success: false, consentRequired: true, message: chat.reply });
     }
 
     // The onboarding "communication check" invites very short replies

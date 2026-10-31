@@ -114,7 +114,9 @@ async function getCurrentMission(req, res) {
 							? "Index Complete"
 							: `${index.found}/${index.total} records`,
 						summary: index.complete
-							? "The index is whole. Every piece the First Watch scattered has been recovered."
+							? index.found >= index.total
+								? "The index is whole. Every piece the First Watch scattered has been recovered."
+								: `The First Watch is closed. ${index.found} of ${index.total} records were recovered.`
 							: "Index cards from 1963 are scattered across the high ground. Find them and read Athena the code on each one.",
 					},
 					families: [],

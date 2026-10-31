@@ -11,6 +11,9 @@ triggers: [dashboard, briefing, today, home screen, navigation, order, community
 
 ## What I can do
 
+On Family, each property's page, System and each workspace's page, I show the
+section tabs below the header and above the summary metrics.
+
 My Right Now suggestion appears as a compact metric. Click it to open a side
 drawer with the reasoning, evidence and existing Talk it through and Places &
 projects options. It still appears only when there is a timely suggestion or

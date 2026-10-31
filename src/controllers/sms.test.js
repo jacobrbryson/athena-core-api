@@ -18,6 +18,7 @@ jest.mock("../services/push/sms", () => ({
 jest.mock("../services/session", () => ({ getOrCreateForProfile: jest.fn() }));
 jest.mock("../services/message", () => ({ addMessage: jest.fn(), getMessages: jest.fn() }));
 jest.mock("./gemini", () => ({ processAiResponse: jest.fn() }));
+jest.mock("../services/guardianMissions/identity", () => ({ recordInboundText: jest.fn() }));
 
 const crypto = require("node:crypto");
 const secrets = require("../services/secrets");

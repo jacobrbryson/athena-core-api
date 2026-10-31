@@ -107,6 +107,9 @@ const MISSIONS = {
 		objective: "index",
 		adventures: {
 			lake_norman_guardians: {
+				// The owner closed the mission on 2026-10-30 with 27 of 28 found.
+				// No more clues are issued; a late card still reads normally.
+				ended: true,
 				entries: [
 					/* ---------------- Act I — Start With the Water ---------------- */
 					{

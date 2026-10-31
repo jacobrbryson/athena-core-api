@@ -27,7 +27,10 @@ You can set alerts like "tell me when Wynter is seen on the Backyard camera
 outside the back fence" or "tell me when a stranger is at the Doorbell". I send
 them to your phone like my other alerts: only if alerts are on for you, once
 per occurrence (a dog seen three times in ten minutes is one alert), and held
-until quiet hours end.
+until quiet hours end. Alerts for strangers and strange cars (any vehicle not in
+the gallery) are different: every camera event is its own alert, so a busy
+evening can mean a lot of pushes. Naming your own cars with **This is…** stops
+them counting as strange.
 
 ## Where to find it
 

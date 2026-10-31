@@ -11,6 +11,25 @@ triggers: [property, property map, acreage, aerial image, property health, key a
 
 ## What I can do
 
+I show the property section tabs below the header and above the summary metrics.
+
+On **Property → Projects**, I show a project dashboard with summary cards for
+project totals, active work, saved working budgets, projects needing attention
+and seasonal focus. Project cards are grouped into **Needs Attention**, **Active
+Projects**, **Planned / On Hold** and **Completed / Dropped**, with saved photos
+when available and progress calculated from their steps or contributing parts.
+Programs remain listed separately below the dashboard. Attention means high or
+critical priority, blocked work, a due follow-up, or a target date already past.
+
+Search by title, goal or reference, filter by status, category (the saved project
+kind), priority or seasonal months, and switch between **Cards**, **List** and a
+date-ordered **Timeline**. The sidebar shows project deadlines, category counts,
+projects scheduled for the current month and the latest project update dates.
+**New Project** opens the existing editor; **Show Map** and **Seasonal Projects**
+open those property tabs. **Export Filtered Projects** downloads the current
+filtered projects as CSV. Budgets include only open projects with a saved working
+budget; I don't infer actual spending, project owners or missing categories.
+
 I show your property name, address, description, acreage, header photo and aerial
 image. You can place named areas or structures on the image and draw a boundary.
 Your header photo spans the top of the page, behind the title, controls and
@@ -123,6 +142,7 @@ forecast; forecasts may be cached for up to 30 minutes.
 ## Under the hood
 
 - UI: `../../../companion/src/components/Property.tsx`, `../../../companion/src/components/Dashboard.tsx`.
+- Projects dashboard: `../../../companion/src/components/PropertyProjects.tsx`, `../../../companion/src/components/propertyProjects.css`; reuses `Projects.tsx`, `ProjectJournal.tsx`, `SectionMetric.tsx` and the existing project snapshot/editor.
 - Navigation/drawer convention: `../../../companion/src/components/ActionControls.tsx` and `../../../companion/README.md`; shared text links for navigation and bordered drawer buttons, also used by the Projects board.
 - Conditions: `../../../companion/src/components/propertyHealth.ts`; categorical bars indicate the condition, not a measured percentage.
 - Weather: `src/services/propertyWeather.js`, reusing `src/services/travel.js` and `src/services/weather.js`; GET `/api/v1/projects/property/weather` reads only the authenticated adult's saved address.

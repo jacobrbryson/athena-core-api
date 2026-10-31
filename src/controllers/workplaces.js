@@ -30,7 +30,20 @@ function handler(run) {
   };
 }
 
+/** One workspace's dashboard extras: open pull requests (GitHub) and epics (Jira), from that workspace's own keys. */
+async function dashboard(req, res) {
+  res.set('Cache-Control', 'no-store');
+  const actor = await requireAdultActor(req, res);
+  if (!actor) return;
+  try {
+    return res.json(await require('../services/workspaceDashboard').read(actor.profileId, req.params.uuid));
+  } catch (err) {
+    return fail(res, err);
+  }
+}
+
 module.exports = {
+  dashboard,
   list: handler(async () => null),
   save: handler(async (profileId, req) => ({ workplace: await workplaces.save(profileId, { ...(req.body || {}), uuid: undefined }) })),
   update: handler(async (profileId, req) => ({ workplace: await workplaces.save(profileId, { ...(req.body || {}), uuid: req.params.uuid }) })),

@@ -149,6 +149,22 @@ async function tradingPass() {
 	}
 }
 
+/**
+ * The backstop for Guardians mission deadlines: a step's own Cloud Task does
+ * the work, and this catches one that was never booked or was held. Asks the
+ * core service, which alone reaches the devices. Never fails the pass.
+ */
+async function missionPass() {
+	if (args.status || args.dryRun) return;
+	try {
+		const url = (process.env.GUARDIAN_DISPATCH_URL || "").replace("/internal/guardian/dispatch", "/internal/guardian-missions/tick");
+		const out = await require("../services/guardianEngine/dispatch").dispatchNow({ reason: "backstop", url });
+		if (!out.ok && !out.skipped) log(`mission deadlines: not delivered (${out.status || out.error})`);
+	} catch (error) {
+		log("mission deadlines failed:", error.message);
+	}
+}
+
 async function pass() {
 	if (args.status) return status();
 	await reminderBackstop();
@@ -156,6 +172,7 @@ async function pass() {
 	await guardianPass();
 	await outagePass();
 	await tradingPass();
+	await missionPass();
 	if (!args.dryRun) {
 		try { await require('../services/workItems/engine').sweep(); }
 		catch (err) { if (err.code !== 'ER_NO_SUCH_TABLE') log('Work notifications unavailable:', err.message); }

@@ -8,6 +8,7 @@ jest.mock("../helpers/db", () => ({ query: jest.fn() }));
 
 const pool = require("../helpers/db");
 const mission = require("./mission");
+const { MISSIONS } = require("../config/missions");
 
 const MISSION = "mission-2-convergence";
 const ADV = "lake_norman_guardians";
@@ -371,6 +372,27 @@ describe("mission service — Mission 3 'The First Watch' (shared index)", () =>
 	const M3 = "mission-3-first-watch";
 	const GID = "12345678";
 	const OTHER = "87654321";
+	const firstWatch = MISSIONS[M3].adventures[ADV];
+	const ended = firstWatch.ended;
+
+	// The hunt itself is tested as a live mission; the end has its own tests.
+	beforeEach(() => {
+		firstWatch.ended = false;
+	});
+	afterAll(() => {
+		firstWatch.ended = ended;
+	});
+
+	test("an ended index reads complete short of every card and issues no clues", async () => {
+		firstWatch.ended = true;
+		pool.query.mockResolvedValueOnce([[]]).mockResolvedValueOnce([[]]);
+		const state = await mission.getIndexState(ADV);
+		expect(state.complete).toBe(true);
+		expect(state.found).toBe(0);
+		expect(await mission.issueIndexClue(ADV, GID)).toBeNull();
+		expect(await mission.getIndexClueState(ADV, GID)).toBeNull();
+		expect(pool.query).toHaveBeenCalledTimes(2);
+	});
 
 	// Codes from the real card set (see docs/missions/mission-3-the-first-watch.md).
 	const F01 = "JGGT"; // Beam's Mill ledger

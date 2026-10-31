@@ -65,7 +65,7 @@ describe("the descriptors", () => {
 			expect(action).toMatchObject({ direct: true, standing: false, consentType: "action_authority", reversible: true });
 			expect(registry.ACTIONS).not.toContain(action);
 		}
-		expect(registry.DIRECT_ACTIONS.map((a) => a.id)).toEqual(["complete_chore", "undo_complete_chore"]);
+		expect(registry.DIRECT_ACTIONS.map((a) => a.id)).toEqual(["complete_chore", "undo_complete_chore", "approve_guardian_mission", "approve_guardian_template", "start_templated_mission"]);
 		// Not in the reply schema either: the model can't even write the param.
 		expect(registry.paramsSchema().properties.chore_id).toBeUndefined();
 	});

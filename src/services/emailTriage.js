@@ -500,6 +500,19 @@ async function markStatus(profileId, uuids, status) {
 
 const sender = (row) => row.from_name || row.from_address || "Unknown sender";
 
+/** A receipt as the Mail page shows it: who, how much and when, from the stored extraction. */
+function receiptItem(base, extractedRaw) {
+	const x = (typeof extractedRaw === "string" ? safeJson(extractedRaw) : extractedRaw) || {};
+	const amount = x.amount === null || x.amount === undefined ? NaN : Number(x.amount);
+	return {
+		...base,
+		merchant: x.merchant || null,
+		amount: Number.isFinite(amount) ? amount : null,
+		currency: typeof x.currency === "string" ? x.currency : null,
+		purchased_at: typeof x.purchased_at === "string" ? x.purchased_at : null,
+	};
+}
+
 /**
  * What Athena proposes for the open list, grouped so one approval covers many
  * emails. Built by code from stored categories — the model only labelled the
@@ -507,6 +520,37 @@ const sender = (row) => row.from_name || row.from_address || "Unknown sender";
  * show them and let the person leave some out before proposing.
  */
 async function bundles(profileId) {
+	const out = await buildBundles(profileId);
+	await flagKnownEvents(profileId, out.events.items);
+	return out;
+}
+
+/** "Notification: Early release day @ Wed Sep 23…" and "Early release day" are the same event. */
+const eventKey = (title) => String(title || "").toLowerCase().replace(/^notification:\s*/, "").replace(/\s*@.*$/, "").replace(/[^a-z0-9]+/g, " ").trim();
+
+/**
+ * Mark each dated event that is already over (`past`) or already on one of the
+ * person's calendars (`on_calendar`: same title on the same day), so the page
+ * doesn't offer to add it again. Only reads the calendar, and only when there
+ * is something to compare; a calendar that can't be read leaves everything
+ * offered, as before, rather than hiding something that may be missing.
+ */
+async function flagKnownEvents(profileId, items) {
+	const dated = items.filter((i) => i.start);
+	if (!dated.length) return;
+	const cutoff = new Date(Date.now() - 12 * 3600 * 1000).toISOString().slice(0, 10);
+	for (const i of dated) i.past = i.start.slice(0, 10) < cutoff;
+	if (dated.every((i) => i.past)) return;
+	try {
+		const calendar = require("./connectors/googleCalendar");
+		const known = new Set((await calendar.listEvents(profileId, { days: 60 })).map((e) => `${eventKey(e.title)}|${String(e.start).slice(0, 10)}`));
+		for (const i of dated) i.on_calendar = !i.past && known.has(`${eventKey(i.title)}|${i.start.slice(0, 10)}`);
+	} catch (err) {
+		console.warn("[emailTriage] couldn't check the calendar for duplicates:", err.message);
+	}
+}
+
+async function buildBundles(profileId) {
 	const [archive] = await pool.query(
 		`SELECT uuid, subject, from_name, from_address, category, received_at FROM email_triage
 		 WHERE profile_id = ? AND status = 'new' AND category IN (?) ORDER BY ${RECEIVED} DESC, id DESC LIMIT 100`,
@@ -562,7 +606,7 @@ async function bundles(profileId) {
 		archive: { count: Number(counts?.archive) || 0, senders: topSenders(archive), items: archive.map((r) => ({ ...item(r), category: r.category })) },
 		receipts: {
 			count: Number(counts?.receipts) || 0,
-			items: receipts.map((r) => ({ ...item(r), merchant: (typeof r.extracted === "string" ? safeJson(r.extracted) : r.extracted)?.merchant || null })),
+			items: receipts.map((r) => receiptItem(item(r), r.extracted)),
 		},
 		events: {
 			count: Number(counts?.events) || 0,
@@ -644,6 +688,7 @@ module.exports = {
 	getByUuid,
 	getRowsByUuids,
 	markStatus,
+	flagKnownEvents,
 	summary,
 	insertReceipt,
 	// exported for tests

@@ -29,6 +29,7 @@ describe("cleanSubjects", () => {
 		pool.query.mockResolvedValueOnce([{ affectedRows: 1 }]);
 		await sightings.createRule(1, { label: "package" });
 		expect(pool.query.mock.calls[0][1][0]).toEqual(expect.objectContaining({ label: "package", subject_id: null }));
+		await sightings.createRule(1, { label: sightings.STRANGE_CAR });
 		await expect(sightings.createRule(1, { label: "anything" })).rejects.toThrow(/packages/);
 	});
 	test("a known name is believed only for the same kind", () => {
@@ -123,6 +124,33 @@ describe("alerts", () => {
 		pool.query.mockResolvedValueOnce([[]]);
 		expect(await sightings.activeAlerts(1, { now })).toEqual([]);
 		expect(pool.query).toHaveBeenCalledTimes(1);
+	});
+	describe("stranger and strange-car rules alert on every event", () => {
+		const stranger = { uuid: "r2", profile_id: 1, subject_id: null, label: "stranger", device_serial: null, zone: null, created_at: at(40) };
+		const row = (id, min) => ({ uuid: id, event_id: `ev-${id}`, subject_id: null, label: "stranger", kind: "person", seen_at: at(min) });
+		const load = (rules, rows, said = []) => pool.query.mockResolvedValueOnce([rules]).mockResolvedValueOnce([rows]).mockResolvedValueOnce([said.map((dedupe_key) => ({ dedupe_key }))]);
+		test("the oldest event not yet said comes first, within a run", async () => {
+			load([stranger], [row("c", 1), row("b", 5), row("a", 10)], [sightings.alertKey("r2", "ev-a")]);
+			expect(await sightings.activeAlerts(1, { now })).toEqual([expect.objectContaining({ rule: "r2", occurrence: "ev-b" })]);
+		});
+		test("two strangers in one event are one alert", async () => {
+			load([stranger], [row("a", 2), { ...row("a2", 2), event_id: "ev-a" }], [sightings.alertKey("r2", "ev-a")]);
+			expect(await sightings.activeAlerts(1, { now })).toEqual([]);
+		});
+		test("sightings from before the rule existed stay quiet", async () => {
+			load([{ ...stranger, created_at: at(1) }], [row("a", 5)]);
+			expect(await sightings.activeAlerts(1, { now })).toEqual([]);
+		});
+		test("the key is the one the trigger makes for a single alert", async () => {
+			const { createHash } = require("node:crypto");
+			expect(sightings.alertKey("r2", "ev-a")).toBe(`sighting:${createHash("sha1").update("r2@ev-a").digest("hex")}`);
+		});
+		test("a strange car is any vehicle the gallery doesn't hold", () => {
+			const car = { subject_id: null, label: sightings.STRANGE_CAR, device_serial: null, zone: null };
+			expect(sightings.matches(car, { kind: "vehicle", subject_id: null, label: "white SUV" })).toBe(true);
+			expect(sightings.matches(car, { kind: "vehicle", subject_id: 4, label: "Red van" })).toBe(false);
+			expect(sightings.matches(car, { kind: "person", subject_id: null, label: "stranger" })).toBe(false);
+		});
 	});
 	test("a stranger rule matches by label, scoped to a camera", () => {
 		const r = { subject_id: null, label: "stranger", device_serial: "T8213D", zone: null };

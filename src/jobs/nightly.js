@@ -270,6 +270,16 @@ async function main() {
 	let result = null;
 	if (args.only !== "maintenance") result = await review(args, maintenanceResults);
 
+	// After self-review: Athena drafts missions for the Guardians page. Drafts wait
+	// there with no push, and an adult decides. A failure here costs a night's
+	// drafts and nothing else.
+	if (result && !args.dryRun) {
+		await require("../services/guardianMissions/planning")
+			.nightly(llm)
+			.then((out) => log("mission drafts:", JSON.stringify(out.map((f) => ({ family: f.familyId, saved: f.saved.length, dropped: f.dropped.length, skipped: f.skipped || null })))))
+			.catch((err) => log("mission drafts skipped:", err.message));
+	}
+
 	if (result && args.dryRun) console.log(`\n${result.markdown}`);
 	await pool.end().catch(() => undefined);
 }

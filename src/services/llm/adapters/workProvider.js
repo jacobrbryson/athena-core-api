@@ -1,6 +1,13 @@
 // Client-funded work only. No global key resolution or fallback is possible here.
 const { assertModelAccess } = require("../../../security/access");
-async function generate({ provider, model, apiKey, prompt, maxTokens = 3000 }) {
+async function generate({
+  provider,
+  model,
+  apiKey,
+  prompt,
+  maxTokens = 3000,
+  timeoutMs = 90000,
+}) {
   await assertModelAccess();
   if (!apiKey || !["openai", "anthropic"].includes(provider))
     throw new Error("A company provider key is required.");
@@ -10,7 +17,7 @@ async function generate({ provider, model, apiKey, prompt, maxTokens = 3000 }) {
         id: "company-work",
         apiKey,
         baseUrl: "https://api.openai.com/v1",
-        timeoutMs: 90000,
+        timeoutMs,
         models: { work: model },
         supportsJsonSchema: false,
       },
@@ -24,7 +31,7 @@ async function generate({ provider, model, apiKey, prompt, maxTokens = 3000 }) {
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     redirect: "error",
-    signal: AbortSignal.timeout(90000),
+    signal: AbortSignal.timeout(timeoutMs),
     headers: {
       "Content-Type": "application/json",
       "x-api-key": apiKey,
@@ -52,6 +59,7 @@ async function generate({ provider, model, apiKey, prompt, maxTokens = 3000 }) {
       .join(""),
     model: data.model,
     usage: data.usage || null,
+    stopReason: data.stop_reason || null,
   };
 }
 module.exports = { generate };

@@ -27,11 +27,37 @@ issues, Slack mentions, work projects, sites monitored), then a card per
 workspace with its role, website, linked apps and its counts of issues,
 projects and sites. Below that: your Jira issues (all, in progress, in review),
 Slack mentions, **Athena's Agents** — the code investigations and fixes you
-approved this week and their state, plus the site monitor — your work projects
+approved this week and their state, your company PR reviews as they run, plus
+the site monitor — your work projects
 (active, on hold, completed) with their progress, each site's uptime and
 response time, your work meetings in the next 7 days, a blend of recent
 activity, and quick actions. A Jira issue counts toward a workspace only when
 its Jira site is linked there.
+
+**Click a workspace card to open that workspace's own dashboard.** Below its globe
+header is the shared tablist for Overview, Jira, GitHub, Deployments, Monitoring,
+Team and Docs, followed by three shared metric cards (My Tasks, Pull Requests
+and Deployments), styled like Family and Property.
+Overview shows recent activity, **Pull Requests**
+(**Open PRs**), workspace email, recent deployments, key services and quick
+actions. Activity can be filtered by source; pull requests by open, reviewing
+or draft; email by all new, other mail or receipts. Jira shows its issues;
+Monitoring includes linked sites; Team has Slack mentions, upcoming work events
+and my agents; Docs currently shows Jira epics. Workspace email matches new
+mail from its website's domain or your linked work addresses.
+Pull requests come from the GitHub key linked to that workspace and are
+grouped by repository — `helpful_db_scripts`, `Dream-Backend` and
+`Dream_frontned` first, then everything else. Projects are that workspace's open
+Jira epics for now, with how many of their issues are done.
+
+Repository headings now open a **Review Criteria** drawer. Pull request rows
+open a details drawer with description, discussion, reviewers and **Let Athena
+Review**. The pencil button beside the workspace name (tooltip: **Edit workspace**) opens a shared settings drawer:
+name, role, website, primary-job flag, notes, company credentials and the review
+model, linked apps and email addresses, sites and work projects. Changes to
+workspace details update the header after saving. Reviews are editable drafts until you choose a
+GitHub review decision and confirm that exact submission; see **Company pull
+request reviews** for the full workflow and limits.
 
 I only know what you type and link here. I suggest a link when a connected app
 signed in with an address at a workplace's website — "Jira Cloud ·
@@ -45,6 +71,13 @@ editable **Workspaces** panel under **The detail**. **Add a
 workplace** there opens a short form: company, your role, website, **My primary
 job**, and notes for me. The first one you add is your primary until you
 choose another.
+
+Inside an individual workspace dashboard, the pencil beside its name opens
+**Edit workspace**. The website link stays below the name. Use **Save** for
+the workspace details, the encrypted key controls for company credentials,
+**Save review provider** for the model, and the link controls or checkboxes for
+apps, email addresses, sites and projects. These changes use the same ownership
+rules as the Work page's existing editor.
 
 Under each workplace, its connected apps and email addresses show as small
 chips. An app chip is green with a ✓ when I can read it, and red with an ✕ when
@@ -85,10 +118,25 @@ workspace is greyed out with that workspace's name.
 
 ## Limits
 
+- Business totals in the Vivacity header (5,321 customers, 2.9M devices, 1.6M
+  Google Synced and 248K repair tickets), deployment data,
+  service health and the operational banner are labeled design previews until
+  their live feeds are connected. I cannot use them as evidence of current
+  business activity or system health.
+- A workspace dashboard's pull requests are every open one in the GitHub
+  organizations that workspace's key belongs to, plus any elsewhere that involve
+  you or wait on your review (up to 100 per search), read
+  with that workspace's own GitHub key only (never another workspace's), and
+  its epics need that workspace's Jira linked with an API token. A card whose
+  key isn't linked says so instead of guessing.
+- Its email card matches mail by the sender's domain, so mail from outside the
+  company to your work address isn't picked up there.
+
 - Up to 20 workplaces; one primary.
 - Slack shows mentions only — not threads or DMs.
-- The agents panel shows only the code investigations and fixes you approved
-  in the last week; there are no other background agents to show yet.
+- The agents panel shows the code investigations and fixes you approved in the
+  last week and this week's company PR reviews; there are no other background
+  agents to show yet.
 - Linking says what a connection is for; it doesn't change which account I use.
   General chat still cannot switch between a company's own accounts or keys.
   The dedicated Work runs workflow can use an explicitly selected company
@@ -126,6 +174,13 @@ workspace is greyed out with that workspace's name.
   shared `OptionsMenu` from `FamilyPeople.tsx`), mounted on
   `WorkPage` in `../../../companion/src/components/Dashboard.tsx`; mock in
   `../../../companion/mock/client.ts`.
+- Workspace dashboard: `GET /api/v1/dashboard/workplaces/:uuid/dashboard`
+  (`src/controllers/workplaces.js` → `src/services/workspaceDashboard.js`) returns
+  `{ pullRequests, epics }`, each `{ items, error }` (`not_connected`,
+  `unsupported`, `rejected`, `unavailable`). Read-only; it takes the
+  workspace's own linked `github`/`jira` credential via `credentials.get` and
+  never falls back. Frontend: `../../../companion/src/components/WorkspacePage.tsx`,
+  route `/work/:uuid`. Tests: `src/services/workspaceDashboard.test.js`.
 - Tests: `src/services/workplaces.test.js`.
 - Next (owner, 2026-10-13): per-workplace credentials — Jira, GitHub, OpenAI
   and Claude keys for Vivacity Tech PBC, Orcwood's as the default. Those go in

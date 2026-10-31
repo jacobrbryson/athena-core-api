@@ -3,6 +3,7 @@
  * for something first — "when I get home from the gym, remind me to shower",
  * "when we get home after the last game, remind me to tell Ashlyn…".
  */
+jest.mock("uuid", () => ({ v4: () => "00000000-0000-4000-8000-000000000000" }));
 jest.mock("../helpers/db", () => ({ query: jest.fn() }));
 jest.mock("./location", () => ({ getPref: jest.fn(), recordSample: jest.fn() }));
 jest.mock("./pulsepoint/watch", () => ({ listPlaces: jest.fn() }));
