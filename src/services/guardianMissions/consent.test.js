@@ -31,16 +31,29 @@ describe("standing", () => {
 		expect(consent.standing({ kind: "parent", terms })).toMatchObject({ allowed: false, status: "needs_agreement", missing: ["self"] });
 	});
 
-	test("a kid needs a parent and themselves", () => {
-		expect(consent.standing({ kind: "kid", terms, events: [yes("parent", 2)] })).toMatchObject({ allowed: false, missing: ["self"] });
+	test("a parent's yes is enough for a minor, and a minor's alone isn't", () => {
+		expect(consent.standing({ kind: "kid", terms, events: [yes("parent", 2)] })).toMatchObject({ allowed: true, status: "agreed" });
 		expect(consent.standing({ kind: "kid", terms, events: [yes("self", 3)] })).toMatchObject({ allowed: false, missing: ["parent"] });
-		expect(consent.standing({ kind: "kid", terms, events: [yes("parent", 2), yes("self", 3)] })).toMatchObject({ allowed: true, status: "agreed" });
 	});
 
-	test("either side leaving ends a kid's standing", () => {
-		const both = [yes("parent", 2), yes("self", 3)];
-		expect(consent.standing({ kind: "kid", terms, events: [...both, no("self", 3)] })).toMatchObject({ allowed: false, status: "withdrawn" });
-		expect(consent.standing({ kind: "kid", terms, events: [...both, no("parent", 2)] })).toMatchObject({ allowed: false, status: "withdrawn" });
+	test("either side leaving ends a minor's standing", () => {
+		expect(consent.standing({ kind: "kid", terms, events: [yes("parent", 2), no("self", 3)] })).toMatchObject({ allowed: false, status: "withdrawn", missing: ["self"] });
+		expect(consent.standing({ kind: "kid", terms, events: [yes("parent", 2), no("parent", 2)] })).toMatchObject({ allowed: false, status: "withdrawn" });
+	});
+
+	test("a parent can't overrule a minor who stopped, and the minor can come back", () => {
+		const left = [yes("parent", 2), no("self", 3), yes("parent", 2)];
+		expect(consent.standing({ kind: "kid", terms, events: left }).allowed).toBe(false);
+		expect(consent.standing({ kind: "kid", terms, events: [...left, yes("self", 3)] }).allowed).toBe(true);
+	});
+
+	test("the old parent words don't carry a minor over", () => {
+		expect(consent.standing({ kind: "kid", terms: { ...terms, parent_for_child: { id: 8 } }, events: [yes("parent", 2)] })).toMatchObject({ allowed: false, status: "needs_new_agreement" });
+	});
+
+	test("an adult Guardian agrees for themselves", () => {
+		expect(consent.standing({ kind: "kid", is_adult: 1, terms, events: [yes("parent", 2)] })).toMatchObject({ allowed: false, missing: ["self"] });
+		expect(consent.standing({ kind: "kid", is_adult: 1, terms, events: [yes("self", 1)] })).toMatchObject({ allowed: true });
 	});
 
 	test("new terms need a new agreement", () => {
@@ -64,6 +77,12 @@ describe("who may decide", () => {
 		expect(() => consent.roleFor(parent, { ...parent, id: 99 })).toThrow();
 		expect(() => consent.roleFor(kid, parent)).toThrow();
 	});
+
+	test("a parent can't decide for a grown-up Guardian", () => {
+		const grown = { ...kid, is_adult: 1 };
+		expect(() => consent.roleFor(parent, grown)).toThrow();
+		expect(consent.roleFor(grown, grown)).toBe("self");
+	});
 });
 
 describe("recording", () => {
@@ -78,6 +97,19 @@ describe("recording", () => {
 		answer();
 		await expect(consent.agree({ subject: parent, decider: parent, termsId: 77, method: "app_prompt" })).rejects.toMatchObject({ status: 409 });
 		expect(sql(/INSERT INTO athena_gm_consent_event/)).toHaveLength(0);
+	});
+
+	test("a grown-up Guardian agrees to the adult words", async () => {
+		answer();
+		const grown = { ...kid, is_adult: 1 };
+		await consent.agree({ subject: grown, decider: grown, termsId: 1, method: "guardians_app" });
+		expect(sql(/INSERT INTO athena_gm_consent_event/)[0][1].slice(4, 8)).toEqual(["self", "agree", 1, "a"]);
+	});
+
+	test("a minor can rejoin on the child's words", async () => {
+		answer();
+		await consent.agree({ subject: kid, decider: kid, termsId: 3, method: "guardians_app" });
+		expect(sql(/INSERT INTO athena_gm_consent_event/)[0][1].slice(4, 8)).toEqual(["self", "agree", 3, "c"]);
 	});
 
 	test("leaving cancels what's waiting and deletes the voiceprint", async () => {

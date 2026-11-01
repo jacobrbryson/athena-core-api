@@ -225,6 +225,13 @@ const kidSteps = async (actor) => {
 
 const mySteps = asGuardian(async (req, res, { actor }) => res.json(await kidSteps(actor)));
 
+/** The step is on their screen, which starts its clock if nothing reached a phone. */
+const mySeen = asGuardian(async (req, res, { actor }) => {
+  if (!actor) return res.status(409).json({ success: false, message: 'Your family has not joined yet.' });
+  await runner.stepSeen(await partners.stepFamilyFor(actor, req.params.uuid), req.params.uuid, actor);
+  return res.json(await kidSteps(actor));
+});
+
 const myCode = asGuardian(async (req, res, { actor }) => {
   if (!actor) return res.status(409).json({ success: false, message: 'Your family has not joined yet.' });
   const out = await proof.submitCode(await partners.stepFamilyFor(actor, req.params.uuid), req.params.uuid, req.body?.code, actor);
@@ -263,7 +270,7 @@ const saveVoice = asMember(async (req, res, { familyId, actor }) => {
   if (!voiceprints.validPrint(print)) return res.status(400).json({ success: false, message: 'That isn\'t a usable voiceprint.' });
   const standing = await consent.standingFor(actor);
   if (!standing.allowed) return res.status(403).json({ success: false, message: 'Agree to help train Athena first.' });
-  const [[row]] = await require('../helpers/db').query("SELECT MAX(id) AS id FROM athena_gm_consent_event WHERE subject_actor_id = ? AND role = 'self' AND action = 'agree'", [actor.id]);
+  const [[row]] = await require('../helpers/db').query("SELECT MAX(id) AS id FROM athena_gm_consent_event WHERE subject_actor_id = ? AND action = 'agree'", [actor.id]);
   await voiceprints.saveVoiceprint({ familyId, actorId: actor.id, model: req.body?.model, print, sampleCount: Number(req.body?.samples) || 1, consentEventId: row?.id });
   return res.json({ saved: true });
 });
@@ -350,12 +357,11 @@ const requestScout = asParent(async (req, res, { familyId, actor }) => {
 /** A parent's own agreement and each of their kids', with the words to read. */
 const consentView = async (familyId, parent) => {
   const [rows] = await require('../helpers/db').query("SELECT * FROM athena_gm_actor WHERE family_id = ? AND kind IN ('parent','kid') ORDER BY id", [familyId]);
-  const people = rows.filter((a) => a.kind === 'kid' || Number(a.id) === Number(parent.id));
+  const people = rows.filter((a) => consent.isMinor(a) || Number(a.id) === Number(parent.id));
   const [terms, standings] = await Promise.all([consent.currentTerms(), consent.standingsFor(familyId, people)]);
   return {
     people: people.map((a) => {
-      const audience = a.kind === 'kid' ? 'parent_for_child' : 'adult';
-      const role = a.kind === 'kid' ? 'parent' : 'self';
+      const [[role, audience]] = consent.requirementsFor(a);
       const s = standings[a.id];
       const term = terms[audience];
       return {
@@ -364,7 +370,7 @@ const consentView = async (familyId, parent) => {
         kind: a.kind,
         status: s.status,
         needsYou: s.missing.includes(role),
-        mayLeave: a.kind === 'kid' || s.status === 'agreed',
+        mayLeave: consent.isMinor(a) || s.status === 'agreed',
         terms: term ? { id: term.id, version: term.version, title: term.title, body: term.body } : null,
       };
     }),
@@ -388,7 +394,7 @@ const withdraw = asParent(async (req, res, { familyId, actor }) => {
 const kidView = async (actor) => {
   if (!actor) return { enrolled: false };
   const [terms, state] = await Promise.all([consent.currentTerms(), consent.standingFor(actor)]);
-  const term = terms.child;
+  const term = consent.isMinor(actor) ? terms.child : terms.adult;
   return {
     enrolled: true,
     status: state.status,
@@ -487,4 +493,4 @@ const testCapability = asParent(async (req, res, { familyId, actor }) => {
   return res.json({ result: { ok: result.ok, error: result.error || null, latencyMs: result.latencyMs }, overview: await missions.overview(familyId) });
 });
 
-module.exports = { myPhoto, myGo, saveVoice, whoSpoke, invite, invitations, answerInvite, leaveMission, setSwitch, handoff, addZone, retireZone, addTemplate, retireTemplate, startTemplated, planningOverview, draft, revise, decideWish, go, tick, setCode, finish, submitCode, mySteps, myCode, myDone, consentOverview, agree, withdraw, myConsent, myAgree, myWithdraw, cameras, testCapability, overview, saveControl, saveCapability, saveRecipient, saveSkill, approve, decline, stop, stopEverything, pause, requestScout, reply, photo, verify, send };
+module.exports = { myPhoto, myGo, saveVoice, whoSpoke, invite, invitations, answerInvite, leaveMission, setSwitch, handoff, addZone, retireZone, addTemplate, retireTemplate, startTemplated, planningOverview, draft, revise, decideWish, go, tick, setCode, finish, submitCode, mySteps, mySeen, myCode, myDone, consentOverview, agree, withdraw, myConsent, myAgree, myWithdraw, cameras, testCapability, overview, saveControl, saveCapability, saveRecipient, saveSkill, approve, decline, stop, stopEverything, pause, requestScout, reply, photo, verify, send };

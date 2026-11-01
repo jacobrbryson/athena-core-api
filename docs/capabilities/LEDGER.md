@@ -737,3 +737,7 @@ See [`README.md`](README.md) for the full contract.
 - 2026-10-29 — A workspace dashboard's pull requests now show every open PR in the organizations its GitHub key belongs to, plus ones that involve you or wait on your review — `workplaces.md` (status: live)
 
 - 2026-10-29 — Guardians: a parent dashboard of my capabilities and the missions that test them, with a master pause, kill switch, per-person mutes and kids' skill badges; first capability is scouting the yard by phone (four photos with GPS and compass, then I describe the spot and someone confirms it) — `guardians-missions.md` (status: partial)
+
+- 2026-11-01 — Guardians: a parent's agreement is enough for a minor, who can still stop at any time, and a grown-up Guardian agrees for themselves. Needs migration 0116 — `guardians-missions.md` (status: live)
+
+- 2026-11-01 — Guardians missions: deadlines for kids with no phone start when they open the step, Companion shows who has not, adults can finish planned steps and checks, and taps on Done no longer count as evidence of what I can do — `guardians-missions.md` (status: live)

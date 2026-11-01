@@ -86,7 +86,8 @@ function instructionFor({ place, dueAt }) {
 function deliverer(push) {
 	return async (actor, step) => {
 		// A Guardian with no phone still has the Guardians app: the ask waits there.
-		const inApp = { sent: 1, results: [{ uuid: null, channel: "chat", ok: true }] };
+		// Nothing has reached them yet, so this isn't a sent push.
+		const inApp = { sent: 0, waiting: true, skipped: "waiting in the Guardians app", results: [{ uuid: null, channel: "chat", ok: true }] };
 		if (!actor?.profile_id) return actor?.guardian_credential_id ? inApp : { sent: 0, skipped: "that person has no phone linked" };
 		const scouting = step.cap_key === "scout_geography" && step.proof_required === "photo_set";
 		const pushed = await push.sendToProfile(actor.profile_id, {
@@ -103,7 +104,8 @@ function deliverer(push) {
 			// Per step: a re-send replaces itself, two different asks stack.
 			collapseKey: `gm-${step.uuid}`,
 		});
-		return pushed.sent > 0 || !actor.guardian_credential_id ? pushed : inApp;
+		// A paired device that refused it is still a failed push, even though the app has the ask.
+		return pushed.sent > 0 || !actor.guardian_credential_id ? pushed : { ...inApp, pushFailed: pushed.devices > 0 };
 	};
 }
 
@@ -361,8 +363,16 @@ async function triangulate(familyId, locationId, spot, sightings) {
 /** Someone walked to the spot: does it match? Either answer is a result worth keeping. */
 async function verify(familyId, stepUuid, { matches, note = null, actorId = null }) {
 	const step = await missions.stepByUuid(familyId, stepUuid);
-	if (!step.location_id || step.proof_required !== "parent_confirm") throw failure("That step isn't a verification.", 409);
+	if (step.proof_required !== "parent_confirm" && !(step.proof_required === "none" && step.actor_kind === "parent")) throw failure("That step isn't a verification.", 409);
 	if (step.status === "done") throw failure("Already verified.", 409);
+	// A planned step has no place to check: an adult says it happened, or that it didn't.
+	if (!step.location_id) {
+		if (["pending", "stuck", "declined"].includes(step.status)) throw failure("That step isn't open.", 409);
+		if ((await missions.missionById(step.mission_id)).status !== "running") throw failure("That mission isn't running.", 409);
+		if (matches) await missions.completeStep(familyId, step, { actorId, note });
+		else await missions.markStepStuck(familyId, step, `An adult said this didn't happen${note ? `: ${note}` : "."}`);
+		return missions.stepByUuid(familyId, stepUuid);
+	}
 	await missions.recordTest(familyId, "scout_geography", { stepId: step.id, stage: "verification", passed: Boolean(matches), notes: note, actorId });
 	if (matches) {
 		await pool.query("UPDATE athena_gm_location SET last_verified_at = NOW(), verified_by_actor_id = ? WHERE id = ?", [actorId, step.location_id]);

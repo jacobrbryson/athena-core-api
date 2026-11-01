@@ -452,15 +452,37 @@ async function sendStep(familyId, stepUuid, deliver) {
 	const started = Date.now();
 	const result = await deliver(actor, step);
 	const ok = Boolean(result && result.sent > 0);
+	// Waiting in the app is no push at all, so it's no result for her either way,
+	// and the deadline can't run until they've seen it: stepSeen starts it.
+	const waiting = !ok && result?.waiting === true;
 	await identity.recordDelivery(familyId, actor, step, result);
 	await pool.query(
 		// nudge_count first: MySQL applies SET left to right, so it must read sent_at before it is filled.
-		"UPDATE athena_gm_mission_step SET nudge_count = nudge_count + IF(sent_at IS NULL, 0, 1), sent_at = COALESCE(sent_at, NOW()), last_nudged_at = NOW(), status = IF(status = 'ready', ?, status) WHERE id = ?",
-		[waitingStatusFor(actor), step.id]
+		"UPDATE athena_gm_mission_step SET nudge_count = nudge_count + IF(sent_at IS NULL, 0, 1), due_at = IF(? AND sent_at IS NULL, NULL, due_at), sent_at = COALESCE(sent_at, NOW()), last_nudged_at = NOW(), status = IF(status = 'ready', ?, status) WHERE id = ?",
+		[waiting, waitingStatusFor(actor), step.id]
 	);
-	await recordTest(familyId, "push_notification", { stepId: step.id, stage: "push_delivered", passed: ok, latencyMs: Date.now() - started, notes: ok ? null : result?.skipped || "no device accepted it", actorId: actor?.id });
-	await log(familyId, "step_send", { actorId: actor?.id, missionId: mission.id, stepId: step.id, outcome: ok ? "ok" : "failed", detail: { sent: result?.sent || 0, skipped: result?.skipped || null } });
+	if (!waiting || result.pushFailed) await recordTest(familyId, "push_notification", { stepId: step.id, stage: "push_delivered", passed: ok, latencyMs: Date.now() - started, notes: ok ? null : result?.skipped || "no device accepted it", actorId: actor?.id });
+	await log(familyId, "step_send", { actorId: actor?.id, missionId: mission.id, stepId: step.id, outcome: ok || waiting ? "ok" : "failed", detail: { sent: result?.sent || 0, skipped: result?.skipped || null } });
+	if (waiting) return { verdict: "allow", allowed: true, waiting: true, reason: null };
 	return { verdict: ok ? "allow" : "failed", allowed: ok, reason: ok ? null : result?.skipped || "not delivered" };
+}
+
+/**
+ * The person assigned a step really has it in front of them. This is delivery
+ * for someone with no phone, so their deadline and timing start here, once.
+ * Returns the new deadline, or null if there was nothing to start.
+ */
+async function stepSeen(familyId, stepUuid, actor) {
+	const step = await stepByUuid(familyId, stepUuid);
+	if (Number(step.assigned_actor_id) !== Number(actor.id)) throw failure("That step is for someone else.", 403);
+	const [result] = await pool.query(
+		`UPDATE athena_gm_mission_step SET sent_at = NOW(), due_at = DATE_ADD(NOW(), INTERVAL due_minutes MINUTE)
+		 WHERE id = ? AND due_at IS NULL AND due_minutes IS NOT NULL AND sent_at IS NOT NULL AND status = 'waiting_kids'`,
+		[step.id]
+	);
+	if (!result.affectedRows) return null;
+	await log(familyId, "step_seen", { actorId: actor.id, missionId: step.mission_id, stepId: step.id });
+	return new Date(Date.now() + Number(step.due_minutes) * 60_000);
 }
 
 /**
@@ -622,6 +644,7 @@ async function overview(familyId) {
 		status: s.status,
 		dueAt: s.due_at,
 		sentAt: s.sent_at,
+		locationCheck: Boolean(s.location_id),
 		nudgeCount: s.nudge_count,
 		assignee: s.actor_uuid ? { uuid: s.actor_uuid, name: s.actor_name, kind: s.actor_kind } : null,
 		capability: s.capability_name,
@@ -768,6 +791,7 @@ module.exports = {
 	replyToStep,
 	completeStep,
 	markStepStuck,
+	stepSeen,
 	replyPatterns,
 	overview,
 	gate,

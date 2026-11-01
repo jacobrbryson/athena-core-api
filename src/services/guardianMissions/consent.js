@@ -3,8 +3,10 @@
  *
  * She may not contact a Guardian or parent on a mission unless they agreed, and
  * the record keeps exactly which words they agreed to. An adult agrees for
- * themselves. A child needs a parent AND themselves, and either one leaving
- * ends it at once. Agreeing to old terms doesn't count once new ones publish.
+ * themselves, and that includes a Guardian who has grown up. A minor's parent
+ * agrees for them (owner 2026-11-01), and either one leaving ends it at once:
+ * a minor who stopped stays out until they say yes again, whatever a parent
+ * decides. Agreeing to old terms doesn't count once new ones publish.
  * A database failure counts as no agreement.
  *
  * Safety alerts don't come through here. Those run on their own rules, and
@@ -39,20 +41,33 @@ async function currentTerms() {
 	return Object.fromEntries(rows.map((r) => [r.audience, r]));
 }
 
+/** A Guardian's kind is "kid" whatever their age; only a minor has a parent decide for them. */
+const isMinor = (person) => person?.kind === "kid" && !person?.is_adult;
+
 /** Which agreements this person needs, as [role, audience]. */
-function requirementsFor(kind) {
-	return kind === "kid" ? [["parent", "parent_for_child"], ["self", "child"]] : [["self", "adult"]];
+function requirementsFor(person) {
+	return isMinor(person) ? [["parent", "parent_for_child"]] : [["self", "adult"]];
+}
+
+/** Which roles can decide for this person, needed or not. A minor can always stop, and come back. */
+function rolesFor(person) {
+	return isMinor(person) ? [...requirementsFor(person), ["self", "child"]] : requirementsFor(person);
 }
 
 /**
  * Pure: where a person stands, from their events oldest first. `missing` lists
  * the roles still needed; only an agreement to the current words counts.
  */
-function standing({ kind, events = [], terms = {} }) {
+function standing({ kind, is_adult = 0, events = [], terms = {} }) {
+	const person = { kind, is_adult };
 	const missing = [];
 	let withdrawn = false;
 	let outdated = false;
-	for (const [role, audience] of requirementsFor(kind)) {
+	if (isMinor(person) && [...events].reverse().find((e) => e.role === "self")?.action === "withdraw") {
+		missing.push("self");
+		withdrawn = true;
+	}
+	for (const [role, audience] of requirementsFor(person)) {
 		const current = terms[audience];
 		const last = [...events].reverse().find((e) => e.role === role);
 		if (current && last?.action === "agree" && Number(last.terms_id) === Number(current.id)) continue;
@@ -75,7 +90,7 @@ async function standingFor(actor) {
 			currentTerms(),
 			pool.query("SELECT role, action, terms_id FROM athena_gm_consent_event WHERE subject_actor_id = ? ORDER BY id", [actor.id]),
 		]);
-		return standing({ kind: actor.kind, events, terms });
+		return standing({ kind: actor.kind, is_adult: actor.is_adult, events, terms });
 	} catch (err) {
 		console.warn("[guardian missions] consent unreadable:", err.message);
 		return closed("the agreement couldn't be checked");
@@ -90,7 +105,7 @@ async function standingsFor(familyId, actors) {
 	]);
 	const out = {};
 	for (const actor of actors) {
-		out[actor.id] = standing({ kind: actor.kind, terms, events: events.filter((e) => Number(e.subject_actor_id) === Number(actor.id)) });
+		out[actor.id] = standing({ kind: actor.kind, is_adult: actor.is_adult, terms, events: events.filter((e) => Number(e.subject_actor_id) === Number(actor.id)) });
 	}
 	return out;
 }
@@ -99,7 +114,7 @@ async function standingsFor(familyId, actors) {
 function roleFor(decider, subject) {
 	if (Number(decider.id) === Number(subject.id)) return "self";
 	const family = Number(decider.family_id) === Number(subject.family_id);
-	if (family && decider.kind === "parent" && subject.kind === "kid") return "parent";
+	if (family && decider.kind === "parent" && isMinor(subject)) return "parent";
 	throw failure("You can't decide that for this person.", 403);
 }
 
@@ -119,7 +134,7 @@ async function insertEvent(subject, decider, role, action, term, method) {
  */
 async function agree({ subject, decider, termsId, method }) {
 	const role = roleFor(decider, subject);
-	const needed = requirementsFor(subject.kind).find(([r]) => r === role);
+	const needed = rolesFor(subject).find(([r]) => r === role);
 	if (!needed) throw failure("That agreement isn't needed.");
 	const term = (await currentTerms())[needed[1]];
 	if (!term || Number(term.id) !== Number(termsId)) throw failure("The agreement has changed. Please read the new one.", 409);
@@ -134,7 +149,7 @@ async function agree({ subject, decider, termsId, method }) {
  */
 async function withdraw({ subject, decider, method }) {
 	const role = roleFor(decider, subject);
-	const needed = requirementsFor(subject.kind).find(([r]) => r === role);
+	const needed = rolesFor(subject).find(([r]) => r === role);
 	if (!needed) throw failure("That agreement isn't needed.");
 	const term = (await currentTerms())[needed[1]];
 	if (!term) throw failure("There is no agreement to leave.", 409);
@@ -185,4 +200,4 @@ async function chatMayProceed({ guardianId = null, profileId = null }) {
 	}
 }
 
-module.exports = { FIXED_REPLY, currentTerms, requirementsFor, standing, standingFor, standingsFor, roleFor, agree, withdraw, actorForGuardian, actorForProfile, chatMayProceed };
+module.exports = { FIXED_REPLY, currentTerms, isMinor, requirementsFor, rolesFor, standing, standingFor, standingsFor, roleFor, agree, withdraw, actorForGuardian, actorForProfile, chatMayProceed };

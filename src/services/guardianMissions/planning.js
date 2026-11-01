@@ -249,6 +249,8 @@ Rules:
 - Contact only the people listed. Nobody else, no vendors, no outsiders, no spending.
 - Every step has a short unique key, an instruction that stands on its own, and a deadline in dueMinutes. Give predictMinutes for how long you honestly expect it to take.
 - "proof" is one of none, photo, photo_set, kid_confirm, parent_confirm, code. Use code only on live steps.
+- A live step that tests a capability needs code, photo, photo_set or parent_confirm. A tap on Done (none, kid_confirm) only suits a story step with no capability, and a mission with nothing else in its live phase proves nothing.
+- An adult's step takes none, parent_confirm or photo_set only. parent_confirm on a kid's step means an adult checks it for them. photo_set needs a paired phone, and kids have none unless the people list says otherwise, so give a kid code, photo or parent_confirm.
 - Pass criteria are what will grade you, so make them honest and hard to pass by accident. Each "kind" is one of all_steps_done, nothing_stuck, within_minutes (with value), predictions_close (with value), person_steps_done (with actor and skill). Every kind except person_steps_done names a capability from this plan.
 - Say in safety where it happens, who supervises, and what's off limits. Keep kids safe: daylight, known places, an adult nearby.
 - If you need something you don't have, list it in "wishes" with why and a rough cost, and don't put it in capabilities. Never pretend to have it.

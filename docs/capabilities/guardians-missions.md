@@ -21,6 +21,16 @@ when and what proof I want. A step isn't done until the proof arrives, and each
 finished step opens the next. If a deadline passes I remind once, then flag it
 as stuck for a parent.
 
+A kid with no paired phone can only find a step by opening the Guardians app, so
+Companion says who has not opened theirs yet and their deadline starts when they
+do. A tap on Done never counts as proof of what I can do: that takes a code, a
+photo or an adult checking. Adults finish their own steps and those checks in
+Companion with **It's done** or **It didn't happen**.
+
+Plans waiting for approval sit on the Missions tab in groups: my own drafts, then
+Easy, Medium, Hard and Later. They can be searched, and opening a row shows its
+details with Approve and Decline.
+
 In **Plan a mission** on the Missions tab I go through my weakest abilities and
 what's gone wrong, and draft missions that would test or add to what I can do. I
 also draft a few after each night's self-review, and they wait here without any
@@ -119,9 +129,9 @@ good a kid is.
 - I never run a mission whose plan a parent hasn't approved, and I only use the
   capabilities that plan lists.
 - I only contact Guardians and their parents on a mission, and only ones who
-  have agreed to help train me. An adult agrees at sign-in. A child needs a
-  parent to agree on the Guardians page and to agree themselves in the Guardians
-  app. Anyone can leave at any time, a parent or their child, under Field Kit →
+  have agreed to help train me. An adult agrees at sign-in, and that includes
+  a grown-up Guardian. A minor's parent agrees for them on the Guardians page.
+  Anyone can leave at any time, a parent or their child, under Field Kit →
   Helping train Athena or in the Guardians app. Leaving cancels anything
   waiting. If the agreement changes, I wait until they agree again. Safety
   alerts don't depend on this.
@@ -149,6 +159,7 @@ good a kid is.
 - Backend: `src/services/guardianMissions/` (index = missions/steps/controls/log, gate.js = the one decision, trackRecord.js, team.js = roster, levels and skills read from the Guardians app's tables, first names only, scout.js, house.js, geo.js); `src/controllers/guardianMissions.js`; routes `src/routes/guardianMissions.js` mounted at `/guardian-missions`.
 - Approval: direct action `approve_guardian_mission` in `src/services/actions/registry.js` (owner-authorized 2026-10-29, never standing, never model-proposable) → `markApproved`.
 - The First Watch ended 2026-10-30: `ended: true` in `src/config/missions.js` closes it for the kids (no more clues; a late card still reads), migration 0107 marks its row completed here.
+- Delivery and evidence: a Guardian with no paired phone gets the ask in the Guardians app. That is no push result either way; `stepSeen` starts the deadline and timing when the card is on a visible screen. A live step testing a capability can't be proved by a tap, and `debrief.js` doesn't count a pass resting on taps. A planned adult step or parent check is settled by Companion's It's done / It didn't happen.
 - Runner: `src/services/guardianMissions/runner.js`, migration `db/migrations/0111_gm_mission_runner` (locked plan, prep/ready/live/debrief, step dependencies). `go` in `src/controllers/guardianMissions.js`; deadlines reach `POST /internal/guardian-missions/tick` by one-off Cloud Task with the Guardian dispatch caller check, and `src/jobs/incidents.js` is the backstop.
 - Templates and zones: `src/services/guardianMissions/templates.js`, migration `db/migrations/0114_gm_templates_and_zones`, actions `approve_guardian_template` and `start_templated_mission` in `src/services/actions/registry.js` (owner-authorized 2026-10-31, never standing, never model-proposable), `../../../companion/src/components/GuardiansHandoff.tsx`. On or off by the owner's switch, or `GM_TEMPLATES_ENABLED=on`. Only `athena_gm_actor.can_create_templates` may create one, and no route sets it.
 - Quests: `src/services/guardianMissions/story.js`, stored in the locked plan (`plan.story`, `plan.steps[].quest`), so no migration. Pushes, `/my-steps`, kid Go and photo messages read it; grading and photo checks keep the real instruction. A draft with a kid and no story can't be approved until it's revised.

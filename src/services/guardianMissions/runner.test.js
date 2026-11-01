@@ -10,7 +10,7 @@ const check = (steps, capabilityKeys = ["push_notification"]) => validatePlan({ 
 
 describe("validatePlan", () => {
 	test("a sound plan has no problems", () => {
-		expect(check([step(), step({ key: "find", phase: "live", actor: "thomas", after: ["hide"], capability: "push_notification" })])).toEqual([]);
+		expect(check([step(), step({ key: "find", phase: "live", actor: "thomas", after: ["hide"], capability: "push_notification", proof: "code" })])).toEqual([]);
 	});
 
 	test("an empty plan can't run", () => {

@@ -33,6 +33,8 @@ const MIN_DEADLINE_MINUTES = 5;
 const PHASES = new Set(["prep", "live"]);
 // The proof a plan may ask for: the kinds something can actually complete.
 const PROOFS = new Set(["none", "photo", "photo_set", "kid_confirm", "parent_confirm", "code"]);
+// What Companion and the phone can finish for an adult. The Guardians app's card is for kids.
+const ADULT_PROOFS = new Set(["none", "parent_confirm", "photo_set"]);
 
 function failure(message, status = 400, extra = {}) {
 	return Object.assign(new Error(message), { status, ...extra });
@@ -93,6 +95,8 @@ function validatePlan(plan, { capabilityKeys = [], actors = {} } = {}) {
 		if (!Number.isInteger(s?.dueMinutes) || s.dueMinutes < 1) problems.push(`${name}: it needs a deadline in minutes.`);
 		if (s?.predictMinutes != null && !(Number(s.predictMinutes) > 0)) problems.push(`${name}: its prediction needs a number of minutes.`);
 		if (s?.proof === "code" && s?.phase !== "live") problems.push(`${name}: a code proves a live step.`);
+		if (person?.kind === "parent" && !ADULT_PROOFS.has(s?.proof || "none")) problems.push(`${name}: an adult has no way to complete that proof. Use parent_confirm.`);
+		if (s?.phase === "live" && s?.capability && debrief.TAP_PROOFS.has(s?.proof || "none")) problems.push(`${name}: a tap on Done can't prove ${s.capability}. Use a code, a photo or an adult's check.`);
 	}
 	const liveAfterPrep = steps.some((s) => s?.phase === "prep" && (s?.after || []).some((k) => steps.find((o) => o?.key === k)?.phase === "live"));
 	if (liveAfterPrep) problems.push("A prep step can't wait on a live step.");
@@ -121,6 +125,11 @@ function preflight({ mission, steps, actors, agreements, contacts, capabilities,
 	const kidsScout = steps.some((s) => s.cap_key === "scout_geography" && actors.find((a) => Number(a.id) === Number(s.assigned_actor_id))?.kind === "kid");
 	if (kidsScout && !zone) problems.push("Kids can only scout inside an approved zone.");
 	if (zone?.daylight_only === 1 && !daylight) problems.push(`${zone.name} is daylight only.`);
+	// Four-direction photos need the phone's capture screen, and a browser can't take them.
+	for (const s of steps.filter((x) => x.proof_required === "photo_set")) {
+		const person = actors.find((a) => Number(a.id) === Number(s.assigned_actor_id));
+		if (person && !(contacts[person.id] || []).some((c) => c.reachable && c.channel !== "chat")) problems.push(`${person.display_name} needs a paired phone for scouting photos.`);
+	}
 	const unset = steps.filter((s) => s.proof_required === "code" && !codes.has(Number(s.id))).length;
 	if (unset) problems.push(`${unset} step${unset === 1 ? " still needs its" : "s still need their"} secret code.`);
 	if (mission.approval_state !== "approved" || mission.status !== "running") problems.push("This plan isn't approved and running.");
@@ -185,8 +194,9 @@ async function advance(familyId, missionId, deliver) {
 			"UPDATE athena_gm_mission_step SET status = ?, due_at = DATE_ADD(NOW(), INTERVAL ? MINUTE) WHERE id = ? AND status = 'pending'",
 			[actor?.kind === "parent" ? "waiting_parent" : "waiting_kids", minutes, step.id]
 		);
-		await missions.sendStep(familyId, step.uuid, deliver);
-		await wakeFor(new Date(Date.now() + minutes * 60_000));
+		const sent = await missions.sendStep(familyId, step.uuid, deliver);
+		// Waiting in the app: the clock starts when they open it, and stepSeen books the wake.
+		if (!sent?.waiting) await wakeFor(new Date(Date.now() + minutes * 60_000));
 	}
 
 	if (!phaseDone(steps, mission.phase)) return;
@@ -363,4 +373,10 @@ async function stepDone(familyId, step, deliver) {
 	await advance(familyId, step.mission_id, deliver);
 }
 
-module.exports = { storyProblems, kidGo, kidGoMissions, stepDone, validatePlan, nextSteps, phaseDone, preflight, preflightFor, advance, onApproved, go, tick };
+/** Someone with no phone opened their step: start its clock and book the look at it. */
+async function stepSeen(familyId, stepUuid, actor) {
+	const dueAt = await missions.stepSeen(familyId, stepUuid, actor);
+	if (dueAt) await wakeFor(dueAt);
+}
+
+module.exports = { stepSeen, storyProblems, kidGo, kidGoMissions, stepDone, validatePlan, nextSteps, phaseDone, preflight, preflightFor, advance, onApproved, go, tick };

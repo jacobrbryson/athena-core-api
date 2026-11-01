@@ -15,6 +15,10 @@
  *   within_minutes { value }            Go to finish took this long or less
  *   predictions_close { value }         every prediction within this factor
  *   person_steps_done { actor }         that person finished all their steps
+ *
+ * Someone tapping Done is a report, not evidence. A pass that rests on taps is
+ * shown but not counted: no test result, no skill, nothing resolved. A failure
+ * still counts, because a tap can't make one up.
  */
 const pool = require("../../helpers/db");
 const missions = require("./index");
@@ -22,6 +26,8 @@ const partners = require("./partners");
 
 const KINDS = new Set(["all_steps_done", "nothing_stuck", "within_minutes", "predictions_close", "person_steps_done"]);
 const PREDICTION_MISS_FACTOR = 2;
+// The proofs that are only someone's word: no code, photo or adult's check behind them.
+const TAP_PROOFS = new Set(["none", "kid_confirm"]);
 
 const parse = (v) => {
 	if (v == null || typeof v === "object") return v;
@@ -59,6 +65,13 @@ function validateCriteria(criteria, { capabilityKeys = [], skillKeys = [], actor
 	return problems;
 }
 
+/** Pure: do these steps' live results rest on taps? Either nothing live has real proof, or a tested tool was only tapped through. */
+function restsOnTaps(steps) {
+	const live = steps.filter((s) => s.phase === "live");
+	const tapped = (s) => TAP_PROOFS.has(s.proof_required);
+	return live.length > 0 && (live.every(tapped) || live.some((s) => tapped(s) && s.cap_key));
+}
+
 function check(criterion, { steps, predictions, goAt, endedAt, actorIds }) {
 	const finished = steps.filter((s) => s.status === "done");
 	switch (criterion.kind) {
@@ -88,7 +101,12 @@ function check(criterion, { steps, predictions, goAt, endedAt, actorIds }) {
 
 /** Pure: grade criteria against what happened, and name what went wrong. */
 function grade({ criteria, steps, predictions, goAt, endedAt, actorIds = {} }) {
-	const results = criteria.map((c) => ({ key: c.key, text: c.text, capability: c.capability || null, skill: c.skill || null, actor: c.actor || null, ...check(c, { steps, predictions, goAt, endedAt, actorIds }) }));
+	const results = criteria.map((c) => {
+		const outcome = check(c, { steps, predictions, goAt, endedAt, actorIds });
+		const own = c.kind === "person_steps_done" ? steps.filter((s) => Number(s.assigned_actor_id) === Number(actorIds[c.actor])) : steps;
+		const counted = !outcome.passed || !restsOnTaps(own);
+		return { key: c.key, text: c.text, capability: c.capability || null, skill: c.skill || null, actor: c.actor || null, ...outcome, counted, detail: counted ? outcome.detail : `${outcome.detail}; only taps back this up, so it doesn't count` };
+	});
 	const weaknesses = results.filter((r) => !r.passed).map((r) => ({ capKey: r.capability || r.skill, summary: `${r.text}: ${r.detail}`.slice(0, 255) }));
 	for (const p of predictions) {
 		if (missFactor(Number(p.predicted_minutes), Number(p.actual_minutes)) > PREDICTION_MISS_FACTOR) {
@@ -134,18 +152,18 @@ async function run(familyId, missionId) {
 	const familyOf = Object.fromEntries(actors.map((a) => [a.id, a.family_id]));
 
 	const { results, weaknesses } = grade({ criteria, steps, predictions, goAt: mission.go_at, endedAt: mission.ended_at || new Date(), actorIds });
-	const passed = results.filter((r) => r.passed).length;
+	const passed = results.filter((r) => r.passed && r.counted).length;
 	await pool.query("INSERT INTO athena_gm_debrief (mission_id, family_id, results, passed, total) VALUES (?, ?, ?, ?, ?)", [mission.id, familyId, JSON.stringify(results), passed, results.length]);
 
 	// A step ties the result to this mission, which is what gives it its reach.
 	const anchor = (capKey) => (steps.find((s) => s.cap_key === capKey && s.assigned_actor_id) || steps[steps.length - 1])?.id ?? null;
-	for (const r of results) {
+	for (const r of results.filter((x) => x.counted)) {
 		if (r.capability) await missions.recordTest(familyId, r.capability, { stepId: anchor(r.capability), stage: "debrief", passed: r.passed, notes: r.text });
 		// A skill sits on the person's own family's record.
 		if (r.skill && r.passed && actorIds[r.actor]) await creditSkill(familyOf[actorIds[r.actor]], mission, actorIds[r.actor], r.skill);
 	}
 	// A later pass on the same tool closes what an earlier mission showed.
-	for (const r of results.filter((x) => x.passed && x.capability)) {
+	for (const r of results.filter((x) => x.passed && x.counted && x.capability)) {
 		await pool.query("UPDATE athena_gm_weakness SET resolved_at = NOW() WHERE family_id = ? AND cap_key = ? AND mission_id <> ? AND resolved_at IS NULL", [familyId, r.capability, mission.id]);
 	}
 	for (const w of weaknesses) {
@@ -182,4 +200,4 @@ async function openWeaknesses(familyId) {
 	return rows;
 }
 
-module.exports = { missFactor, validateCriteria, grade, run, recordActual, finish, openWeaknesses };
+module.exports = { TAP_PROOFS, missFactor, restsOnTaps, validateCriteria, grade, run, recordActual, finish, openWeaknesses };

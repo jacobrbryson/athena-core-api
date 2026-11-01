@@ -21,6 +21,7 @@ router.get('/my-consent', g.myConsent);
 router.post('/my-consent/agree', json, g.myAgree);
 router.post('/my-consent/withdraw', json, g.myWithdraw);
 router.get('/my-steps', g.mySteps);
+router.post('/my-steps/:uuid/seen', json, g.mySeen);
 router.post('/my-steps/:uuid/code', json, g.myCode);
 router.post('/my-steps/:uuid/done', json, g.myDone);
 router.post('/my-steps/:uuid/photo', g.myPhoto);
