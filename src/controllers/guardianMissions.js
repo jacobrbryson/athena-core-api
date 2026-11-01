@@ -6,6 +6,7 @@ const scout = require('../services/guardianMissions/scout');
 const house = require('../services/guardianMissions/house');
 const runner = require('../services/guardianMissions/runner');
 const proof = require('../services/guardianMissions/proof');
+const cameraCheck = require('../services/guardianMissions/cameraCheck');
 const debrief = require('../services/guardianMissions/debrief');
 const planning = require('../services/guardianMissions/planning');
 const templates = require('../services/guardianMissions/templates');
@@ -185,6 +186,12 @@ const startTemplated = asParent(async (req, res, { familyId, profileId }) => {
 const setCode = asParent(async (req, res, { familyId, actor }) => {
   await proof.setCode(familyId, req.params.uuid, req.body?.code, actor);
   return res.json(await missions.overview(familyId));
+});
+
+/** An adult says they're at the camera, so she looks now. Only what she sees finishes the step. */
+const look = asParent(async (req, res, { familyId, actor }) => {
+  const seen = await cameraCheck.lookNow(familyId, req.params.uuid, actor, { llm });
+  return res.json({ ...(await missions.overview(familyId)), look: seen });
 });
 
 /** An adult ends a live mission that can't finish by itself, and it's graded as it stands. */

@@ -1,5 +1,8 @@
 # Capability ledger
 
+- 2026-11-01 — Dashboard retries interrupted or invalidated reads, bounds read waits, and shows unavailable source cards with Retry after failure — `companion-dashboard.md` (status: partial)
+
+- 2026-11-01 — Minecraft chat: Athena can join a Bedrock Realm and answer approved players who address her, with no memories, tools or actions. Needs her own Minecraft account and the bridge running; not yet tested on a real Realm — `minecraft-chat.md` (status: partial)
 - 2026-11-01 — Front porch lights from chat: ask whether they're on, or turn them on or off on an approval card. Needs the bridge's control flag and the Tuya switch details at home — `porch-light.md` (status: partial)
 - 2026-10-31 — Guardians: planned missions reach kids as Guardian quests, with parents reviewing the real plan beside the kids' words and kids told afterwards what they helped with — `guardians-missions.md` (status: partial)
 - 2026-10-31 — Guardians: families can join a mission together once a parent accepts; a step can be proven with one photo; a template can let kids press Go with parents told at once; the owner's switches for templates and chat agreements are on the page, and voiceprints can be saved and matched on the server. Needs migration 0115 — `guardians-missions.md` (status: partial)
@@ -742,3 +745,7 @@ See [`README.md`](README.md) for the full contract.
 - 2026-11-01 — Guardians: a parent's agreement is enough for a minor, who can still stop at any time, and a grown-up Guardian agrees for themselves. Needs migration 0116 — `guardians-missions.md` (status: live)
 
 - 2026-11-01 — Guardians missions: deadlines for kids with no phone start when they open the step, Companion shows who has not, adults can finish planned steps and checks, and taps on Done no longer count as evidence of what I can do — `guardians-missions.md` (status: live)
+
+- 2026-11-01 — Guardians missions: a step can be proven by what I see on a house camera, with a They're there button to make me look, a spoken greeting after I have seen them, and a notification to the supervising adult when a mission finishes — `guardians-missions.md` (status: partial)
+
+- 2026-11-01 — Guardians missions: a camera check can want several people in one frame, including a visitor taught under Security once an adult confirms they said yes — `guardians-missions.md` (status: partial)

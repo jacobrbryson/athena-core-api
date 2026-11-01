@@ -59,7 +59,10 @@ const STEP_SCHEMA = {
 		instruction: { type: "string" },
 		quest: { type: "string" },
 		place: { type: "string" },
-		proof: { type: "string", enum: ["none", "photo", "photo_set", "kid_confirm", "parent_confirm", "code"] },
+		proof: { type: "string", enum: ["none", "photo", "photo_set", "camera_check", "kid_confirm", "parent_confirm", "code"] },
+		subject: { type: "string" },
+		camera: { type: "string" },
+		gesture: { type: "string" },
 		after: { type: "array", items: { type: "string" } },
 		dueMinutes: { type: "integer" },
 		predictMinutes: { type: "number" },
@@ -123,12 +126,16 @@ const DRAFT_SCHEMA = {
 
 /** Pure: a plan with kids in it says where, who's watching and what's off limits. */
 function validateSafety(plan, actorKinds = {}) {
-	if (!(plan?.steps || []).some((s) => actorKinds[s?.actor] === "kid")) return [];
+	if (!(plan?.steps || []).some((s) => actorKinds[s?.actor] === "kid" || actorKinds[s?.subject] === "kid")) return [];
 	return SAFETY_FIELDS.filter((f) => text(plan?.safety?.[f], 300).length < 3).map((f) => `The plan needs to say ${f === "offLimits" ? "what's off limits" : f === "where" ? "where this happens" : "who's supervising"}.`);
 }
 
-/** Pure: only the fields a draft may set. Everything else a model sends is ignored. */
-function normalize(raw, capabilityKeys) {
+/**
+ * Pure: only the fields a draft may set. Everything else a model sends is
+ * ignored. `allowGuest` is for a plan a person wrote: a model can never point a
+ * camera check at someone outside the family.
+ */
+function normalize(raw, capabilityKeys, { allowGuest = false } = {}) {
 	const steps = Array.isArray(raw?.steps) ? raw.steps : [];
 	// Every ask travels by push, and the gate checks that too, so a plan with steps lists it.
 	const used = new Set([...(Array.isArray(raw?.capabilities) ? raw.capabilities : []), ...steps.map((s) => s?.capability).filter(Boolean), ...(steps.length ? ["push_notification"] : [])]);
@@ -149,6 +156,9 @@ function normalize(raw, capabilityKeys) {
 				quest: s?.phase === "live" && s?.quest ? text(s.quest, 1000) : null,
 				place: s?.place ? text(s.place, 255) : null,
 				proof: s?.proof || "none",
+				...(s?.proof === "camera_check" ? { subject: s?.subject, also: Array.isArray(s?.also) ? s.also : [], camera: text(s?.camera, 60), gesture: text(s?.gesture, 120) } : {}),
+				...(allowGuest && s?.guest ? { guest: text(s.guest, 60) } : {}),
+				...(allowGuest && s?.guestConsent ? { guestConsent: text(s.guestConsent, 60) } : {}),
 				after: Array.isArray(s?.after) ? s.after : [],
 				dueMinutes: s?.dueMinutes,
 				predictMinutes: s?.predictMinutes ?? null,
@@ -175,6 +185,9 @@ function reviewDraft(draft, { skillKeys, actors, zones = [] }) {
 	const kinds = Object.fromEntries(actors.map((a) => [keyOf(a), a.kind]));
 	problems.push(...validateSafety(draft.plan, kinds));
 	problems.push(...story.validateStory(draft.plan, kinds));
+	// Grading a camera on anything but what it saw is a pass that means nothing.
+	const gradesCamera = draft.passCriteria.some((c) => ["doorbell_camera", "view_cameras"].includes(c?.capability));
+	if (gradesCamera && !draft.plan.steps.some((s) => s.proof === "camera_check")) problems.push("A plan graded on a camera needs a camera_check step.");
 	const kidScouting = draft.plan.steps.some((s) => s.capability === "scout_geography" && byKey[s.actor]?.kind === "kid");
 	if (kidScouting && !zones.includes(draft.plan.zone)) problems.push("Kids can only scout inside an approved zone.");
 	return problems;
@@ -248,9 +261,10 @@ Rules:
 - A kid can scout (scout_geography, photo_set) only as a live step inside an approved zone. With no zone, an adult scouts.
 - Contact only the people listed. Nobody else, no vendors, no outsiders, no spending.
 - Every step has a short unique key, an instruction that stands on its own, and a deadline in dueMinutes. Give predictMinutes for how long you honestly expect it to take.
-- "proof" is one of none, photo, photo_set, kid_confirm, parent_confirm, code. Use code only on live steps.
-- A live step that tests a capability needs code, photo, photo_set or parent_confirm. A tap on Done (none, kid_confirm) only suits a story step with no capability, and a mission with nothing else in its live phase proves nothing.
-- An adult's step takes none, parent_confirm or photo_set only. parent_confirm on a kid's step means an adult checks it for them. photo_set needs a paired phone, and kids have none unless the people list says otherwise, so give a kid code, photo or parent_confirm.
+- "proof" is one of none, photo, photo_set, camera_check, kid_confirm, parent_confirm, code. Use code only on live steps, and only where something real hides the code.
+- camera_check is how to test a house camera: a live step for an adult ("Send Thomas to the Doorbell to wave at it"), capability doorbell_camera or view_cameras, with "subject" (who should appear), "camera" (the camera's name) and "gesture" (what it should see). You look at the frame yourself. List speak_through_camera too if you should greet them through it.
+- A live step that tests a capability needs code, photo, photo_set, camera_check or parent_confirm. A tap on Done (none, kid_confirm) only suits a story step with no capability, and a mission with nothing else in its live phase proves nothing.
+- An adult's step takes none, parent_confirm, photo_set or camera_check only. parent_confirm on a kid's step means an adult checks it for them. photo_set needs a paired phone, and kids have none unless the people list says otherwise, so give a kid code, photo or parent_confirm.
 - Pass criteria are what will grade you, so make them honest and hard to pass by accident. Each "kind" is one of all_steps_done, nothing_stuck, within_minutes (with value), predictions_close (with value), person_steps_done (with actor and skill). Every kind except person_steps_done names a capability from this plan.
 - Say in safety where it happens, who supervises, and what's off limits. Keep kids safe: daylight, known places, an adult nearby.
 - If you need something you don't have, list it in "wishes" with why and a rough cost, and don't put it in capabilities. Never pretend to have it.
@@ -406,4 +420,4 @@ async function nightly(llm) {
 	return out;
 }
 
-module.exports = { MAX_OPEN_DRAFTS, validateSafety, normalize, reviewDraft, readiness, selfEvaluation, promptFor, draftPlans, revise, decideWish, workspace, nightly };
+module.exports = { MAX_OPEN_DRAFTS, validateSafety, normalize, reviewDraft, readiness, selfEvaluation, promptFor, draftPlans, revise, decideWish, workspace, nightly, saveDraft, gather, contextForReview };

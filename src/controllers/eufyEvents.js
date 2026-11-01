@@ -58,7 +58,10 @@ async function recheck(req, res, { recheckWith = packageWatch.recheck } = {}) {
   }
 }
 
-async function receive(req, res, { record = sightings.record, recheckWith, watch = packageWatch.onSightings } = {}) {
+/** A Guardians mission waiting on this camera. Loaded here because that side wires in push and the runner. */
+const missionCheck = (event, frame) => require('../services/guardianMissions/cameraCheck').onEvent(event, frame, { llm: require('../services/llm') });
+
+async function receive(req, res, { record = sightings.record, recheckWith, watch = packageWatch.onSightings, checkMissions = missionCheck } = {}) {
   res.set('Cache-Control', 'no-store');
   if (!authorized(req)) return res.status(401).json({ message: 'Unauthorized' });
   if (req.body?.event?.kind === 'recheck') return recheck(req, res, recheckWith ? { recheckWith } : {});
@@ -83,6 +86,11 @@ async function receive(req, res, { record = sightings.record, recheckWith, watch
     }
   } catch (error) {
     console.warn('[eufy events] rule check failed', { message: error?.message });
+  }
+  try {
+    await asOwner(() => checkMissions(req.body?.event, req.body?.frame || null));
+  } catch (error) {
+    console.warn('[eufy events] mission camera check failed', { message: error?.message });
   }
   // A package opens a porch watch; the bridge is asked to look again later.
   let asks = [];

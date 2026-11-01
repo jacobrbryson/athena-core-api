@@ -11,6 +11,10 @@ triggers: [dashboard, briefing, today, home screen, navigation, order, community
 
 ## What I can do
 
+If a dashboard read is interrupted or becomes out of date while loading, I try
+it again automatically. A read that still fails is marked unavailable with a
+Retry option, rather than leaving its cards saying Loading indefinitely.
+
 On Family, each property's page, System and each workspace's page, I show the
 section tabs below the header and above the summary metrics.
 

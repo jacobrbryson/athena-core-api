@@ -123,3 +123,11 @@ describe("the prompt", () => {
 		expect(prompt).not.toMatch(/guardian_credential|profile_id/);
 	});
 });
+
+test("a model can't point a camera check at someone outside the family", () => {
+	const raw = { steps: [{ key: "a", phase: "live", actor: "ross", proof: "camera_check", subject: "thomas", camera: "Doorbell", gesture: "a wave", guest: "Someone" }, { key: "b", phase: "prep", actor: "ross", proof: "parent_confirm", guestConsent: "Someone" }] };
+	const { normalize } = require("./planning");
+	expect(normalize(raw, []).plan.steps[0].guest).toBeUndefined();
+	expect(normalize(raw, []).plan.steps[1].guestConsent).toBeUndefined();
+	expect(normalize(raw, [], { allowGuest: true }).plan.steps[0].guest).toBe("Someone");
+});

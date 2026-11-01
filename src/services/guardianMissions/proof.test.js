@@ -65,8 +65,35 @@ describe("plans and proof", () => {
 	const flight = (extra = {}) => preflight({ mission: { approval_state: "approved", status: "running", family_id: 1 }, steps: [{ id: 5, proof_required: "code" }], actors: [], agreements: {}, contacts: {}, capabilities: [], control: {}, ...extra });
 
 	test("a plan can't ask for proof nothing can complete", () => {
-		expect(validatePlan({ steps: [{ ...base, proof: "camera_check" }] }, ctx)[0]).toMatch(/proof/);
+		expect(validatePlan({ steps: [{ ...base, proof: "magic" }] }, ctx)[0]).toMatch(/proof/);
 		expect(validatePlan({ steps: [{ ...base, proof: "code" }] }, ctx)).toEqual([]);
+	});
+
+	test("a camera check says who, where and what, and an adult sends them", () => {
+		const adults = { actors: { r: { kind: "parent" }, t: { kind: "kid" } }, capabilityKeys: ["doorbell_camera"] };
+		const check = { ...base, actor: "r", proof: "camera_check", subject: "t", camera: "Doorbell", gesture: "a wave", capability: "doorbell_camera" };
+		expect(validatePlan({ steps: [check] }, adults)).toEqual([]);
+		expect(validatePlan({ steps: [{ ...check, actor: "t" }] }, adults).join(" ")).toMatch(/an adult sends/);
+		expect(validatePlan({ steps: [{ ...check, subject: "nobody" }] }, adults).join(" ")).toMatch(/isn't in this family/);
+		expect(validatePlan({ steps: [{ ...check, gesture: "" }] }, adults).join(" ")).toMatch(/should see/);
+		expect(validatePlan({ steps: [{ ...check, capability: "push_notification" }] }, adults).join(" ")).toMatch(/camera check tests/);
+	});
+
+	test("a guest needs an adult's yes in prep, and Go needs them in the gallery", () => {
+		const adults = { actors: { r: { kind: "parent" }, t: { kind: "kid" } }, capabilityKeys: ["doorbell_camera"] };
+		const check = { ...base, actor: "r", proof: "camera_check", subject: "t", camera: "Doorbell", gesture: "a wave", capability: "doorbell_camera", guest: "Eric" };
+		const yes = { ...base, key: "ok", phase: "prep", actor: "r", proof: "parent_confirm", guestConsent: "Eric" };
+		expect(validatePlan({ steps: [check] }, adults).join(" ")).toMatch(/confirm Eric agreed/);
+		expect(validatePlan({ steps: [yes, check] }, adults)).toEqual([]);
+		expect(flight({ untaught: ["Eric"] }).join(" ")).toMatch(/Eric isn't in the sightings gallery/);
+	});
+
+	test("Go needs the camera it will look through, and the person it looks for to have agreed", () => {
+		const mission = { approval_state: "approved", status: "running", family_id: 1, plan: { steps: [{ proof: "camera_check", camera: "Doorbell" }] } };
+		const person = { id: 3, display_name: "Thomas" };
+		const out = flight({ mission, steps: [], subjects: [person], cameras: [{ name: "Driveway", freshSnapshot: true }] }).join(" ");
+		expect(out).toMatch(/can't look through Doorbell/);
+		expect(out).toMatch(/Thomas/);
 	});
 
 	test("Go waits for every code to be set", () => {

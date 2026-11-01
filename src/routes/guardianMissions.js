@@ -51,6 +51,7 @@ router.post('/templates/:uuid/retire', requireAuth, json, g.retireTemplate);
 router.post('/missions/:uuid/go', requireAuth, json, g.go);
 router.post('/missions/:uuid/finish', requireAuth, json, g.finish);
 router.post('/steps/:uuid/secret', requireAuth, json, g.setCode);
+router.post('/steps/:uuid/look', requireAuth, json, g.look);
 router.post('/steps/:uuid/code', requireAuthOrDevice, json, g.submitCode);
 router.post('/missions/:uuid/decline', requireAuth, json, g.decline);
 router.post('/missions/:uuid/stop', requireAuth, json, g.stop);

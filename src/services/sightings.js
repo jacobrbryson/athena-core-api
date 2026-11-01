@@ -714,7 +714,7 @@ async function prune(days = RETENTION_DAYS) {
 }
 
 module.exports = {
-	listSubjects, knownPeople, linkPerson, createSubject, updateSubject, removeSubject, addPhoto, removePhoto,
+	listSubjects, photoBase64, knownPeople, linkPerson, createSubject, updateSubject, removeSubject, addPhoto, removePhoto,
 	listZones, setZones,
 	identify, cleanSubjects, record, list, page, openFrame, chatBlock, teachFromSighting, addEntityFromSighting,
 	listRules, createRule, setRuleEnabled, removeRule, profilesToAlert, activeAlerts, matches, alertKey,

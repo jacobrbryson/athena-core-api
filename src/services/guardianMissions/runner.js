@@ -19,6 +19,7 @@
 const pool = require("../../helpers/db");
 const consent = require("./consent");
 const debrief = require("./debrief");
+const house = require("./house");
 const identity = require("./identity");
 const partners = require("./partners");
 const missions = require("./index");
@@ -32,9 +33,11 @@ const MAX_STEPS = 40;
 const MIN_DEADLINE_MINUTES = 5;
 const PHASES = new Set(["prep", "live"]);
 // The proof a plan may ask for: the kinds something can actually complete.
-const PROOFS = new Set(["none", "photo", "photo_set", "kid_confirm", "parent_confirm", "code"]);
+const PROOFS = new Set(["none", "photo", "photo_set", "camera_check", "kid_confirm", "parent_confirm", "code"]);
 // What Companion and the phone can finish for an adult. The Guardians app's card is for kids.
-const ADULT_PROOFS = new Set(["none", "parent_confirm", "photo_set"]);
+const ADULT_PROOFS = new Set(["none", "parent_confirm", "photo_set", "camera_check"]);
+// The tools a camera_check tests.
+const CAMERA_CAPS = new Set(["doorbell_camera", "view_cameras"]);
 
 function failure(message, status = 400, extra = {}) {
 	return Object.assign(new Error(message), { status, ...extra });
@@ -95,6 +98,19 @@ function validatePlan(plan, { capabilityKeys = [], actors = {} } = {}) {
 		if (!Number.isInteger(s?.dueMinutes) || s.dueMinutes < 1) problems.push(`${name}: it needs a deadline in minutes.`);
 		if (s?.predictMinutes != null && !(Number(s.predictMinutes) > 0)) problems.push(`${name}: its prediction needs a number of minutes.`);
 		if (s?.proof === "code" && s?.phase !== "live") problems.push(`${name}: a code proves a live step.`);
+		if (s?.proof === "camera_check") {
+			if (s?.phase !== "live") problems.push(`${name}: a camera check proves a live step.`);
+			if (person && person.kind !== "parent") problems.push(`${name}: an adult sends someone to the camera.`);
+			if (!actors[s?.subject]) problems.push(`${name}: ${s?.subject || "nobody"} isn't in this family.`);
+			if (!CAMERA_CAPS.has(s?.capability)) problems.push(`${name}: a camera check tests doorbell_camera or view_cameras.`);
+			if (String(s?.camera || "").trim().length < 2) problems.push(`${name}: it needs to name the camera.`);
+			if (String(s?.gesture || "").trim().length < 3) problems.push(`${name}: it needs to say what the camera should see.`);
+			for (const key of s?.also || []) {
+				if (!actors[key]) problems.push(`${name}: ${key} isn't in this family.`);
+			}
+			// Someone outside the family: an adult confirms they said yes before Go can be pressed.
+			if (s?.guest && !steps.some((o) => o?.phase === "prep" && o?.proof === "parent_confirm" && o?.guestConsent === s.guest)) problems.push(`${name}: an adult has to confirm ${s.guest} agreed, in prep.`);
+		}
 		if (person?.kind === "parent" && !ADULT_PROOFS.has(s?.proof || "none")) problems.push(`${name}: an adult has no way to complete that proof. Use parent_confirm.`);
 		if (s?.phase === "live" && s?.capability && debrief.TAP_PROOFS.has(s?.proof || "none")) problems.push(`${name}: a tap on Done can't prove ${s.capability}. Use a code, a photo or an adult's check.`);
 	}
@@ -120,8 +136,16 @@ function phaseDone(steps, phase) {
  * Pure: what stands in the way of Go, as sentences; empty means clear. Only
  * people in the plan are checked, and each must have agreed and be reachable.
  */
-function preflight({ mission, steps, actors, agreements, contacts, capabilities, control, supervisor = null, codes = new Set(), zone = null, daylight = true }) {
+function preflight({ mission, steps, actors, agreements, contacts, capabilities, control, supervisor = null, codes = new Set(), zone = null, daylight = true, subjects = [], cameras = null, untaught = [] }) {
 	const problems = [];
+	for (const name of untaught) problems.push(`${name} isn't in the sightings gallery yet. Teach Athena from Security → Sightings.`);
+	// Someone a camera check looks for has to have agreed, though she never messages them.
+	for (const person of subjects) {
+		if (!agreements[person.id]?.allowed) problems.push(consent.blockedReason(person, agreements[person.id]));
+	}
+	for (const name of new Set((parse(mission.plan)?.steps || []).filter((s) => s.proof === "camera_check").map((s) => s.camera))) {
+		if (cameras && !cameras.some((c) => c.freshSnapshot && c.name.toLowerCase() === String(name).trim().toLowerCase())) problems.push(`I can't look through ${name} right now.`);
+	}
 	const kidsScout = steps.some((s) => s.cap_key === "scout_geography" && actors.find((a) => Number(a.id) === Number(s.assigned_actor_id))?.kind === "kid");
 	if (kidsScout && !zone) problems.push("Kids can only scout inside an approved zone.");
 	if (zone?.daylight_only === 1 && !daylight) problems.push(`${zone.name} is daylight only.`);
@@ -207,7 +231,27 @@ async function advance(familyId, missionId, deliver) {
 		await pool.query("UPDATE athena_gm_mission SET phase = 'debrief', status = 'completed', ended_at = NOW() WHERE id = ? AND phase = 'live'", [mission.id]);
 		await missions.log(familyId, "mission_finished", { missionId: mission.id });
 		await debrief.run(familyId, mission.id);
+		await tellFinished(familyId, mission).catch((err) => console.warn("[guardian missions] finish push failed:", err.message));
 	}
+}
+
+/** Every step finished: the adult watching hears it, through the same gate as any ask. The page shows it either way. */
+async function tellFinished(familyId, mission) {
+	const [[adult]] = await pool.query("SELECT * FROM athena_gm_actor WHERE id = ?", [mission.supervisor_actor_id || mission.go_by_actor_id || 0]);
+	if (!adult?.profile_id) return;
+	const capability = await missions.capabilityByKey(familyId, "push_notification");
+	const decision = missions.gate.mayUse({ control: await missions.control(familyId), capability, recipient: adult, consent: await consent.standingFor(adult) });
+	if (!decision.allowed) {
+		await missions.log(familyId, "mission_finished_push", { actorId: adult.id, missionId: mission.id, outcome: decision.verdict === "hold" ? "held" : "refused", detail: { reason: decision.reason } });
+		return;
+	}
+	const sent = await require("../push").sendToProfile(adult.profile_id, {
+		title: "Athena",
+		body: `"${mission.title}" is complete. Every step finished.`,
+		data: { kind: "gm_mission", mission: mission.uuid },
+		collapseKey: `gm-done-${mission.uuid}`,
+	});
+	await missions.log(familyId, "mission_finished_push", { actorId: adult.id, missionId: mission.id, outcome: sent?.sent > 0 ? "ok" : "failed" });
 }
 
 /** Before an approval: a plan with a kid in it needs its kid-facing words. Refusing here leaves the draft revisable. */
@@ -277,9 +321,16 @@ async function preflightFor(mission, supervisor = null) {
 	const contacts = Object.assign({}, ...reads.map((r) => r.contacts));
 	const agreements = Object.assign({}, ...reads.map((r) => r.agreements));
 	const codes = await proof.codesSet(steps.map((s) => s.id));
-	const zoneUuid = parse(mission.plan)?.zone;
+	const plan = parse(mission.plan);
+	const zoneUuid = plan?.zone;
 	const zone = zoneUuid ? await templates.zoneByUuid(mission.family_id, zoneUuid) : null;
-	return preflight({ mission, steps, actors, agreements, contacts, capabilities, control, supervisor, codes, zone, daylight: templates.isDaylight() });
+	const checks = (plan?.steps || []).filter((s) => s.proof === "camera_check");
+	const subjects = actors.filter((a) => checks.some((s) => [s.subject, ...(s.also || [])].includes(partners.planKey(a, mission.family_id))));
+	const cameras = checks.length ? (await house.cameras()).cameras : null;
+	const guests = [...new Set(checks.map((s) => s.guest).filter(Boolean))];
+	const gallery = guests.length ? await require("../sightings").listSubjects() : [];
+	const untaught = guests.filter((name) => !require("./cameraCheck").galleryEntry(gallery, { display_name: name })?.photos?.length);
+	return preflight({ mission, steps, actors, agreements, contacts, capabilities, control, supervisor, codes, zone, daylight: templates.isDaylight(), subjects, cameras, untaught });
 }
 
 /** An adult says "we're ready, start now". Their own agreement is checked too. */

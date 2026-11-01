@@ -70,6 +70,19 @@ background. I then describe the place, what could be hidden there and how
 hard it would be, and ask someone to walk there and confirm it matches. Each
 stage is recorded separately, so you can see which part is shaky.
 
+A step can also be proven by what I see on a house camera. I ask an adult to
+send someone to that camera, like Thomas to wave at the doorbell. I check any
+event from that camera, and pressing **They're there** makes me look right away.
+Only seeing that person do that thing finishes the step, and it can't be tapped
+through. Then, if the mission lists it, I say "I can see you" through the camera.
+When every step of a mission is done, I send a notification to the adult
+supervising it.
+
+A camera check can want several people in one frame. It can include a visitor
+someone has taught me under Security, like Uncle Eric, but only in a plan a
+person wrote, and only after an adult confirms the visitor said yes. I never
+contact a visitor, and their photos stay in the Gallery until someone removes them.
+
 I can also be tested on the porch light (on/off and slow Morse) and on the
 cameras (a fresh look, panning, and speaking through them), once those are
 switched on at home.
@@ -120,6 +133,11 @@ good a kid is.
   push stage has been failing.
 - **The photos didn't arrive.** They wait on the phone and upload when there is
   a connection; give it a minute with signal.
+- **I didn't see someone at the camera.** Press **They're there** while they're
+  close and facing it. The step shows why I said no. Waving doesn't always wake
+  a camera, so a press of the doorbell or that button may be needed.
+- **I saw them but said nothing.** Speaking needs control on at the bridge. The
+  step still counts, and the failed attempt shows on the capability.
 - **A porch light or camera Test fails.** The bridge on the home PC has to have
   control switched on, and the kill switch must be off. The failure reason is
   shown after the test.
@@ -174,4 +192,5 @@ good a kid is.
 - Phone: `native-runtime/AndroidCompanion~/AthenaDashboard.androidlib` — `MissionNotifications`, `ScoutCaptureActivity`, `ScoutUploads`/`ScoutUploadJob`; push data `kind: gm_scout|gm_step`, `step`.
 - Home: `eufy-bridge/server.mjs` POST `/v1/devices/:sn/ptz|talk`, `/v1/porch-light[/morse]`, only with `EUFY_BRIDGE_CONTROL=on`; porch light via `eufy-bridge/tuya/porch.py` (TinyTuya, compose profile `porch`).
 - Frontend: `../../../companion/src/components/GuardiansPage.tsx`, `../../../companion/src/components/GuardiansOverview.tsx`, `../../../companion/src/api/guardianMissions.ts`.
-- Tests: `src/services/guardianMissions/guardianMissions.test.js`.
+- Camera proof: `src/services/guardianMissions/cameraCheck.js`, called from `src/controllers/eufyEvents.js` and `POST /guardian-missions/steps/:uuid/look`. Plan steps carry `subject`, `also`, `guest`, `camera` and `gesture`; a guest needs a prep `parent_confirm` step with `guestConsent`, Go needs them in the gallery, and `planning.normalize` strips both from a model draft; `proof_required` was already `camera_check`, so no migration. The greeting is fixed in code. `scripts/draftCameraChecks.js` drafts the owner's per-camera missions, and `--eric` drafts Meet Uncle Eric. The finish push is `tellFinished` in `runner.js`.
+- Tests: `src/services/guardianMissions/guardianMissions.test.js`, `src/services/guardianMissions/cameraCheck.test.js`.
