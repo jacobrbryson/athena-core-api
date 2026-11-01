@@ -81,6 +81,15 @@ function standing({ kind, is_adult = 0, events = [], terms = {} }) {
 	return { allowed: false, status: "needs_agreement", missing, reason: "they haven't agreed to help train Athena" };
 }
 
+/** Pure: why someone isn't in yet, for an adult to act on. */
+function blockedReason(actor, state) {
+	const name = actor.display_name;
+	if (state?.status === "withdrawn") return `${name} has left the training program.`;
+	if (!isMinor(actor)) return state?.status === "needs_new_agreement" ? `${name} needs to agree to the new wording.` : `${name} hasn't agreed to help train Athena.`;
+	if (state?.status === "needs_new_agreement") return `${name}'s agreement has new wording. A parent needs to agree again under Field Kit.`;
+	return `A parent needs to agree for ${name} under Field Kit.`;
+}
+
 const closed = (reason) => ({ allowed: false, status: "unknown", missing: [], reason });
 
 /** One person's standing. Fails closed. */
@@ -200,4 +209,4 @@ async function chatMayProceed({ guardianId = null, profileId = null }) {
 	}
 }
 
-module.exports = { FIXED_REPLY, currentTerms, isMinor, requirementsFor, rolesFor, standing, standingFor, standingsFor, roleFor, agree, withdraw, actorForGuardian, actorForProfile, chatMayProceed };
+module.exports = { FIXED_REPLY, currentTerms, isMinor, blockedReason, requirementsFor, rolesFor, standing, standingFor, standingsFor, roleFor, agree, withdraw, actorForGuardian, actorForProfile, chatMayProceed };

@@ -66,6 +66,17 @@ describe("standing", () => {
 	});
 });
 
+describe("why someone isn't in yet", () => {
+	const why = (actor, status) => consent.blockedReason(actor, { status });
+
+	test("says what an adult needs to do", () => {
+		expect(why(kid, "needs_new_agreement")).toMatch(/new wording.*parent needs to agree again/);
+		expect(why(kid, "needs_agreement")).toMatch(/parent needs to agree for Thomas/);
+		expect(why(kid, "withdrawn")).toMatch(/left/);
+		expect(why({ ...kid, is_adult: 1 }, "needs_agreement")).toMatch(/Thomas hasn't agreed/);
+	});
+});
+
 describe("who may decide", () => {
 	test("yourself, or your own family's child", () => {
 		expect(consent.roleFor(parent, parent)).toBe("self");

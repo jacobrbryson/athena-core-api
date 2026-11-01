@@ -147,7 +147,7 @@ function preflight({ mission, steps, actors, agreements, contacts, capabilities,
 			problems.push("Someone in this plan is in a family that hasn't accepted.");
 			continue;
 		}
-		if (!agreements[id]?.allowed) problems.push(`${actor.display_name} hasn't agreed to help train Athena.`);
+		if (!agreements[id]?.allowed) problems.push(consent.blockedReason(actor, agreements[id]));
 		if (!(contacts[id] || []).some((c) => c.reachable)) problems.push(`There's no way to reach ${actor.display_name} yet.`);
 	}
 	if (supervisor) {

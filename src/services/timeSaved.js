@@ -51,6 +51,7 @@ const MINUTES = {
   // below doesn't read, so ten items count once — an undercount, on purpose.
   update_grocery_list: 0.5, // open Keep, find the list, type it in
   set_thermostat: 0.5, // open the Nest app, pick the thermostat, change it
+  set_porch_light: 0.25, // open the Smart Life app and tap the switch
   add_project: 1, // create the project and type its title, area and first steps
   update_project: 0.5, // open the project and tick, note or re-date it
   // Writing the bug up and finding the right file yourself. The debugging the

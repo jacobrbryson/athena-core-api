@@ -703,6 +703,57 @@ const ACTIONS = [
 	},
 
 	{
+		id: "set_porch_light",
+		label: "Turn the front porch lights on or off",
+		// Added on the owner's instruction (2026-11-01): the MOES switch through
+		// the home bridge, every change on a card. Never standing, like the
+		// thermostat: the lights are shared by the whole house.
+		provider: null,
+		consentType: "action_authority",
+		// They can flip it straight back, here or at the switch.
+		reversible: true,
+		standing: false,
+		describe:
+			"Turn the front porch lights on or off. Propose this when they ask to, and only then. " +
+			"Do not propose it to answer whether the lights are on (reading needs no approval).",
+		params: { state: 'on or off. Required.' },
+		// Off then on again is a new request, not a repeat of the first one.
+		sameAs: false,
+
+		// The household adults authorized for the cameras, in the family whose
+		// house the bridge is in (only that one has the capability).
+		async availableTo(profileId) {
+			const eufyBridge = require("../eufyBridge");
+			if (!eufyBridge.configured() || !eufyBridge.allowed(profileId)) return false;
+			const missions = require("../guardianMissions");
+			const parent = await missions.parentActor(profileId);
+			return Boolean(parent && (await missions.capabilityByKey(parent.family_id, "porch_light")));
+		},
+
+		normalize(raw = {}) {
+			const state = str(raw.state, 3)?.toLowerCase();
+			if (state !== "on" && state !== "off") throw invalid('State must be "on" or "off"');
+			return { state };
+		},
+
+		summarize(p) {
+			return `Turn the front porch lights ${p.state}`;
+		},
+
+		async execute(profileId, params) {
+			const missions = require("../guardianMissions");
+			const parent = await missions.parentActor(profileId);
+			if (!parent) throw invalid("Only a parent in this house can do that");
+			// The person's approval, so a parent's standing: the kill switch and
+			// the capability's own switch still apply (house.permit).
+			const by = { kind: "parent", actor: parent };
+			const result = await require("../guardianMissions/house").setPorchLight(Number(parent.family_id), params.state === "on", by);
+			if (!result.ok) throw Object.assign(new Error(`The porch lights didn't respond: ${result.error}`), { status: 503 });
+			return { ref: "porch_light", detail: `Lights ${params.state}` };
+		},
+	},
+
+	{
 		id: "look_through_camera",
 		label: "Take a look through your camera",
 		// Internal: the "provider" is a browser on the person's desk, which the

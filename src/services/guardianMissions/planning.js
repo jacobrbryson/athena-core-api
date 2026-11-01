@@ -185,7 +185,7 @@ function readiness({ draft, actors, agreements, capabilities, wishes }) {
 	const keys = new Set(draft.plan.steps.map((s) => s.actor));
 	const reasons = story.validateStory(draft.plan, Object.fromEntries(actors.map((a) => [a.actor_key, a.kind])));
 	for (const a of actors) {
-		if (keys.has(a.actor_key) && !agreements[a.id]?.allowed) reasons.push(`${a.display_name} hasn't agreed to help train Athena.`);
+		if (keys.has(a.actor_key) && !agreements[a.id]?.allowed) reasons.push(consent.blockedReason(a, agreements[a.id]));
 	}
 	const mine = capabilities.filter((c) => draft.capabilities.includes(c.key));
 	for (const c of mine) {

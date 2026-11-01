@@ -90,7 +90,7 @@ describe("preflight", () => {
 	});
 
 	test("someone who hasn't agreed stops Go", () => {
-		expect(preflight({ ...base(), agreements: { 2: { allowed: true } } }).join(" ")).toMatch(/Thomas hasn't agreed/);
+		expect(preflight({ ...base(), agreements: { 2: { allowed: true } } }).join(" ")).toMatch(/parent needs to agree for Thomas/);
 	});
 
 	test("someone who can't be reached stops Go", () => {

@@ -62,12 +62,43 @@ async function record(familyId, capKey, by, stage, result, detail) {
 	return result;
 }
 
-/** Porch light on/off. Passes only when the switch reads back the state asked for. */
-async function porchLight(familyId, on, by) {
-	await permit(familyId, "porch_light", by);
+/** Send the switch a state. Passes only when it reads back the state asked for. */
+async function flipPorch(on) {
 	const result = await call("/v1/porch-light", { on: Boolean(on) });
 	if (result.ok && result.body?.confirmed === false) Object.assign(result, { ok: false, error: "the switch didn't read back the new state" });
-	return record(familyId, "porch_light", by, "command", result, on ? "on" : "off");
+	return result;
+}
+
+/** Porch light on/off, as a test of the capability. */
+async function porchLight(familyId, on, by) {
+	await permit(familyId, "porch_light", by);
+	return record(familyId, "porch_light", by, "command", await flipPorch(on), on ? "on" : "off");
+}
+
+/**
+ * Porch light on/off because someone wants it that way (the set_porch_light
+ * action). Same gate and log as a test, but no test result: everyday use is
+ * not evidence for her ability scores, and a bridge outage shouldn't mark the
+ * capability as failing.
+ */
+async function setPorchLight(familyId, on, by) {
+	await permit(familyId, "porch_light", by);
+	const result = await flipPorch(on);
+	await missions.log(familyId, "porch_light_command", { actorId: by.actor?.id || null, outcome: result.ok ? "ok" : "failed", detail: { stage: "everyday", detail: on ? "on" : "off", error: result.error || null } });
+	return result;
+}
+
+/** Is the light on? A live read of the switch; { ok, on } or { ok: false, error }. */
+async function porchLightState() {
+	let res;
+	try {
+		res = await eufyBridge.bridge("/v1/porch-light", 15_000);
+	} catch (err) {
+		return { ok: false, error: String(err?.message || err).slice(0, 120) };
+	}
+	const json = await res.json().catch(() => ({}));
+	if (!res.ok || typeof json.on !== "boolean") return { ok: false, error: json.error || `HTTP ${res.status}` };
+	return { ok: true, on: json.on };
 }
 
 /** Slow Morse on the porch light (about 1 s dot, 3 s dash). Short messages only. */
@@ -147,4 +178,4 @@ async function look(familyId, serial, by) {
 	return record(familyId, "view_cameras", by, "fresh_snapshot", result, shot.ok ? `${shot.jpeg?.length || 0} bytes` : null);
 }
 
-module.exports = { porchLight, morse, pan, speak, say, look, cameras, permit, pcmToWav };
+module.exports = { porchLight, setPorchLight, porchLightState, morse, pan, speak, say, look, cameras, permit, pcmToWav };

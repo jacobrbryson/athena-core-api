@@ -78,6 +78,11 @@ const SOURCES = [
 		doc: '`{ "source": "sightings", "query": "Wynter" }` — who and what the home security cameras have seen, by name where the cameras know them (people, pets, vehicles; anyone unknown is "stranger"), with when, which camera and where. `query` is the name, "stranger", or "" for everything recent. Ask for "when did you last see…", "has anyone been in the yard", "was the dog out".',
 	},
 	{
+		id: "porch_light",
+		household: true,
+		doc: '`{ "source": "porch_light" }` — whether the front porch lights are on right now, read live from the switch. To change them, propose the set_porch_light action instead.',
+	},
+	{
 		id: "web",
 		web: true,
 		doc: '`{ "source": "web", "query": "..." }` — a Google search you write. Write it the way a person would type it, specific to what they mean ("Westlake OH high school football score Friday", not "the game"). It may name places, times, businesses and public figures; NEVER a family member\'s or private person\'s name, anything about health, or anything from their email or messages — those stay here.',
@@ -305,6 +310,14 @@ async function fetch(profileId, needs, { audience, timeZone, onRead } = {}) {
 							require("./deliveries").promptBlock(profileId, { timeZone }).catch(() => null),
 						]);
 						return { block: [block, ...extra.filter(Boolean)].join("\n\n") };
+					}
+					case "porch_light": {
+						const light = await require("./guardianMissions/house").porchLightState();
+						return {
+							block: light.ok
+								? `# Front porch lights (read just now)\nThey are ${light.on ? "on" : "off"}.`
+								: "# Front porch lights\nThe switch didn't answer. Say you couldn't check them; don't guess.",
+						};
 					}
 					case "web": {
 						if (!(await mayLeave(profileId, need.query))) {

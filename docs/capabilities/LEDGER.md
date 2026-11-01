@@ -1,5 +1,6 @@
 # Capability ledger
 
+- 2026-11-01 — Front porch lights from chat: ask whether they're on, or turn them on or off on an approval card. Needs the bridge's control flag and the Tuya switch details at home — `porch-light.md` (status: partial)
 - 2026-10-31 — Guardians: planned missions reach kids as Guardian quests, with parents reviewing the real plan beside the kids' words and kids told afterwards what they helped with — `guardians-missions.md` (status: partial)
 - 2026-10-31 — Guardians: families can join a mission together once a parent accepts; a step can be proven with one photo; a template can let kids press Go with parents told at once; the owner's switches for templates and chat agreements are on the page, and voiceprints can be saved and matched on the server. Needs migration 0115 — `guardians-missions.md` (status: partial)
 - 2026-10-31 — Camera alerts each have an on/off switch, and strange cars can be chosen when adding an alert — `sightings.md` (status: partial)
