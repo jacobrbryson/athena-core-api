@@ -36,6 +36,7 @@ missions.setRunner({
   advance: (familyId, missionId) => runner.advance(familyId, missionId, scout.deliverer(push)),
   stepDone: (familyId, step) => runner.stepDone(familyId, step, scout.deliverer(push)),
   preflightFor: runner.preflightFor,
+  storyProblems: runner.storyProblems,
 });
 
 const asParent = (fn) => async (req, res) => {
