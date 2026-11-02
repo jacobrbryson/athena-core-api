@@ -9,9 +9,11 @@ jest.mock('../readCache', () => ({
   read: (_options, load) => load(), invalidate: async () => {}, hash: value => value,
 }));
 const mockInvalidate = jest.fn();
+const mockReviveFlagged = jest.fn();
 jest.mock("./oauth", () => ({
 	accessToken: mockAccessToken,
 	invalidate: mockInvalidate,
+	reviveFlagged: mockReviveFlagged,
 }));
 
 const mockList = jest.fn();
@@ -658,6 +660,19 @@ describe("context aggregation", () => {
 		});
 		expect(global.fetch).toHaveBeenCalledTimes(2);
 		expect(text).toMatch(/Whoop: no data recorded in the last 3 days/);
+	});
+
+	it("reads a flagged link that comes back when retried", async () => {
+		mockList
+			.mockResolvedValueOnce([{ provider: "whoop", status: "needs_reauth" }])
+			.mockResolvedValueOnce([{ provider: "whoop", status: "active" }]);
+		mockReviveFlagged.mockResolvedValueOnce(true);
+		global.fetch.mockResolvedValue(apiResponse({ records: [] }));
+
+		const text = await context.buildContext(PROFILE, { message: "how was my recovery?" });
+
+		expect(global.fetch).toHaveBeenCalledTimes(2);
+		expect(text).not.toMatch(/no longer authorized/);
 	});
 
 	it("never calls a revoked link, and says it needs reconnecting", async () => {

@@ -46,6 +46,7 @@ const KINDS = new Set(["oauth2", "api_key"]);
 
 const STATUS_ACTIVE = "active";
 const STATUS_NEEDS_REAUTH = "needs_reauth";
+const REFRESH_LOCK_WAIT_SECONDS = 20;
 const STATUS_REVOKED = "revoked";
 
 /** Refresh this long before actual expiry, so a token never expires mid-call. */
@@ -302,6 +303,34 @@ async function updateTokens(
 }
 
 /**
+ * Run `fn` holding the one lock on refreshing this credential, across every
+ * instance and job. A provider that rotates refresh tokens accepts each one
+ * once, so two refreshes racing on the same token is a guaranteed refusal.
+ *
+ * Whoever takes the lock must re-read the row before spending the token: the
+ * holder before them may have already replaced it.
+ *
+ * Waits longer than a token request can run. Timing out is reported as
+ * transient, because refreshing without the lock is the collision itself.
+ */
+async function withRefreshLock(uuid, fn) {
+	const conn = await pool.lockConnection();
+	try {
+		const [rows] = await conn.query(`SELECT GET_LOCK(?, ?) AS acquired`, [
+			`athena_refresh_${uuid}`,
+			REFRESH_LOCK_WAIT_SECONDS,
+		]);
+		if (rows[0].acquired !== 1) {
+			throw httpError("Another refresh of this credential is still running", 503);
+		}
+		return await fn();
+	} finally {
+		// MySQL releases a connection's locks when it closes.
+		await conn.end().catch(() => conn.destroy());
+	}
+}
+
+/**
  * Mark a credential unusable without deleting it — the refresh token was
  * rejected, or the user revoked access at the provider. The row stays so the
  * UI can say "reconnect Whoop" rather than silently showing nothing.
@@ -502,6 +531,7 @@ module.exports = {
 	history,
 	revoke,
 	updateTokens,
+	withRefreshLock,
 	markNeedsReauth,
 	isExpired,
 	PROVIDERS,

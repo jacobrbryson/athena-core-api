@@ -604,10 +604,12 @@ async function disconnectGroup(actor, groupId, { actorLabel = "user" } = {}) {
 
 /**
  * Two requests noticing the same expiry would both refresh; with a provider
- * that rotates refresh tokens (Whoop) the slower one then writes a
- * token the provider has already invalidated. Collapsing them per process
- * removes that within an instance. Across instances the compare-and-set in
- * credentials still leaves the link usable, but this is the cheap 90%.
+ * that rotates refresh tokens (Whoop) the slower one spends a token that is
+ * already dead and gets refused, which read as a revoked grant and sent the
+ * owner back through consent every couple of days. Collapsing them here saves
+ * the lock round trip within an instance; credentials.withRefreshLock is what
+ * prevents the collision, across instances and for a request that read the
+ * row just before a refresh finished.
  */
 const refreshInFlight = new Map();
 
@@ -640,15 +642,28 @@ function reauthRetryDue(uuid) {
 	return !last || Date.now() - last >= REAUTH_RETRY_COOLDOWN_MS;
 }
 
-async function refresh(provider, credential) {
+async function refresh(provider, credential, { profileId, actor }) {
 	const key = credential.uuid;
 	if (refreshInFlight.has(key)) return refreshInFlight.get(key);
 
-	const promise = (async () => {
+	const stored = () =>
+		credentials.get(profileId, provider.id, {
+			actor,
+			externalAccountId: credential.externalAccountId || undefined,
+		});
+
+	const promise = credentials.withRefreshLock(key, async () => {
+		// What the caller read may be stale by now: the holder before us may
+		// have refreshed, and its token is the only one still worth anything.
+		const current = await stored();
+		if (!current) return null;
+		if (!current.expired) return current.accessToken;
+		if (!current.refreshToken) return null;
+
 		const { clientId, clientSecret } = await clientCredentials(provider);
 		const { params, headers } = tokenRequestParams(provider, clientId, clientSecret, {
 			grant_type: "refresh_token",
-			refresh_token: credential.refreshToken,
+			refresh_token: current.refreshToken,
 		});
 
 		const { ok, status, body } = await postForm(provider.tokenUrl, params, { headers, json: provider.tokenFormat === 'json' });
@@ -658,11 +673,19 @@ async function refresh(provider, credential) {
 			// the provider, or expired). Anything else may be transient, so
 			// don't tear down a working link over a 502.
 			if (status === 400 || status === 401) {
-				await credentials.markNeedsReauth(credential.uuid, {
+				// A refused token that is no longer the stored one says nothing
+				// about the link: a sign-in landed meanwhile, or a process that
+				// does not take the lock got there first. Flagging would wipe the
+				// good token that replaced it.
+				const latest = await stored();
+				if (latest && latest.refreshToken !== current.refreshToken) {
+					return latest.expired ? null : latest.accessToken;
+				}
+				await credentials.markNeedsReauth(current.uuid, {
 					actor: "connector",
 					detail: tokenErrorMessage(body, "refresh rejected"),
 				});
-				backoffReauth(credential.uuid);
+				backoffReauth(current.uuid);
 				return null;
 			}
 			throw httpError(
@@ -675,12 +698,12 @@ async function refresh(provider, credential) {
 		const tokens = normalizeTokens(tokenBody);
 		// Providers that rotate must have the new refresh token persisted, or
 		// the link dies at the next expiry.
-		await credentials.updateTokens(credential.uuid, { ...tokens, actor: "refresh" });
+		await credentials.updateTokens(current.uuid, { ...tokens, actor: "refresh" });
 		// updateTokens puts the row back to 'active', so a link flagged over
 		// something transient is simply working again.
-		reauthBackoff.delete(credential.uuid);
+		reauthBackoff.delete(current.uuid);
 		return tokens.accessToken;
-	})().finally(() => refreshInFlight.delete(key));
+	}).finally(() => refreshInFlight.delete(key));
 
 	refreshInFlight.set(key, promise);
 	return promise;
@@ -709,14 +732,36 @@ async function accessToken(profileId, providerId, { actor = "athena" } = {}) {
 	// because the flag is raised on evidence that is often wrong — but not on
 	// every message, because if the grant really is dead each attempt is a
 	// round trip that can only fail.
-	if (
-		credential.status &&
-		credential.status === credentials.STATUS_NEEDS_REAUTH &&
-		!reauthRetryDue(credential.uuid)
-	) {
-		return null;
-	}
-	return refresh(provider, credential);
+	const flagged = credential.status && credential.status === credentials.STATUS_NEEDS_REAUTH;
+	if (flagged && !reauthRetryDue(credential.uuid)) return null;
+	return refresh(provider, credential, { profileId, actor }).catch((err) => {
+		// A flagged link is retried from page loads and chat turns (see
+		// reviveFlagged), so a provider that is down must not slow every one.
+		if (flagged) backoffReauth(credential.uuid);
+		throw err;
+	});
+}
+
+/**
+ * Give links flagged needs_reauth their retry.
+ *
+ * accessToken() only heals a link something asks a token for, and the readers
+ * all check for an active link first, so without this a false alarm stayed
+ * flagged until the person signed in again. Readers call this with their
+ * provider -> status map before acting on it. accessToken's cooldown is what
+ * keeps a grant that really is dead from costing a round trip each time.
+ *
+ * @returns {Promise<boolean>} true when a link came back, so statuses are stale
+ */
+async function reviveFlagged(profileId, statuses) {
+	const flagged = [...statuses]
+		.filter(([id, status]) => status === credentials.STATUS_NEEDS_REAUTH && PROVIDER_IDS.includes(id))
+		.map(([id]) => id);
+	if (!flagged.length) return false;
+	const tokens = await Promise.allSettled(
+		flagged.map((id) => accessToken(profileId, id, { actor: "revive" }))
+	);
+	return tokens.some((t) => t.status === "fulfilled" && t.value);
 }
 
 // ---------------------------------------------------------------------------
@@ -820,6 +865,7 @@ module.exports = {
 	disconnectGroup,
 	stateProvider,
 	accessToken,
+	reviveFlagged,
 	invalidate,
 	status,
 	statusAll,

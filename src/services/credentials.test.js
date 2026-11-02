@@ -13,7 +13,12 @@ jest.mock("../services/secrets", () => ({
 }));
 
 const mockQuery = jest.fn();
-jest.mock("../helpers/db", () => ({ query: mockQuery, getConnection: jest.fn() }));
+const mockLockConnection = jest.fn();
+jest.mock("../helpers/db", () => ({
+	query: mockQuery,
+	getConnection: jest.fn(),
+	lockConnection: mockLockConnection,
+}));
 
 // withTransaction hands back a connection; here that is the same fake pool, so
 // every statement lands in one inspectable log.
@@ -381,5 +386,55 @@ describe("history", () => {
 		await credentials.history(42, { limit: 99999 });
 		const [select] = sqlLog(/FROM user_credential_audit/);
 		expect(select.params[select.params.length - 1]).toBe(500);
+	});
+});
+
+describe("withRefreshLock", () => {
+	const lockConn = (acquired) => ({
+		query: jest.fn().mockResolvedValue([[{ acquired }], []]),
+		end: jest.fn().mockResolvedValue(),
+		destroy: jest.fn(),
+	});
+
+	it("holds a per-credential lock for the work, and closes it after", async () => {
+		const conn = lockConn(1);
+		mockLockConnection.mockResolvedValue(conn);
+
+		expect(await credentials.withRefreshLock("cred-1", async () => "done")).toBe("done");
+
+		expect(conn.query.mock.calls[0][1][0]).toBe("athena_refresh_cred-1");
+		expect(conn.end).toHaveBeenCalledTimes(1);
+	});
+
+	it("keeps the lock name within MySQL's 64 characters", async () => {
+		const conn = lockConn(1);
+		mockLockConnection.mockResolvedValue(conn);
+		await credentials.withRefreshLock("f47ac10b-58cc-4372-a567-0e02b2c3d479", async () => {});
+		expect(conn.query.mock.calls[0][1][0].length).toBeLessThanOrEqual(64);
+	});
+
+	it("does not run the work without the lock", async () => {
+		const conn = lockConn(0);
+		mockLockConnection.mockResolvedValue(conn);
+		const work = jest.fn();
+
+		await expect(credentials.withRefreshLock("cred-1", work)).rejects.toMatchObject({ status: 503 });
+
+		expect(work).not.toHaveBeenCalled();
+		expect(conn.end).toHaveBeenCalledTimes(1);
+	});
+
+	it("releases when the work fails, destroying a connection that will not close", async () => {
+		const conn = lockConn(1);
+		conn.end.mockRejectedValue(new Error("gone"));
+		mockLockConnection.mockResolvedValue(conn);
+
+		await expect(
+			credentials.withRefreshLock("cred-1", async () => {
+				throw new Error("boom");
+			})
+		).rejects.toThrow("boom");
+
+		expect(conn.destroy).toHaveBeenCalledTimes(1);
 	});
 });

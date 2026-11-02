@@ -2,6 +2,7 @@ const googleCalendar = require("./googleCalendar");
 const gmail = require("./gmail");
 const whoop = require("./whoop");
 const { isNotConnected } = require("./http");
+const oauth = require("./oauth");
 const { getProvider } = require("./registry");
 const credentials = require("../credentials");
 
@@ -47,6 +48,11 @@ function messageNeedsConnectors(message) {
  * link indistinguishable from a provider the user has never heard of.
  */
 async function providerStatuses(profileId) {
+	const statuses = await readStatuses(profileId);
+	return (await oauth.reviveFlagged(profileId, statuses)) ? readStatuses(profileId) : statuses;
+}
+
+async function readStatuses(profileId) {
 	const links = await credentials.list(profileId);
 	const byProvider = new Map();
 	for (const link of links) {

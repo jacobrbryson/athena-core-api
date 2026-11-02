@@ -20,6 +20,7 @@ const mockCredentials = {
 	status: jest.fn(),
 	revoke: jest.fn(),
 	updateTokens: jest.fn(),
+	withRefreshLock: (uuid, fn) => fn(),
 	markNeedsReauth: jest.fn(),
 	// The real module's status constants. Without them accessToken's
 	// needs-reauth guard compares `undefined === undefined` for any credential
@@ -410,6 +411,74 @@ describe("accessToken", () => {
 		expect(global.fetch).toHaveBeenCalledTimes(1);
 	});
 
+	it("uses a refresh that finished while it waited for the lock", async () => {
+		// The 2026-10 collision: this request read the row, another finished
+		// refreshing, and spending the old token would have been refused.
+		mockCredentials.get
+			.mockResolvedValueOnce({ uuid: "cred-1", refreshToken: "rt-old", expired: true })
+			.mockResolvedValueOnce({
+				uuid: "cred-1",
+				accessToken: "at-winner",
+				refreshToken: "rt-new",
+				expired: false,
+			});
+
+		expect(await oauth.accessToken(42, "exampleapp")).toBe("at-winner");
+		expect(global.fetch).not.toHaveBeenCalled();
+		expect(mockCredentials.markNeedsReauth).not.toHaveBeenCalled();
+	});
+
+	it("spends the stored refresh token, not the one it first read", async () => {
+		mockCredentials.get
+			.mockResolvedValueOnce({ uuid: "cred-1", refreshToken: "rt-old", expired: true })
+			.mockResolvedValueOnce({ uuid: "cred-1", refreshToken: "rt-new", expired: true });
+		global.fetch.mockResolvedValue(
+			tokenResponse({ access_token: "at-new", refresh_token: "rt-newer", expires_in: 3600 })
+		);
+
+		await oauth.accessToken(42, "exampleapp");
+
+		const sent = new URLSearchParams(global.fetch.mock.calls[0][1].body);
+		expect(sent.get("refresh_token")).toBe("rt-new");
+	});
+
+	it("does not flag a link when the refused token was already replaced", async () => {
+		const spent = { uuid: "cred-1", refreshToken: "rt-old", expired: true };
+		mockCredentials.get
+			.mockResolvedValueOnce(spent)
+			.mockResolvedValueOnce(spent)
+			.mockResolvedValueOnce({
+				uuid: "cred-1",
+				accessToken: "at-relinked",
+				refreshToken: "rt-relinked",
+				expired: false,
+			});
+		global.fetch.mockResolvedValue(
+			tokenResponse({ error: "invalid_grant" }, { ok: false, status: 400 })
+		);
+
+		expect(await oauth.accessToken(42, "exampleapp")).toBe("at-relinked");
+		expect(mockCredentials.markNeedsReauth).not.toHaveBeenCalled();
+	});
+
+	it("backs off a flagged link when the provider is down", async () => {
+		mockCredentials.get.mockResolvedValue({
+			uuid: "cred-down",
+			refreshToken: "rt",
+			expired: true,
+			status: "needs_reauth",
+		});
+		global.fetch.mockResolvedValue(
+			tokenResponse({ message: "bad gateway" }, { ok: false, status: 502 })
+		);
+
+		await expect(oauth.accessToken(42, "exampleapp")).rejects.toMatchObject({
+			code: "refresh_failed",
+		});
+		expect(await oauth.accessToken(42, "exampleapp")).toBeNull();
+		expect(global.fetch).toHaveBeenCalledTimes(1);
+	});
+
 	it("flags for reconnection when the grant is rejected", async () => {
 		mockCredentials.get.mockResolvedValue({
 			uuid: "cred-1",
@@ -494,6 +563,50 @@ describe("accessToken", () => {
 		// Inside the cooldown, answered without a second round trip.
 		expect(await oauth.accessToken(42, "exampleapp")).toBeNull();
 		expect(global.fetch).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("reviveFlagged", () => {
+	it("retries a flagged link and reports that it came back", async () => {
+		mockCredentials.get.mockResolvedValue({
+			uuid: "cred-flagged",
+			refreshToken: "rt",
+			expired: true,
+			status: "needs_reauth",
+		});
+		global.fetch.mockResolvedValue(
+			tokenResponse({ access_token: "at-revived", expires_in: 3600 })
+		);
+
+		expect(await oauth.reviveFlagged(42, new Map([["google_calendar", "needs_reauth"]]))).toBe(true);
+		expect(mockCredentials.updateTokens).toHaveBeenCalled();
+	});
+
+	it("leaves healthy, revoked and non-OAuth links alone", async () => {
+		const statuses = new Map([
+			["exampleapp", "active"],
+			["whoop", "revoked"],
+			["vesync", "needs_reauth"],
+		]);
+		expect(await oauth.reviveFlagged(42, statuses)).toBe(false);
+		expect(mockCredentials.get).not.toHaveBeenCalled();
+	});
+
+	it("reports nothing back when the grant really is dead, and does not throw", async () => {
+		mockCredentials.get.mockResolvedValue({
+			uuid: "cred-dead",
+			refreshToken: "rt-dead",
+			expired: true,
+			status: "needs_reauth",
+		});
+		global.fetch.mockResolvedValue(
+			tokenResponse({ error: "invalid_grant" }, { ok: false, status: 400 })
+		);
+		expect(await oauth.reviveFlagged(42, new Map([["google_calendar", "needs_reauth"]]))).toBe(false);
+
+		global.fetch.mockRejectedValue(new Error("network down"));
+		oauth.clearReauthBackoff();
+		expect(await oauth.reviveFlagged(42, new Map([["google_calendar", "needs_reauth"]]))).toBe(false);
 	});
 });
 

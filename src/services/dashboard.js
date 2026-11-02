@@ -2,6 +2,7 @@
 // never calls a model, approves an action, or creates a provider connection.
 const credentials = require('./credentials');
 const consent = require('./consent');
+const oauth = require('./connectors/oauth');
 const calendar = require('./connectors/googleCalendar');
 const whoop = require('./connectors/whoop');
 const vesync = require('./connectors/vesync');
@@ -54,13 +55,19 @@ async function read(fn) {
   try { return section('ready', await fn()); } catch (err) { return failure(err); }
 }
 
+async function linkStatuses(profileId) {
+  const statuses = new Map();
+  for (const link of await credentials.list(profileId)) {
+    if (statuses.get(link.provider) !== 'active') statuses.set(link.provider, link.status);
+  }
+  return statuses;
+}
+
 async function getDashboard(profileId, user) {
   let statuses;
   try {
-    statuses = new Map();
-    for (const link of await credentials.list(profileId)) {
-      if (statuses.get(link.provider) !== 'active') statuses.set(link.provider, link.status);
-    }
+    statuses = await linkStatuses(profileId);
+    if (await oauth.reviveFlagged(profileId, statuses)) statuses = await linkStatuses(profileId);
   } catch { statuses = null; }
   const healthConsent = await consent.hasConsentForProfile(profileId, 'health_data').catch(() => false);
   async function provider(id, fn, health = false) {
