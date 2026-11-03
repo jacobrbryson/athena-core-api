@@ -13,6 +13,11 @@
  * Condition states: "pass" | "fail" | "pending". Only a full set of passes,
  * on fresh data from a feed allowed to confirm, gives ENTRY_CONFIRMED.
  * docs/architecture/trading.md has the full rules in prose.
+ *
+ * params.entryMode "breakout" is a backtest-only variant: enter on the breakout
+ * candle's close, stop under that candle, no retest. It is deliberately absent
+ * from DEFAULT_PARAMS, so the live strategy and its hash are unchanged; adding
+ * it there is what would make it a new live version.
  */
 
 const ind = require("./indicators");
@@ -256,7 +261,9 @@ function evaluate(input) {
 	if (recentLows.length === 2) higherLows = recentLows[1].low > recentLows[0].low ? "pass" : "fail";
 	// A close below the last swing low breaks the structure even before a new pivot prints.
 	if (higherLows === "pass" && price !== null && price < recentLows[1].low) higherLows = "fail";
-	add("higher_lows", "Higher lows", higherLows,
+	// An entry on the breakout close can't wait for pivots to print: only a
+	// confirmed lower low stops it.
+	add("higher_lows", "Higher lows", params.entryMode === "breakout" && higherLows === "pending" ? "pass" : higherLows,
 		recentLows.length === 2 ? `Swing lows ${money(recentLows[0].low)} → ${money(recentLows[1].low)}${higherLows === "fail" && price < recentLows[1].low ? `, now below ${money(recentLows[1].low)}` : ""}.` : "Fewer than two confirmed swing lows so far.");
 	indicators.swing_lows = recentLows.map((x) => ({ at: new Date(x.t).toISOString(), low: ind.round(x.low) }));
 
@@ -272,7 +279,14 @@ function evaluate(input) {
 	// 5. pullback retests and holds the level, then resumes
 	let retest = null;
 	let confirmBar = null;
-	if (breakout && !failedBreakout) {
+	const breakoutEntry = params.entryMode === "breakout";
+	const breakoutStop = breakout ? breakout.l * (1 - params.stopBuffer) : null;
+	// Breakout entry has no pullback to wait for, so the only way to be late is
+	// price leaving the breakout close behind.
+	const ranPastBreakout = breakoutEntry && breakout && !failedBreakout && price > breakout.c + params.maxChaseR * (breakout.c - breakoutStop);
+	if (breakoutEntry) {
+		if (breakout && !failedBreakout) confirmBar = breakout;
+	} else if (breakout && !failedBreakout) {
 		for (let i = 0; i < sinceBreakout.length; i++) {
 			const b = sinceBreakout[i];
 			if (b.l <= or.high * (1 + params.retestTolerance) && b.c >= or.high * (1 - params.holdTolerance)) {
@@ -284,9 +298,12 @@ function evaluate(input) {
 	}
 	let retestState = "pending";
 	if (failedBreakout) retestState = "fail";
-	else if (retest && confirmBar) retestState = "pass";
-	add("retest_hold", "Pullback held the breakout level", retestState,
+	else if (ranPastBreakout) retestState = "fail";
+	else if (confirmBar) retestState = "pass";
+	add("retest_hold", breakoutEntry ? "Still near the breakout" : "Pullback held the breakout level", retestState,
 		failedBreakout ? "The level didn't hold."
+			: ranPastBreakout ? `Price ${money(price)} ran too far past the ${money(breakout.c)} breakout close.`
+			: breakoutEntry ? (breakout ? `Within reach of the ${money(breakout.c)} breakout close.` : "Needs a breakout first.")
 			: retest && confirmBar ? `Retest low ${money(retest.l)} held ${money(or.high)}; ${etClock(confirmBar.t)} candle closed ${money(confirmBar.c)} above the retest high.`
 				: retest ? `Retest at ${etClock(retest.t)} held; waiting for a close above ${money(retest.h)}.`
 					: breakout ? `Waiting for a pullback toward ${money(or.high)} that holds.` : "Needs a breakout first.");
@@ -312,7 +329,7 @@ function evaluate(input) {
 	// Structural stop, entry and the room above.
 	const lastHigherLow = higherLows === "pass" ? recentLows[1].low : null;
 	const structureLow = retest ? retest.l : lastHigherLow;
-	const stop = structureLow ? structureLow * (1 - params.stopBuffer) : null;
+	const stop = breakoutEntry && confirmBar ? breakoutStop : structureLow ? structureLow * (1 - params.stopBuffer) : null;
 	const entry = confirmBar
 		? !input.simulated && quote?.ask > 0 && !data.stale ? Math.max(quote.ask, confirmBar.c) : confirmBar.c
 		: price;
@@ -342,7 +359,8 @@ function evaluate(input) {
 	let riskDetail = "Needs a structural stop (a held retest or a higher low).";
 	if (stop && entry && riskPerShare > 0) {
 		const noiseFloor = atr ? params.minStopAtr * atr : 0;
-		const resistance = nearestResistance(entry, levels, sessionBars, params);
+		// The breakout candle's own wick isn't a level overhead of an entry on its close.
+		const resistance = nearestResistance(entry, levels, breakoutEntry && confirmBar ? sessionBars.filter((b) => b.t < confirmBar.t) : sessionBars, params);
 		if (resistance !== null) levels.resistance = ind.round(resistance);
 		sizing = sizePosition({
 			entry, stop, settledCash: account.settledCash, riskBudget: account.riskBudget, rewardRisk: account.rewardRisk,
@@ -467,6 +485,7 @@ function evaluate(input) {
 	if (extended) return result(STATUS.WAIT, `Overextended: ${extension.toFixed(1)} ATRs above VWAP.`, "Wait for a pullback; don't chase.", { sizing });
 	if (state("vwap_rising") === "fail") return result(STATUS.WAIT, "VWAP is falling.", "Needs VWAP to flatten or turn up.", { sizing });
 	if (higherLows === "fail") return result(STATUS.WAIT, "Price is making lower lows.", "Needs a higher low first.", { sizing });
+	if (ranPastBreakout) return result(STATUS.WAIT, `Ran past the ${money(breakout.c)} breakout close.`, "Don't chase; this entry has gone.", { sizing });
 
 	const near = price >= or.high * (1 - params.approachPct);
 	if (breakoutState === "pass" || near) {

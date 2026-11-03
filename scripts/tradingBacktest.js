@@ -7,6 +7,8 @@
  *   node scripts/tradingBacktest.js --symbols AMD,INTC,F,PLTR,SOFI --from 2025-06-01 --to 2026-09-30
  *   … --save           store the three runs in trading_backtest_runs (writes to the DB)
  *   … --risk 4 --cash 423 --daily 8 --trades 2 --rr 2 --slippage 0.01
+ *   … --entry breakout   test the breakout-entry variant (never with --save:
+ *                        it isn't a stored strategy version)
  *
  * Choose symbols by a rule fixed in advance (e.g. "the 10 most active under
  * $50 at the start of the period"), not by today's winners — picking names
@@ -58,6 +60,12 @@ async function main() {
 		console.error("usage: node scripts/tradingBacktest.js --symbols A,B,C --from YYYY-MM-DD --to YYYY-MM-DD [--save]");
 		process.exit(2);
 	}
+	const entryMode = arg("entry");
+	if (entryMode && (entryMode !== "breakout" || flag("save"))) {
+		console.error("--entry takes 'breakout', and can't be combined with --save");
+		process.exit(2);
+	}
+	const params = entryMode ? { entryMode } : {};
 	const account = {
 		startingCash: Number(arg("cash", 423)), maxRiskPerTrade: Number(arg("risk", 4)), maxDailyLoss: Number(arg("daily", 8)),
 		maxTradesPerDay: Number(arg("trades", 2)), rewardRisk: Number(arg("rr", 2)), allowFractional: false,
@@ -108,7 +116,7 @@ async function main() {
 	for (const [name, list] of Object.entries(split)) {
 		if (!list.length) continue;
 		const set = new Set(list);
-		results[name] = { from: list[0], to: list[list.length - 1], ...backtest.run(days.filter((d) => set.has(d.date)), { account }) };
+		results[name] = { from: list[0], to: list[list.length - 1], ...backtest.run(days.filter((d) => set.has(d.date)), { account, params }) };
 		const m = results[name].metrics;
 		console.log(`\n${name.toUpperCase()} ${list[0]} → ${list[list.length - 1]} (${list.length} sessions)`);
 		console.log(`  trades ${m.trades} · win rate ${m.win_rate === null ? "—" : `${(m.win_rate * 100).toFixed(1)}%`} · avg R ${m.avg_r ?? "—"} · profit factor ${m.profit_factor ?? "—"}`);

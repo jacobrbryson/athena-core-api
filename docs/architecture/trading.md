@@ -53,6 +53,8 @@ Gates outside the ten: market (SPY and QQQ both below VWAP → WAIT), extension 
 
 Lifecycle: once confirmed, a setup stays ENTRY_CONFIRMED until one of these ends it: stop touched (EXIT_INVALIDATED), target touched (EXIT_INVALIDATED), close below VWAP or the breakout failing (EXIT_INVALIDATED), or price running past entry + 0.5R (WAIT, "don't chase"). Each symbol gets one setup per day.
 
+Breakout entry (`params.entryMode: "breakout"`, `scripts/tradingBacktest.js --entry breakout`) is a backtest-only variant: enter on the breakout candle's close, stop under that candle, no retest, and only a confirmed lower low blocks it. It is not in `DEFAULT_PARAMS`, so nothing live uses it. Tested 2026-11-02 on 16 hand-picked liquid symbols over 340 sessions: 46 trades, −$57.49 net, 0 wins of 7 in the out-of-sample period, against 5 trades and +$8.89 for the retest rule. Don't promote it on those numbers.
+
 ## Sizing
 
 `risk.js`: shares = floor(min(settled cash / entry, budget / (entry − stop))), then cut until the cost-inclusive loss fits. Costs are slippage on both fills, half the spread each side, commission, SEC fee and TAF. The budget is min(per-trade cap, daily cap − realized loss − open planned risk). The stop is never moved to fit the budget.

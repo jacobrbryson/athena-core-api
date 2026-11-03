@@ -105,6 +105,36 @@ describe('strategy.evaluate', () => {
     expect(r.confirmed).toEqual(expect.objectContaining({ entry: r.sizing.entry, stop: r.sizing.stop, target: r.sizing.target }));
   });
 
+  describe('breakout entry (params.entryMode)', () => {
+    const asOfBreakout = OPEN + 22 * M; // the 9:51 candle closed 101.30, above the 101.00 range high
+    const atBreakout = (over = {}) => input({ asOf: asOfBreakout, quote: { bid: 101.29, ask: 101.31, t: asOfBreakout - 2000 }, params: { entryMode: 'breakout' }, ...over });
+
+    test('is not a default, so the live strategy and its hash stay as they are', () => {
+      expect(strategy.DEFAULT_PARAMS.entryMode).toBeUndefined();
+      expect(strategy.evaluate(input({ asOf: asOfBreakout, quote: { bid: 101.29, ask: 101.31, t: asOfBreakout - 2000 } })).status).not.toBe('ENTRY_CONFIRMED');
+    });
+
+    test('confirms on the breakout candle with a stop under it, without a retest', () => {
+      const r = strategy.evaluate(atBreakout());
+      expect(cond(r, 'retest_hold').state).toBe('pass');
+      expect(r.levels.retest_low).toBeUndefined();
+      expect(r.levels.stop).toBeLessThan(101.1);
+      expect(r.status).toBe('ENTRY_CONFIRMED');
+    });
+
+    test("doesn't chase once price leaves the breakout close behind", () => {
+      const bars = breakoutDay().map((b) => (b.t === OPEN + 22 * M ? { ...b, o: 103, h: 103.2, l: 103, c: 103.1 } : b));
+      const asOf = OPEN + 23 * M;
+      const r = strategy.evaluate(atBreakout({ bars, asOf, quote: { bid: 103.09, ask: 103.11, t: asOf - 2000 } }));
+      expect(cond(r, 'retest_hold').state).toBe('fail');
+      expect(r.status).not.toBe('ENTRY_CONFIRMED');
+    });
+
+    test('still needs the data to be fit to confirm', () => {
+      expect(strategy.evaluate(atBreakout({ feed: 'iex' })).status).toBe('WAIT');
+    });
+  });
+
   test('never confirms on the IEX feed', () => {
     const r = strategy.evaluate(input({ feed: 'iex' }));
     expect(r.status).toBe('WAIT');
