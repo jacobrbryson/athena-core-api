@@ -305,6 +305,19 @@ you stop it early.
   and `voiceFilter {why, score, voicedMs}`; `path` is `conversation` or
   `conversationPickup`. A drive with nothing sent had left no trace at all.
   `src/controllers/handsFree.js`, test `handsFree.test.js`.
+- Faster spoken replies (2026-11-05): on a spoken turn (`companion.handsFree`,
+  `conversation` or `filler`) `processAiResponse` voices the draft's first part
+  (`src/services/speechChunks.js`, identical to the clients' split, checked on
+  149 real replies) into `src/services/speechCache.js` while the monologue runs,
+  and the final text's first part before the save if it changed. `/speech`
+  takes a cached clip first (in memory, per instance, 2 min, taken once). The
+  phone waits on `GET /message/reply?sessionId&after&waitMs` (held up to 25 s,
+  one indexed row checked every 250 ms, `messageService.getReplyAfter`, same
+  viewer boundary) instead of fetching the transcript every 0.7–2 s, falling
+  back to polling on a 404. Tests: `speechChunks.test.js`, `speechCache.test.js`,
+  `messageReplyWait.test.js`. Measured before: server ~9.5 s with a throttled
+  CPU (Cloud Run allocates CPU only during requests, and the reply is written
+  after `/message` has answered), up to 2 s of poll lag, then 2–3 s of voice.
 - Not yet: Guardians, barge-in outside desktop Chromium (including the phone
   with the screen off), lip sync with the screen off, knowing
   whether headphones are in, or superseding a reply still being written when

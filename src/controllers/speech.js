@@ -1,4 +1,5 @@
 const geminiService = require("../services/gemini");
+const speechCache = require("../services/speechCache");
 const { decodeGuardianFromRequest } = require("../helpers/guardianToken");
 const { resolveCallerProfileId } = require("../helpers/callerIdentity");
 
@@ -32,7 +33,8 @@ async function generateSpeech(req, res) {
 	const sing = req.body?.style === "sing";
 
 	try {
-		const audio = await geminiService.generateSpeech(text, { sing });
+		// A spoken reply's first part is usually voiced already (speechCache).
+		const audio = (!sing && (await speechCache.take(text))) || (await geminiService.generateSpeech(text, { sing }));
 		res.set("Cache-Control", "no-store");
 		return res.json(audio);
 	} catch (error) {

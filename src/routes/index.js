@@ -1,7 +1,7 @@
 const express = require("express");
 
 const getOrCreateSession = require("../controllers/session");
-const { getMessage, addMessage } = require("../controllers/message");
+const { getMessage, addMessage, waitForReply } = require("../controllers/message");
 const { getTopics } = require("../controllers/sessionTopic");
 const {
 	getLearningMoments,
@@ -55,6 +55,8 @@ module.exports = (clients) => {
 	router.get("/session/:sessionId/topic", getTopics);
 	router.get("/session/:sessionId/learning-moment", getLearningMoments);
 	router.get("/message", getMessage);
+	// Hands-free: one held request for her reply instead of polling the transcript.
+	router.get("/message/reply", waitForReply);
 	router.post("/message", (req, res) => addMessage(req, res, clients));
 	// Authenticated Guardian-only neural voice. The proxy forwards the Guardian
 	// session JWT in x-user-authorization while keeping the Gemini key private.

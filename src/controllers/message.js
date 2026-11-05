@@ -237,6 +237,50 @@ async function getMessage(req, res) {
 }
 
 /**
+ * GET /message/reply?sessionId&after&waitMs — wait for her reply to the
+ * person's message `after`, answering the moment it is saved.
+ *
+ * 2026-11-05: the phone found her reply by fetching the whole transcript
+ * every 0.7–2 s, so a reply sat unseen for up to 2 s before her voice was
+ * even asked for. This holds one request open and checks a single indexed
+ * row every REPLY_CHECK_MS instead. It answers { reply } — the message, as
+ * GET /message would show it — or { reply: null } when the wait runs out,
+ * and the phone asks again.
+ */
+const REPLY_CHECK_MS = 250;
+const REPLY_WAIT_MAX_MS = 25_000;
+
+async function waitForReply(req, res) {
+  try {
+    const ip = extractIp(req);
+    const uuid = req.query.sessionId;
+    const after = req.query.after;
+    if (typeof uuid !== "string" || !uuid.trim() || typeof after !== "string" || !/^[0-9a-f-]{36}$/i.test(after))
+      return res.status(400).json({ success: false, message: "Missing session or message" });
+    const waitMs = Math.max(0, Math.min(Number(req.query.waitMs) || REPLY_WAIT_MAX_MS, REPLY_WAIT_MAX_MS));
+
+    const callerProfileId = await resolveCallerProfileId(req);
+    const session = await sessionService.getAuthorizedSession(uuid, { ip, callerProfileId });
+    if (!session)
+      return res.status(404).json({ success: false, message: "Session not found" });
+    const viewer = session.profile_id != null ? callerProfileId : null;
+
+    let gone = false;
+    req.once?.("close", () => { gone = true; });
+    const deadline = Date.now() + waitMs;
+    for (;;) {
+      const reply = await messageService.getReplyAfter(session.id, after, viewer);
+      if (reply) return res.json({ reply });
+      if (gone || Date.now() + REPLY_CHECK_MS > deadline) return res.json({ reply: null });
+      await new Promise((resolve) => setTimeout(resolve, REPLY_CHECK_MS));
+    }
+  } catch (err) {
+    console.error("Error waiting for a reply:", err);
+    res.status(500).json({ success: false, message: "DB error" });
+  }
+}
+
+/**
  * One turn, traced (services/perfTrace): the trace starts here and is
  * written once the reply is out — or as soon as the response finishes when
  * the turn never reaches a reply (refused, echo, error).
@@ -612,4 +656,5 @@ async function addMessageTurn(req, res, clients) {
 module.exports = {
   getMessage,
   addMessage,
+  waitForReply,
 };

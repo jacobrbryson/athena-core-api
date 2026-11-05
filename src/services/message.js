@@ -139,6 +139,30 @@ async function getReplyTarget(sessionId, uuid, viewerProfileId) {
   return rows[0] ? { ...shape(rows[0]), private_profile_id: rows[0].private_profile_id ?? null } : null;
 }
 
+/**
+ * Her first reply after the person's message `afterUuid`, through the same
+ * presence and privacy boundary as history, or null while there is none.
+ * "After" is the transcript's own order (created_at, uuid), as every client
+ * reads it.
+ */
+async function getReplyAfter(sessionId, afterUuid, viewerProfileId = null) {
+  const viewer = viewerProfileId != null && Number.isFinite(Number(viewerProfileId))
+    ? Number(viewerProfileId)
+    : null;
+  const [rows] = await pool.query(
+    `SELECT m.uuid, m.text, m.created_at, m.is_human, m.mode, m.profile_id, m.sources, m.reply_to_uuid, m.action_uuid
+     FROM message m
+     JOIN message mine ON mine.session_id = m.session_id AND mine.uuid = ?
+     WHERE m.session_id = ? AND m.is_human = 0
+       AND (m.created_at, m.uuid) > (mine.created_at, mine.uuid)
+       ${viewer !== null ? `AND ${VISIBLE_TO_VIEWER_SQL}` : ""}
+       AND (m.private_profile_id IS NULL OR m.private_profile_id = ${viewer !== null ? "?" : "NULL"})
+     ORDER BY m.created_at ASC, m.uuid ASC LIMIT 1;`,
+    [afterUuid, sessionId, ...(viewer !== null ? [viewer, viewer] : [])],
+  );
+  return rows[0] ? shape(rows[0]) : null;
+}
+
 /** Messages strictly newer than `since` (a DATETIME), oldest -> newest. */
 async function getMessagesSince(sessionId, since, limit = 40) {
   const [messages] = await pool.query(
@@ -154,5 +178,6 @@ module.exports = {
   addMessage,
   getMessages,
   getMessagesSince,
+  getReplyAfter,
   getReplyTarget,
 };

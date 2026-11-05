@@ -14,6 +14,8 @@ const webSearch = require("../services/webSearch");
 const travel = require("../services/travel");
 const whereabouts = require("../services/whereabouts");
 const monologue = require("../services/monologue");
+const speechCache = require("../services/speechCache");
+const { speechChunks } = require("../services/speechChunks");
 const codeAgents = require("../services/codeAgents");
 const missionService = require("../services/mission");
 const selfKnowledge = require("../services/selfKnowledge");
@@ -804,6 +806,18 @@ async function processAiResponse(session, message, clients, ctx = {}) {
     if (drafted?.reply) delete drafted.reply.needs;
     timer.mark("needs");
 
+    // A spoken turn: start her voice for the draft's first part now, while
+    // the monologue checks it and the reply is saved, so it is ready (or
+    // nearly) when the phone or page asks /speech for it (services/speechCache).
+    // A rewrite only costs one unused clip; the final text is voiced below.
+    const spoken = !!(ctx.companion?.handsFree || ctx.companion?.conversation || ctx.companion?.filler);
+    const voiceAhead = (reply) => {
+      if (!spoken || !reply?.response || reply.lyrics) return;
+      const [first] = speechChunks(reply.response);
+      if (first) speechCache.prefetch(first);
+    };
+    voiceAhead(drafted?.reply);
+
     let parsedResponse = drafted?.reply;
     let fellBack = false;
 
@@ -948,6 +962,8 @@ async function processAiResponse(session, message, clients, ctx = {}) {
         : "";
     const sources = !fellBack && webUsed?.sources?.length ? webUsed.sources : null;
     timer.mark("actions");
+    // The reply as it will be said: voiced now if the draft's clip doesn't cover it.
+    if (!fellBack && !lyrics) voiceAhead(parsedResponse);
     const endSave = perfTrace.begin("reply.save");
     const aiChatUuid = await messageService.addMessage(
       session.id,
