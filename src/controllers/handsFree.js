@@ -42,6 +42,7 @@ const OUTCOMES = new Set(["answered", "nothing", "echo", "error", "notYou"]);
 const FILTER_REASONS = new Set([
   "your voice",
   "your voice in the car",
+  "your voice talking",
   "not your voice",
   "too quiet to tell",
   "no print",

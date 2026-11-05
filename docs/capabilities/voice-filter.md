@@ -53,7 +53,14 @@ they use the microphone.
 
 - **It ignored you.** Check the score with **Check it knows me**. If it's low,
   teach again in a quiet room with the phone about where it usually is when you
-  talk to me. A cold, whispering or shouting can lower the score.
+  talk to me. A cold, whispering or shouting can lower the score. Since
+  2026-11-05 it also learns how you sound talking to me: each turn it's sure
+  was you sharpens a separate conversation voiceprint, so it should miss you
+  less the more we talk. The panel shows how many turns it has learned from.
+- **It ignored you even though you spoke clearly for several seconds.** Before
+  2026-11-05 a turn whose voice it couldn't work out while you talked was
+  dropped as "too quiet to tell". It now tries again on the whole recording.
+  Update the app.
 - **It still answered someone else.** When two people talk over each other, the
   turn can sound enough like you to pass. Someone who sounds a lot like you can
   also pass.
@@ -122,6 +129,17 @@ they use the microphone.
 - `VoskModels.java` shares one copy of each model per process.
   `../../../native-runtime/Tools/Install-AndroidCompanion.ps1` fetches the speaker model.
   The model publisher lists no hash, so the SHA-256 was pinned on first download.
+- Conversation prints (2026-11-05): `voiceprint-talk.bin` and
+  `voiceprint-talk-car.bin` (by `CarAudio.active()`), the same Keystore key. A
+  turn scoring at least `LEARN_AT` 0.40 against a taught print (phone or car),
+  with at least 2 s of voice, is folded in as a running average weighting the
+  newest turn at least 1/20. Scoring uses the best of all prints; only taught
+  prints can teach, so the learned one can't drift to another voice. Measured
+  that day: kept turns 0.31–0.49, so three of four would have taught it.
+- Live fallback: when `Live.vector()` gives none (gated audio decoded to no
+  words, so Vosk gave no `spk`), `check(feed)` scores `MicFeed.everything()`.
+  Two of the owner's turns (1.8 s and 4.2 s of voice) were dropped as "too
+  quiet to tell" this way.
 - Car print (2026-11-05): `voiceprint-car.bin`, the same Keystore key,
   made by `voiceprintListen {mode: "enroll", car: true}`, which holds
   `CarAudio` while it records so the audio is the car's microphone. `judge`

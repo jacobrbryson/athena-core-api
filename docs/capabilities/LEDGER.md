@@ -1,5 +1,7 @@
 # Capability ledger
 
+- 2026-11-05 — Only my voice now learns how you sound talking (from turns it's sure were you) and no longer drops a clearly spoken turn as "too quiet to tell", so you should have to repeat yourself less. Needs the new APK — `voice-filter.md` (status: partial)
+
 - 2026-11-05 — In the car, conversation mode on the Android app talks through the car's Bluetooth hands-free like a phone call: the car's microphone hears you and I answer on the car's speakers. "Only my voice" can learn your voice in the car too, and turns the phone heard but didn't send now show in the logs with the reason. Needs the new APK; not yet tried in a car — `conversation-mode.md` (status: partial)
 
 - 2026-11-05 — When part of me is actually broken (an AI provider rejecting my key, a job refused for lacking an identity, saved sign-ins I can't open) the owner gets a red banner across the top of every screen, and every problem, including failed nightly steps, also lands in Notifications marked in red, once a day while it lasts, with no push. Not deployed yet — `system.md` (status: live)
