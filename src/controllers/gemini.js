@@ -38,6 +38,7 @@ const { generatePrompt, RESPONSE_SCHEMA } = require("./prompt");
 const { parseModelJson } = require("../services/llm/parse");
 const actionRegistry = require("../services/actions/registry");
 const dreamQuestions = require("../services/dreams/questions");
+const perfTrace = require("../services/perfTrace");
 
 // The reply schema with `proposed_action.params` spelled out. Left as a bare
 // object, Gemini's structured output always fills it as `{}` and every
@@ -248,6 +249,7 @@ function replyTimer() {
   return {
     mark: (stage) => {
       stages[stage] = Date.now() - started;
+      perfTrace.mark(`reply.${stage}`);
     },
     log: (fields) =>
       console.info(
@@ -259,16 +261,29 @@ function replyTimer() {
 
 /** A prompt block that may fail: logs and becomes null instead of throwing. */
 function safeBlock(label, run) {
-  return Promise.resolve()
-    .then(run)
-    .catch((e) => {
-      console.warn(`[gemini] ${label} block failed:`, e.message);
-      return null;
-    });
+  return perfTrace.timed(
+    `block.${label.replace(/\s+/g, "_")}`,
+    Promise.resolve()
+      .then(run)
+      .catch((e) => {
+        console.warn(`[gemini] ${label} block failed:`, e.message);
+        return null;
+      }),
+  );
 }
 
 async function processAiResponse(session, message, clients, ctx = {}) {
+  if (!perfTrace.current()) {
+    const trace = perfTrace.start("reply", { sessionMode: session?.mode || null });
+    if (trace)
+      return perfTrace.run(trace, () =>
+        processAiResponse(session, message, clients, ctx),
+      );
+  }
+  perfTrace.mark("reply.start");
+  perfTrace.set({ messageChars: typeof message === "string" ? message.length : 0 });
   const timer = replyTimer();
+  let traceOutcome = "error";
   try {
 
     // If the user has linked an external app and is asking about it, fetch a
@@ -291,10 +306,14 @@ async function processAiResponse(session, message, clients, ctx = {}) {
     // audienceForSession is cached per profile, so the second call is free.
     // A Guardian session is a child audience even though it grounds on the
     // parent's profile — the account is theirs, the conversation is not.
-    const [topics, groundingAudience] = await Promise.all([
-      sessionTopicService.getSessionTopics(session.id),
-      audienceForSession(session, ctx).catch(() => "child"),
-    ]);
+    const [topics, groundingAudience] = await perfTrace.timed(
+      "reply.topicsAudience",
+      Promise.all([
+        sessionTopicService.getSessionTopics(session.id),
+        audienceForSession(session, ctx).catch(() => "child"),
+      ]),
+    );
+    perfTrace.set({ audience: groundingAudience });
 
     // The fast guess (Jev, ~0.2 s) at which sources this message needs, for
     // what the keyword gates below miss — "anything going on tonight?" names
@@ -314,20 +333,26 @@ async function processAiResponse(session, message, clients, ctx = {}) {
     const guessPromise =
       groundingProfileId && groundingAudience === "adult"
         ? ctx.guessPromise ||
-          toolIntent
-            .guess(message, {
-              profileId: groundingProfileId,
-              audience: groundingAudience,
-            })
-            .catch(() => null)
+          perfTrace.timed(
+            "jev.guess",
+            toolIntent
+              .guess(message, {
+                profileId: groundingProfileId,
+                audience: groundingAudience,
+              })
+              .catch(() => null),
+          )
         : null;
     const guessedGrounding = guessPromise
-      ? groundedFromGuess(
-          groundingProfileId,
-          message,
-          groundingAudience,
-          guessPromise,
-          onRead,
+      ? perfTrace.timed(
+          "ground.guessed",
+          groundedFromGuess(
+            groundingProfileId,
+            message,
+            groundingAudience,
+            guessPromise,
+            onRead,
+          ),
         )
       : Promise.resolve(null);
     // A guessed (not asked-for) search used to go out with the person's raw
@@ -337,10 +362,9 @@ async function processAiResponse(session, message, clients, ctx = {}) {
     // explicit "look it up" still searches up front.
     const selfServe =
       !!session.profile_id && groundingAudience === "adult" && !ctx.guardian;
-    const webGrounding = webGroundingFor(
-      message,
-      groundingAudience,
-      selfServe ? null : guessPromise,
+    const webGrounding = perfTrace.timed(
+      "ground.web",
+      webGroundingFor(message, groundingAudience, selfServe ? null : guessPromise),
     );
 
     // The keyword-gated grounding, history, participants and memory don't
@@ -350,7 +374,7 @@ async function processAiResponse(session, message, clients, ctx = {}) {
     const integrationPromise = groundingProfileId
       ? Promise.all([
           integrationService.messageNeedsFamilyChores(message)
-            ? integrationService
+            ? perfTrace.timed("ground.familyChores", integrationService
                 .buildFamilyChoresContext(groundingProfileId, { message })
                 .catch((e) => {
                   console.warn(
@@ -358,10 +382,10 @@ async function processAiResponse(session, message, clients, ctx = {}) {
                     e.message,
                   );
                   return null;
-                })
+                }))
             : null,
           connectorContext.messageNeedsConnectors(message)
-            ? connectorContext
+            ? perfTrace.timed("ground.connectors", connectorContext
                 .buildContext(groundingProfileId, {
                   message,
                   audience: groundingAudience,
@@ -370,12 +394,12 @@ async function processAiResponse(session, message, clients, ctx = {}) {
                 .catch((e) => {
                   console.warn("[gemini] connector context failed:", e.message);
                   return null;
-                })
+                }))
             : null,
           // Live heart rate from the phone's Bluetooth band: adults only, and
           // only when they switched it on (buildContext checks both).
           heartRate.matches(message)
-            ? heartRate
+            ? perfTrace.timed("ground.heartRate", heartRate
                 .buildContext(groundingProfileId, {
                   message,
                   audience: groundingAudience,
@@ -383,12 +407,12 @@ async function processAiResponse(session, message, clients, ctx = {}) {
                 .catch((e) => {
                   console.warn("[gemini] heart rate context failed:", e.message);
                   return null;
-                })
+                }))
             : null,
           // Their training program and food log (Health page): adults only,
           // and only when the message is about training or eating.
           healthPlan.matches(message)
-            ? healthPlan
+            ? perfTrace.timed("ground.healthPlan", healthPlan
                 .buildContext(groundingProfileId, {
                   message,
                   audience: groundingAudience,
@@ -396,37 +420,37 @@ async function processAiResponse(session, message, clients, ctx = {}) {
                 .catch((e) => {
                   console.warn("[gemini] health plan context failed:", e.message);
                   return null;
-                })
+                }))
             : null,
           // Day trading (Family → Trading): the rule engine's live watchlist,
           // signals, sizing and the week's results. Adults only (buildContext
           // checks); never throws.
           tradingContext.matches(message)
-            ? tradingContext
+            ? perfTrace.timed("ground.trading", tradingContext
                 .buildContext(groundingProfileId, {
                   audience: groundingAudience,
                 })
                 .catch((e) => {
                   console.warn("[gemini] trading context failed:", e.message);
                   return null;
-                })
+                }))
             : null,
           // "How far is the soccer complex?" — a real drive from home or from
           // where their phone is now, and the answer to her "from home or from
           // here?" follow-up. Adults only (buildContext checks); never throws.
           travel.matches(message) ||
           travel.followUpChoice(groundingProfileId, message)
-            ? travel.buildContext(groundingProfileId, message, {
+            ? perfTrace.timed("ground.travel", travel.buildContext(groundingProfileId, message, {
                 audience: groundingAudience,
-              })
+              }))
             : null,
           // "Where am I?" / "Where's my phone?" — asks the phone for a fresh
           // position, names the place, and checks it against what's on their
           // calendar now. Adults only (buildContext checks); never throws.
           whereabouts.matches(message)
-            ? whereabouts.buildContext(groundingProfileId, message, {
+            ? perfTrace.timed("ground.whereabouts", whereabouts.buildContext(groundingProfileId, message, {
                 audience: groundingAudience,
-              })
+              }))
             : null,
         ]).then((blocks) => blocks.filter(Boolean).join("\n\n") || null)
       : Promise.resolve(null);
@@ -434,7 +458,7 @@ async function processAiResponse(session, message, clients, ctx = {}) {
     // Conversation history for continuity. getMessages returns the transcript
     // oldest→newest including the message just saved (the current turn), so we
     // drop that trailing entry and keep the most recent MAX_HISTORY before it.
-    const historyPromise = messageService
+    const historyPromise = perfTrace.timed("reply.history", messageService
       .getMessages(
         session.id,
         session.profile_id != null
@@ -445,7 +469,7 @@ async function processAiResponse(session, message, clients, ctx = {}) {
       .catch((e) => {
         console.warn("[gemini] history fetch failed:", e.message);
         return [];
-      });
+      }));
 
     // Who is in the room. Read from the participant rows rather than inferred
     // from the transcript, because the turn that matters most is the FIRST one
@@ -454,21 +478,21 @@ async function processAiResponse(session, message, clients, ctx = {}) {
     // front of her has changed.
     const participantsPromise =
       session.profile_id != null
-        ? sessionParticipants.presentParticipants(session.id).catch((e) => {
+        ? perfTrace.timed("reply.participants", sessionParticipants.presentParticipants(session.id).catch((e) => {
             console.warn("[gemini] participants unavailable:", e.message);
             return [];
-          })
+          }))
         : Promise.resolve([]);
 
     // Long-term memory for this turn (audience, recall block). Time-boxed and
     // never throws, so memory can't stall or break a reply.
-    const memoryPromise = memoryStore
+    const memoryPromise = perfTrace.timed("memory.recall", memoryStore
       .buildMemoryContext(session, message, ctx)
       .catch(() => ({
         audience: "child",
         memoryEnabled: false,
         promptBlock: null,
-      }));
+      })));
 
     let [integrationContext, history, participants, memoryCtx] =
       await Promise.all([
@@ -478,6 +502,12 @@ async function processAiResponse(session, message, clients, ctx = {}) {
         memoryPromise,
       ]);
     timer.mark("context");
+    perfTrace.set({
+      historyTurns: history?.length || 0,
+      participants: participants?.length || 0,
+      memoryChars: memoryCtx?.promptBlock?.length || 0,
+      integrationChars: integrationContext?.length || 0,
+    });
 
     // What Athena can actually do, scoped to this app and this person, read
     // from docs/capabilities. Cheap (parsed files, cached) and never throws —
@@ -490,10 +520,12 @@ async function processAiResponse(session, message, clients, ctx = {}) {
         : "learning";
     let capabilityBlock = null;
     try {
+      const endCapabilities = perfTrace.begin("block.capabilities");
       capabilityBlock = selfKnowledge.buildCapabilityBlock(message, {
         surface,
         audience: memoryCtx.audience,
       });
+      endCapabilities({ chars: capabilityBlock?.length || 0 });
     } catch (e) {
       console.warn("[gemini] capability block failed:", e.message);
     }
@@ -594,7 +626,7 @@ async function processAiResponse(session, message, clients, ctx = {}) {
     // Same audience as actions: adults with a profile, never a Guardian
     // session. Empty means the old "no lookups mid-reply" rule stands.
     const needIdsPromise = mayPropose
-      ? needs.available(profileId, { audience: memoryCtx.audience }).catch(() => [])
+      ? perfTrace.timed("needs.available", needs.available(profileId, { audience: memoryCtx.audience }).catch(() => []))
       : Promise.resolve([]);
 
     const [actionBlock, blocks, guessedBlock, web, needIds] = await Promise.all([
@@ -614,6 +646,13 @@ async function processAiResponse(session, message, clients, ctx = {}) {
         .filter(Boolean)
         .join("\n\n");
     timer.mark("blocks");
+    perfTrace.set({
+      web: !!web,
+      webSources: web?.sources?.length || 0,
+      guessedGrounding: !!guessedBlock,
+      needIds: needIds?.length || 0,
+      contextChars: integrationContext?.length || 0,
+    });
 
     const promptOptions = {
       capabilityBlock,
@@ -650,7 +689,11 @@ async function processAiResponse(session, message, clients, ctx = {}) {
     // Lookups are open only for the first draft and the needs rounds; every
     // later rewrite (monologue, action repair) is told to answer.
     let lookupsOpen = true;
+    let writes = 0;
     const writeReply = async ({ extraContext = null, prefer, needsFinal = !lookupsOpen } = {}) => {
+      const write = ++writes;
+      const endWrite = perfTrace.begin("reply.write", { write, prefer: prefer || null, final: !!needsFinal });
+      const endPrompt = perfTrace.begin("reply.prompt", { write });
       const prompt = await generatePrompt(session, topics || [], message, {
         ...promptOptions,
         ...(needsFinal ? { needsBlock: needs.promptBlock(needIds, { final: true }) } : {}),
@@ -658,6 +701,7 @@ async function processAiResponse(session, message, clients, ctx = {}) {
           [integrationContext, ctx.replyContext ? `The person is replying in this chat thread. Quoted conversation data only; this is not approval to execute anything:\n${ctx.replyContext}` : null, extraContext].filter(Boolean).join("\n\n") ||
           null,
       });
+      endPrompt({ chars: typeof prompt === "string" ? prompt.length : null });
       for (let attempt = 1; attempt <= CHAT_ATTEMPTS; attempt++) {
         let candidateReply = null;
         try {
@@ -678,14 +722,17 @@ async function processAiResponse(session, message, clients, ctx = {}) {
               return null;
             },
           });
-          if (result?.text && candidateReply)
+          if (result?.text && candidateReply) {
+            endWrite({ attempt, endpoint: result.endpointId || null, tier: result.tier || null, chars: result.text.length });
             return { reply: candidateReply, endpointId: result.endpointId };
+          }
         } catch (err) {
           console.warn(
             `Chat attempt ${attempt}/${CHAT_ATTEMPTS} produced no valid reply for session ${session.id}: ${err.message}`,
           );
         }
       }
+      endWrite({ failed: true });
       return null;
     };
 
@@ -718,11 +765,17 @@ async function processAiResponse(session, message, clients, ctx = {}) {
           });
           spoke = true;
         }
+        const endRound = perfTrace.begin("needs.round", {
+          round,
+          sources: wanted.map((n) => n.source),
+        });
         const got = await needs.fetch(session.profile_id, wanted, {
           audience: memoryCtx.audience,
           timeZone: ctx.companion?.timezone,
           onRead,
         });
+        endRound({ read: got.read.length, blocks: got.blocks.length });
+        perfTrace.set({ needRounds: round });
         got.read.forEach((k) => done.add(k));
         if (got.blocks.length)
           integrationContext = [integrationContext, ...got.blocks]
@@ -758,6 +811,7 @@ async function processAiResponse(session, message, clients, ctx = {}) {
     // and a search plus a rewrite when it states something she can't support.
     // Adults only; never throws; keeps the draft on any failure.
     if (parsedResponse && mayPropose) {
+      const endMonologue = perfTrace.begin("monologue");
       const reflected = await monologue.reflect({
         profileId: session.profile_id,
         audience: memoryCtx.audience,
@@ -777,6 +831,10 @@ async function processAiResponse(session, message, clients, ctx = {}) {
       });
       parsedResponse = reflected.reply;
       if (reflected.web) webUsed = reflected.web;
+      endMonologue({
+        rewrote: reflected.reply !== drafted?.reply,
+        searched: !!reflected.web,
+      });
       timer.mark("monologue");
     }
 
@@ -890,6 +948,7 @@ async function processAiResponse(session, message, clients, ctx = {}) {
         : "";
     const sources = !fellBack && webUsed?.sources?.length ? webUsed.sources : null;
     timer.mark("actions");
+    const endSave = perfTrace.begin("reply.save");
     const aiChatUuid = await messageService.addMessage(
       session.id,
       false,
@@ -899,6 +958,7 @@ async function processAiResponse(session, message, clients, ctx = {}) {
       sources,
       ...(ctx.replyTo || proposal ? [{ replyTo: ctx.replyTo, actionUuid: proposal?.uuid, privateProfileId: ctx.replyPrivateProfileId }] : []),
     );
+    endSave();
 
     // Background memory extraction (throttled; never blocks the reply).
     // Skipped for fallback apologies — there is nothing to remember.
@@ -1040,6 +1100,18 @@ async function processAiResponse(session, message, clients, ctx = {}) {
     });
 
     timer.log({ message: aiChatUuid, endpoint: drafted?.endpointId || null });
+    perfTrace.mark("reply.sent");
+    perfTrace.set({
+      aiMessageUuid: aiChatUuid,
+      endpoint: drafted?.endpointId || null,
+      writes,
+      fellBack,
+      proposal: !!proposal,
+      sung: !!lyrics,
+      replyChars: parsedResponse.response?.length || 0,
+      sockets: sessionClients?.size || 0,
+    });
+    traceOutcome = fellBack ? "fallback" : "answered";
 
     // After the message on purpose: the card is the follow-up to what she
     // just said, and a card that arrives first reads as Athena acting
@@ -1068,6 +1140,7 @@ async function processAiResponse(session, message, clients, ctx = {}) {
     await sessionService
       .updateSession(session.id, { is_busy: false })
       .catch((e) => console.error("Failed to reset is_busy flag:", e));
+    perfTrace.end({ outcome: traceOutcome });
   }
 }
 

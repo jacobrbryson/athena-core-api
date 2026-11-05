@@ -31,4 +31,26 @@ const pool = mysql.createPool({
 // connection and wait forever for an eleventh. Closing it releases the lock.
 pool.lockConnection = () => mysql.createConnection(connection);
 
+// Every pool query inside a traced turn is counted and timed on that turn
+// (services/perfTrace): a counter bump and, for the slowest few, the
+// statement's shape — never its parameters. Outside a turn this is a single
+// lookup and the original call, untouched.
+const perfTrace = require("../services/perfTrace");
+const { performance } = require("node:perf_hooks");
+for (const method of ["query", "execute"]) {
+	if (typeof pool[method] !== "function") continue;
+	const original = pool[method].bind(pool);
+	pool[method] = function traced(sql, ...rest) {
+		if (!perfTrace.current()) return original(sql, ...rest);
+		const started = performance.now();
+		const result = original(sql, ...rest);
+		if (typeof result?.then !== "function") return result;
+		result.then(
+			() => perfTrace.dbQuery(sql, performance.now() - started, false),
+			() => perfTrace.dbQuery(sql, performance.now() - started, true),
+		);
+		return result;
+	};
+}
+
 module.exports = pool;

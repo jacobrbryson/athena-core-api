@@ -15,7 +15,7 @@ If you turn on **location context**, your paired Android phone can send me an oc
 
 Ask **"Where am I?"** or **"Where's my phone?"** and I ask the phone for its position right then. I tell you the place — home, one of your saved places on the Community page, or the nearest named place on Google Maps — and how far that is from home. I also look at what's on your Google Calendar around now: if an event's location matches where the phone is, I'll say it looks like you're there ("looks like you're at Skylar's softball game — how's it going?"). If the phone doesn't answer, I tell you the last place it reported and how long ago.
 
-You don't have to use those exact words — "what town is this?" or "what's around here?" works too, and on voice I'll say "let me check where your phone is" while I ask it.
+You don't have to use those exact words — "what town is this?" or "what's around here?" works too, and on voice I'll say "Let me check where your phone is." while I ask it (or "Just a moment." if I'm looking up other things too).
 
 ## How to turn it on
 

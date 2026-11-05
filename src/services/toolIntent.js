@@ -10,7 +10,7 @@
  * Two thresholds, on purpose:
  *   FETCH_AT  — low. Start the read. Reads are cached and cheap, so a wrong
  *               guess costs one wasted fetch.
- *   SPEAK_AT  — high. Say "let me check your calendar, hmm…". A filler that
+ *   SPEAK_AT  — high. Say "Let me check your calendar.". A filler that
  *               announces a check she then doesn't use is a small lie, so it
  *               needs real confidence.
  *
@@ -19,9 +19,10 @@
  * something she cannot see. Anything going wrong returns null and the caller
  * falls back to the keyword gates — the guess is an accelerator, never a gate.
  *
- * The filler lines are a fixed set built from fixed fragments, one per
- * combination, so they can be pre-recorded on the phone and played the moment
- * the guess lands. Never model-written.
+ * The filler lines are a small fixed set (see fillerLine), so the phone can
+ * cache each one the first time it hears it and play it the moment the guess
+ * lands. Never model-written. The wording lives here, not on the phone: a new
+ * line needs a server deploy, not an APK.
  */
 const llm = require("./llm");
 const jev = require("./llm/adapters/jev");
@@ -30,10 +31,10 @@ const heartRate = require("./heartRate");
 const webSearch = require("./webSearch");
 const location = require("./location");
 const whereabouts = require("./whereabouts");
+const perfTrace = require("./perfTrace");
 
 const FETCH_AT = 0.35;
 const SPEAK_AT = 0.7;
-const MAX_NAMED = 2;
 // The whole point is to beat the reply to the punch; a slower guess is no guess.
 const TIMEOUT_MS = 800;
 
@@ -46,7 +47,7 @@ const SOURCES = [
 	{
 		id: "calendar",
 		provider: "google_calendar",
-		say: "your calendar",
+		line: "Let me check your calendar.",
 		question:
 			"Would answering this need the person's calendar — their schedule, plans, " +
 			"events, appointments, or whether they are free or busy at some time?",
@@ -54,7 +55,7 @@ const SOURCES = [
 	{
 		id: "email",
 		provider: "gmail",
-		say: "your email",
+		line: "Let me check your email.",
 		question:
 			"Would answering this need the person's email inbox — messages they received, " +
 			"who wrote to them, or something that arrived by email?",
@@ -62,7 +63,7 @@ const SOURCES = [
 	{
 		id: "whoop",
 		provider: "whoop",
-		say: "WHOOP",
+		line: "Let me check WHOOP.",
 		question:
 			"Would answering this need the person's WHOOP data — how they slept, how " +
 			"recovered or rested their body is, strain, HRV or resting heart rate?",
@@ -76,7 +77,7 @@ const SOURCES = [
 	{
 		id: "heart_rate",
 		provider: null,
-		say: null, // spoken as its own clause, see fillerLine
+		line: "Let me grab your heart rate.",
 		question:
 			"Would answering this need the person's live heart rate from their band — " +
 			"what it is right now, or during today's activity?",
@@ -88,7 +89,7 @@ const SOURCES = [
 		id: "web",
 		provider: null,
 		web: true,
-		say: null, // spoken as its own clause, see fillerLine
+		line: "Let me look that up.",
 		question:
 			"Would answering this well need a fresh web search — news, scores, prices, " +
 			"weather, schedules, opening hours, releases, or any fact about the world " +
@@ -102,10 +103,24 @@ const SOURCES = [
 		id: "location",
 		provider: null,
 		location: true,
-		say: "where your phone is",
+		line: "Let me check where your phone is.",
 		question:
 			"Would answering this need where the person or their phone is right now — " +
 			"their current location, what place, town or road they're at, or what's near them?",
+	},
+	{
+		// Not a read the guess starts: her long-term memories are recalled on
+		// every adult turn anyway (memoryStore). Asked only so she can say she's
+		// looking when the answer rests on what they told her before — the
+		// owner's "Let me think back." when she needs to search memories. Never
+		// in `fetch`; counts as a lookup in fillerLine only when Jev is sure.
+		id: "memories",
+		provider: null,
+		memory: true,
+		line: "Let me think back.",
+		question:
+			"Would answering this need something the person told Athena before — a past " +
+			"conversation, a plan, a name, a preference or a detail she would have to remember?",
 	},
 ];
 
@@ -136,7 +151,13 @@ async function availableSources(profileId, { audience } = {}) {
 			? await location.getPref(profileId).then((p) => p.enabled).catch(() => false)
 			: false;
 	return SOURCES.filter((s) =>
-		s.web ? audience === "adult" : s.location ? locationOn : s.provider ? linked.has(s.provider) : heartOn
+		s.web || s.memory
+			? audience === "adult"
+			: s.location
+				? locationOn
+				: s.provider
+					? linked.has(s.provider)
+					: heartOn
 	);
 }
 
@@ -167,32 +188,33 @@ function buildQuestions(sources) {
 	return questions;
 }
 
-/** "your calendar", "WHOOP and heart rate", "your calendar, WHOOP and email". */
-function joinNames(names) {
-	if (names.length <= 1) return names[0] || "";
-	return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
-}
+/** Said when the turn waits on several lookups. */
+const MOMENT = Object.freeze({ key: "moment", text: "Just a moment." });
 
 /**
- * The fixed filler for a set of announced sources. Deterministic, so every
- * combination can be recorded once and shipped as a clip; `key` names it.
+ * The spoken waiting line for a turn, from what Jev predicted (owner,
+ * 2026-11-05: a line from the lookup, not from a timer):
+ *
+ *   - one lookup, and Jev is sure which → that source's own line
+ *     ("Let me check your calendar.", "Let me look that up.")
+ *   - several lookups, which will hold up the reply → "Just a moment."
+ *   - nothing to look up, or one lookup Jev isn't sure of → null; the
+ *     client's own timed "Hmm." covers the wait.
+ *
+ * `sure` are the sources at SPEAK_AT, `fetch` the reads that will actually
+ * start. With one argument both are the same set. Deterministic fixed
+ * strings, so the phone caches each one once; `key` names it.
  */
-function fillerLine(ids) {
-	const sorted = [...new Set(ids)].sort();
-	if (!sorted.length) return null;
-	const names = SOURCES.filter((s) => sorted.includes(s.id) && s.say).map((s) => s.say);
-	const heart = sorted.includes("heart_rate");
-	const web = sorted.includes("web");
-	let text;
-	if (web) {
-		if (names.length && heart) text = `Let me check ${joinNames(names)}, grab your heart rate and look online too…`;
-		else if (names.length) text = `Let me check ${joinNames(names)}, and I'll look online too…`;
-		else if (heart) text = "Let me grab your heart rate and look that up, hmm…";
-		else text = "Let me look that up, hmm…";
-	} else if (!names.length) text = "Let me grab your heart rate, hmm…";
-	else if (heart) text = `Let me check ${joinNames(names)}, and I'll grab your heart rate off the band too…`;
-	else text = `Let me check ${joinNames(names)}, hmm…`;
-	return { key: sorted.join("+"), text };
+function fillerLine(sure, fetch = sure) {
+	const byId = (id) => SOURCES.find((s) => s.id === id);
+	const said = new Set((sure || []).filter(byId));
+	// What will actually be waited on: the reads, plus a memory search she is
+	// sure the answer rests on.
+	const waits = [...new Set([...(fetch || []).filter(byId), ...said])];
+	if (!waits.length) return null;
+	if (waits.length > 1) return { ...MOMENT };
+	const [only] = waits;
+	return said.has(only) ? { key: only, text: byId(only).line } : null;
 }
 
 /**
@@ -208,10 +230,13 @@ async function guess(message, { profileId, audience, sources } = {}) {
 	// No key on this deployment: skip quietly rather than failing (and logging)
 	// on every message.
 	if (!(await jev.configured())) return null;
+	const endSources = perfTrace.begin("jev.sources");
 	const pool = sources || (profileId ? await availableSources(profileId, { audience }) : []);
+	endSources({ n: pool.length });
 	if (!pool.length) return null;
 
 	let result;
+	const endDecide = perfTrace.begin("jev.decide", { questions: pool.length });
 	try {
 		result = await llm.decide({
 			task: "intent",
@@ -220,9 +245,11 @@ async function guess(message, { profileId, audience, sources } = {}) {
 			timeoutMs: TIMEOUT_MS,
 		});
 	} catch (err) {
+		endDecide({ failed: true, timeout: /timed out/i.test(err.message || "") });
 		console.warn("[toolIntent] no guess:", err.message);
 		return null;
 	}
+	endDecide({ jevMs: result.latencyMs ?? null });
 
 	const scores = {};
 	const noul = (key) => {
@@ -232,25 +259,21 @@ async function guess(message, { profileId, audience, sources } = {}) {
 	for (const source of pool) {
 		scores[source.id] = Math.max(noul(source.id), source.also ? noul(`${source.id}_also`) : 0);
 	}
+	// Memories are recalled every turn regardless, so they are never a read
+	// the guess starts — only something she can be sure the answer rests on.
 	const fetch = pool
+		.filter((s) => !s.memory)
 		.filter((s) => scores[s.id] >= (s.web ? WEB_FETCH_AT : s.location ? LOCATION_FETCH_AT : FETCH_AT))
 		.map((s) => s.id);
-	// At most two named sources in the line (the likeliest), plus the heart-rate
-	// clause: "let me check your calendar, your email, WHOOP and heart rate" is not
-	// a filler, it's a speech. Everything in `fetch` is still read.
-	const sure = fetch.filter((id) => scores[id] >= SPEAK_AT);
-	const clause = (id) => id === "heart_rate" || id === "web";
-	const named = sure
-		.filter((id) => !clause(id))
-		.sort((a, b) => scores[b] - scores[a])
-		.slice(0, MAX_NAMED);
-	const announce = sure.filter((id) => named.includes(id) || clause(id));
+	const announce = pool
+		.filter((s) => scores[s.id] >= SPEAK_AT && (s.memory || fetch.includes(s.id)))
+		.map((s) => s.id);
 	const window = WINDOWS[result.answers?.window?.choice] ? result.answers.window.choice : "unspecified";
 
 	return {
 		fetch,
 		announce,
-		filler: fillerLine(announce),
+		filler: fillerLine(announce, fetch),
 		window,
 		days: WINDOWS[window].days,
 		scores,
@@ -295,4 +318,5 @@ module.exports = {
 	WINDOWS,
 	FETCH_AT,
 	SPEAK_AT,
+	MOMENT,
 };

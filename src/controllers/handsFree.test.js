@@ -23,6 +23,28 @@ describe("hands-free turn timings", () => {
 		expect(turn.error).toHaveLength(160);
 	});
 
+	test("conversation turns the phone dropped say why, without words", () => {
+		const turn = parseTurn({
+			path: "conversation",
+			outcome: "notYou",
+			car: true,
+			stages: { ready: 200, speechStart: 900, notYou: 4100 },
+			voiceFilter: { why: "not your voice", score: 0.2149, voicedMs: 2300, text: "my secret plan" },
+		});
+		expect(turn).toMatchObject({ path: "conversation", outcome: "notYou", car: true });
+		expect(turn.stages.notYou).toBe(4100);
+		expect(turn.voiceFilter).toEqual({ why: "not your voice", score: 0.21, voicedMs: 2300 });
+		expect(JSON.stringify(turn)).not.toContain("secret plan");
+	});
+
+	test("a voice-filter verdict is only fixed reasons and bounded numbers", () => {
+		const turn = parseTurn({ path: "conversationPickup", voiceFilter: { why: "free text", score: 9, voicedMs: -4 } });
+		expect(turn.path).toBe("conversationPickup");
+		expect(turn.car).toBe(false);
+		expect(turn.voiceFilter).toEqual({ why: "unknown", score: null, voicedMs: null });
+		expect(parseTurn({}).voiceFilter).toBeNull();
+	});
+
 	test("writes one structured line and answers 204", () => {
 		const log = jest.spyOn(console, "log").mockImplementation(() => {});
 		const res = { status: jest.fn().mockReturnThis(), end: jest.fn() };

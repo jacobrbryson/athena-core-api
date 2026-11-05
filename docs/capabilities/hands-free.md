@@ -21,8 +21,10 @@ It's built for being on the move — a run, a ride — so my answers are short a
 spoken: no lists, nothing you'd need to look at.
 
 When your question needs your calendar, WHOOP, email or heart rate, I
-say so straight away — "Let me check your calendar, hmm…" — while I read it,
-then answer. The first time a particular line comes up it's silent while the
+say so straight away — "Let me check your calendar." — while I read it,
+then answer. A web search gets "Let me look that up.", something you told me
+before gets "Let me think back.", and a question that needs several lookups
+gets "Just a moment." The first time a particular line comes up it's silent while the
 phone saves my voice for it; after that it plays instantly.
 
 The listening happens on the phone. Until it hears my name nothing is sent
@@ -92,7 +94,8 @@ same conversation.
   or she'd speak twice.
 - Filler: `HandsFreeClient.converse` sends `companion.filler: true`; `/message`
   returns `filler { key, text }` from `src/services/toolIntent.js` (Jev guess,
-  ≤ 800 ms, adults only). `HandsFreeService.sayFiller` plays it from
+  ≤ 800 ms, adults only; `fillerLine` picks one source's line, "Just a
+  moment." for several lookups, or nothing). `HandsFreeService.sayFiller` plays it from
   `AthenaVoice`'s text-keyed cache on its own thread while the reply is polled
   and voiced; an uncached line is fetched in the background (silent that
   once). The reply prompt gets `# Already said` so she doesn't repeat it.

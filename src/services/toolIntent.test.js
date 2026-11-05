@@ -36,7 +36,7 @@ describe("guess", () => {
 		const g = await intent.guess("Do I have anything going on tonight?", { profileId: PROFILE, audience: "adult" });
 		expect(g.fetch).toEqual(["calendar"]);
 		expect(g.announce).toEqual(["calendar"]);
-		expect(g.filler).toEqual({ key: "calendar", text: "Let me check your calendar, hmm…" });
+		expect(g.filler).toEqual({ key: "calendar", text: "Let me check your calendar." });
 		expect(g.window).toBe("later_today");
 		expect(g.days).toBe(1);
 	});
@@ -45,7 +45,7 @@ describe("guess", () => {
 		llm.decide.mockResolvedValue(answers({}));
 		await intent.guess("how did I sleep?", { profileId: PROFILE, audience: "adult" });
 		const asked = Object.keys(llm.decide.mock.calls[0][0].questions);
-		expect(asked.sort()).toEqual(["calendar", "heart_rate", "web", "whoop", "whoop_also", "window"].sort());
+		expect(asked.sort()).toEqual(["calendar", "heart_rate", "memories", "web", "whoop", "whoop_also", "window"].sort());
 		expect(asked).not.toContain("email");
 	});
 
@@ -55,6 +55,8 @@ describe("guess", () => {
 		expect(llm.decide.mock.calls[0][0].questions).not.toHaveProperty("heart_rate");
 		// Nor a web search: a child's words do not go out to a search engine.
 		expect(llm.decide.mock.calls[0][0].questions).not.toHaveProperty("web");
+		// Nor her memories: a child's memories never enter the guess.
+		expect(llm.decide.mock.calls[0][0].questions).not.toHaveProperty("memories");
 		expect(heartRate.getPref).not.toHaveBeenCalled();
 	});
 
@@ -63,16 +65,49 @@ describe("guess", () => {
 		const g = await intent.guess("was that ride too hard?", { profileId: PROFILE, audience: "adult" });
 		expect(g.fetch).toEqual(["calendar", "whoop"]);
 		expect(g.announce).toEqual(["whoop"]);
-		expect(g.filler.text).toBe("Let me check WHOOP, hmm…");
+		// Two reads will run, so it names neither.
+		expect(g.filler).toEqual({ key: "moment", text: "Just a moment." });
 	});
 
-	it("names at most the two likeliest sources, but still fetches them all", async () => {
+	it("names the one source it is sure of", async () => {
+		llm.decide.mockResolvedValue(answers({ calendar: 0.1, whoop: 0.9, heart_rate: 0.1 }));
+		const g = await intent.guess("was that ride too hard?", { profileId: PROFILE, audience: "adult" });
+		expect(g.filler).toEqual({ key: "whoop", text: "Let me check WHOOP." });
+	});
+
+	it("says 'Just a moment.' when several sources will be read, and still fetches them all", async () => {
 		connectorContext.linkedProviders.mockResolvedValue(new Set(["google_calendar", "gmail", "whoop"]));
 		llm.decide.mockResolvedValue(answers({ calendar: 0.75, email: 0.92, whoop: 0.95, heart_rate: 0.9 }));
 		const g = await intent.guess("give me the full rundown", { profileId: PROFILE, audience: "adult" });
 		expect(g.fetch.sort()).toEqual(["calendar", "email", "heart_rate", "whoop"]);
-		expect(g.announce.sort()).toEqual(["email", "heart_rate", "whoop"]);
-		expect(g.filler.text).toBe("Let me check your email and WHOOP, and I'll grab your heart rate off the band too…");
+		expect(g.announce.sort()).toEqual(["calendar", "email", "heart_rate", "whoop"]);
+		expect(g.filler).toEqual({ key: "moment", text: "Just a moment." });
+	});
+
+	it("says 'Let me think back.' when the answer rests on her memories", async () => {
+		llm.decide.mockResolvedValue(answers({ calendar: 0.05, whoop: 0.05, heart_rate: 0.05, memories: 0.9 }));
+		const g = await intent.guess("what was the name of that restaurant I told you about?", {
+			profileId: PROFILE,
+			audience: "adult",
+		});
+		// Memories are recalled every turn anyway — never a read the guess starts.
+		expect(g.fetch).toEqual([]);
+		expect(g.announce).toEqual(["memories"]);
+		expect(g.filler).toEqual({ key: "memories", text: "Let me think back." });
+		expect(intent.extraGrounding(g, "what was the name of that restaurant?")).toBeNull();
+	});
+
+	it("counts a memory search plus a read as several lookups", async () => {
+		llm.decide.mockResolvedValue(answers({ calendar: 0.9, memories: 0.85 }));
+		const g = await intent.guess("is the thing I mentioned still on for Saturday?", { profileId: PROFILE, audience: "adult" });
+		expect(g.filler.text).toBe("Just a moment.");
+	});
+
+	it("does not announce a memory search it is unsure of", async () => {
+		llm.decide.mockResolvedValue(answers({ memories: 0.5 }));
+		const g = await intent.guess("hmm", { profileId: PROFILE, audience: "adult" });
+		expect(g.announce).toEqual([]);
+		expect(g.filler).toBeNull();
 	});
 
 	it("announces nothing — and says nothing — when nothing is likely", async () => {
@@ -100,9 +135,9 @@ describe("guess", () => {
 		heartRate.getPref.mockResolvedValue({ enabled: false });
 		llm.decide.mockResolvedValue(answers({ web: 0.9 }, "unspecified"));
 		const g = await intent.guess("who won the Braves game last night?", { profileId: PROFILE, audience: "adult" });
-		expect(Object.keys(llm.decide.mock.calls[0][0].questions).sort()).toEqual(["web", "window"]);
+		expect(Object.keys(llm.decide.mock.calls[0][0].questions).sort()).toEqual(["memories", "web", "window"]);
 		expect(g.fetch).toEqual(["web"]);
-		expect(g.filler).toEqual({ key: "web", text: "Let me look that up, hmm…" });
+		expect(g.filler).toEqual({ key: "web", text: "Let me look that up." });
 	});
 
 	it("needs more confidence to search the web than to read a connector", async () => {
@@ -127,18 +162,44 @@ describe("guess", () => {
 });
 
 describe("fillerLine", () => {
-	it("is deterministic whatever the order, so each combination is one clip", () => {
-		expect(intent.fillerLine(["email", "whoop"])).toEqual(intent.fillerLine(["whoop", "email"]));
+	it("gives one obvious source its own line", () => {
+		expect(intent.fillerLine(["calendar"])).toEqual({ key: "calendar", text: "Let me check your calendar." });
+		expect(intent.fillerLine(["email"]).text).toBe("Let me check your email.");
+		expect(intent.fillerLine(["whoop"]).text).toBe("Let me check WHOOP.");
+		expect(intent.fillerLine(["heart_rate"]).text).toBe("Let me grab your heart rate.");
+		expect(intent.fillerLine(["web"]).text).toBe("Let me look that up.");
+		expect(intent.fillerLine(["memories"]).text).toBe("Let me think back.");
+		expect(intent.fillerLine(["location"]).text).toBe("Let me check where your phone is.");
 	});
 
-	it("adds the heart-rate clause after the checks", () => {
-		expect(intent.fillerLine(["whoop", "email", "heart_rate"]).text).toBe(
-			"Let me check your email and WHOOP, and I'll grab your heart rate off the band too…"
-		);
-		expect(intent.fillerLine(["heart_rate"]).text).toBe("Let me grab your heart rate, hmm…");
-		expect(intent.fillerLine(["web"]).text).toBe("Let me look that up, hmm…");
-		expect(intent.fillerLine(["calendar", "web"]).text).toBe("Let me check your calendar, and I'll look online too…");
-		expect(intent.fillerLine(["heart_rate", "web"]).text).toBe("Let me grab your heart rate and look that up, hmm…");
+	it("says 'Just a moment.' for several lookups, whatever the order", () => {
+		expect(intent.fillerLine(["calendar", "web"])).toEqual({ key: "moment", text: "Just a moment." });
+		expect(intent.fillerLine(["web", "calendar"])).toEqual(intent.fillerLine(["calendar", "web"]));
+		expect(intent.fillerLine(["heart_rate", "whoop", "email"]).text).toBe("Just a moment.");
+	});
+
+	it("counts reads it is unsure of: they still hold up the reply", () => {
+		expect(intent.fillerLine(["whoop"], ["calendar", "whoop"]).text).toBe("Just a moment.");
+		expect(intent.fillerLine([], ["calendar", "email"]).text).toBe("Just a moment.");
+	});
+
+	it("says nothing with no lookup, or one it is unsure of — the client's 'Hmm.' covers it", () => {
+		expect(intent.fillerLine([])).toBeNull();
+		expect(intent.fillerLine([], [])).toBeNull();
+		expect(intent.fillerLine(undefined)).toBeNull();
+		expect(intent.fillerLine([], ["calendar"])).toBeNull();
+	});
+
+	it("ignores ids it does not know", () => {
+		expect(intent.fillerLine(["calendar", "weather"]).text).toBe("Let me check your calendar.");
+		expect(intent.fillerLine(["weather"])).toBeNull();
+	});
+
+	it("is a fixed string per key, never model-written", () => {
+		const lines = new Map();
+		for (const s of intent.SOURCES) lines.set(intent.fillerLine([s.id]).key, intent.fillerLine([s.id]).text);
+		lines.set("moment", intent.MOMENT.text);
+		for (const text of lines.values()) expect(text).toMatch(/^[A-Z][^…]*\.$/);
 	});
 });
 
@@ -206,7 +267,7 @@ describe("location", () => {
 		llm.decide.mockResolvedValue(answers({ location: 0.9 }));
 		const g = await intent.guess("what town is this?", { profileId: PROFILE, audience: "adult" });
 		expect(g.fetch).toContain("location");
-		expect(g.filler.text).toBe("Let me check where your phone is, hmm…");
+		expect(g.filler).toEqual({ key: "location", text: "Let me check where your phone is." });
 		expect(intent.extraGrounding(g, "what town is this?").location).toBe(true);
 	});
 

@@ -7,6 +7,7 @@ const { resolveCallerProfileId } = require("../helpers/callerIdentity");
 const { audienceForProfile } = require("../services/audience");
 const { processAiResponse } = require("./gemini");
 const toolIntent = require("../services/toolIntent");
+const perfTrace = require("../services/perfTrace");
 const { isEcho } = require("../services/echo");
 const missionService = require("../services/mission");
 const gameService = require("../services/game");
@@ -235,7 +236,24 @@ async function getMessage(req, res) {
   }
 }
 
-async function addMessage(req, res, clients) {
+/**
+ * One turn, traced (services/perfTrace): the trace starts here and is
+ * written once the reply is out — or as soon as the response finishes when
+ * the turn never reaches a reply (refused, echo, error).
+ */
+function addMessage(req, res, clients) {
+  const trace = perfTrace.start("message", {
+    client: req.headers?.["x-athena-client"] || null,
+  });
+  if (!trace) return addMessageTurn(req, res, clients);
+  res.once?.("finish", () => {
+    if (!trace.fields.replying)
+      trace.end({ outcome: "noReply", status: res.statusCode });
+  });
+  return perfTrace.run(trace, () => addMessageTurn(req, res, clients));
+}
+
+async function addMessageTurn(req, res, clients) {
   try {
     const ip = extractIp(req);
     const { sessionId, text: rawText } = req.body || {};
@@ -252,10 +270,16 @@ async function addMessage(req, res, clients) {
         .json({ success: false, message: "Message must be a string" });
     }
 
+    perfTrace.mark("msg.received", { textChars: text.length });
     const callerProfileId = await resolveCallerProfileId(req);
     const session = await sessionService.getAuthorizedSession(sessionId, {
       ip,
       callerProfileId,
+    });
+    perfTrace.mark("msg.session", {
+      sessionUuid: session?.uuid || null,
+      profileId: session?.profile_id ?? null,
+      sessionMode: session?.mode || null,
     });
     if (!session)
       return res
@@ -272,6 +296,12 @@ async function addMessage(req, res, clients) {
     // session.profile_id, and Athena's history has to be built for the person
     // in front of her.
     ctx.speakerProfileId = callerProfileId ?? null;
+    perfTrace.set({
+      handsFree: !!ctx.companion?.handsFree,
+      conversation: !!ctx.companion?.conversation,
+      wantsFiller: !!ctx.companion?.filler,
+      replyThread: req.body.replyTo != null,
+    });
     if (req.body.replyTo != null) {
       if (!callerProfileId || typeof req.body.replyTo !== "string") {
         return res.status(400).json({ message: "Invalid reply target" });
@@ -319,7 +349,9 @@ async function addMessage(req, res, clients) {
       .stopWordHeard(missionActor, text)
       .catch((err) => console.warn("[message] stop word failed:", err.message));
 
+    perfTrace.mark("msg.stopWord");
     const chat = await consent.chatMayProceed({ guardianId, profileId: callerProfileId });
+    perfTrace.mark("msg.consent");
     if (!chat.allowed) {
       return res.status(403).json({ success: false, consentRequired: true, message: chat.reply });
     }
@@ -341,6 +373,7 @@ async function addMessage(req, res, clients) {
       (await audienceForProfile(session.profile_id).catch(() => "child")) ===
         "adult";
     const maxLength = isAdult ? 2000 : 256;
+    perfTrace.mark("msg.audience", { adult: isAdult });
 
     // Hands-free's follow-up window can hear the tail of her own voice and
     // send it back as the person's next turn — which she answers, and hears
@@ -354,6 +387,7 @@ async function addMessage(req, res, clients) {
       const last = [...recent].reverse().find((m) => !m.is_human);
       const fresh =
         last && Date.now() - new Date(last.created_at).getTime() < ECHO_WINDOW_MS;
+      perfTrace.mark("msg.echoCheck");
       if (fresh && isEcho(text, last.text)) {
         console.warn("[message] refused a hands-free echo of her own reply");
         return res.status(409).json({
@@ -375,9 +409,12 @@ async function addMessage(req, res, clients) {
     // asking twice. Adults on their own session only — never a Guardian
     // session, whose account is the parent's and whose words are a child's.
     if (isAdult && !ctx.guardian) {
-      ctx.guessPromise = toolIntent
-        .guess(text, { profileId: session.profile_id, audience: "adult" })
-        .catch(() => null);
+      ctx.guessPromise = perfTrace.timed(
+        "jev.guess",
+        toolIntent
+          .guess(text, { profileId: session.profile_id, audience: "adult" })
+          .catch(() => null),
+      );
       // Anyone watching this conversation sees the line in place of the
       // plain "thinking…" — typed turns and hands-free alike.
       ctx.guessPromise.then((guessed) => {
@@ -391,11 +428,27 @@ async function addMessage(req, res, clients) {
           `sockets=${clients?.get(session.uuid)?.size || 0}`,
           `wantsFiller=${!!ctx.companion?.filler}`,
         );
+        perfTrace.set({
+          guess: guessed
+            ? {
+                ms: guessed.latencyMs ?? null,
+                model: guessed.model || null,
+                fetch: guessed.fetch,
+                announce: guessed.announce,
+                filler: guessed.filler?.key || null,
+                window: guessed.window,
+                scores: Object.fromEntries(
+                  Object.entries(guessed.scores || {}).map(([k, v]) => [k, Math.round(v * 100) / 100]),
+                ),
+              }
+            : null,
+        });
         if (guessed?.filler) {
           broadcastToSession(clients, session.uuid, {
             rpc: "filler",
             filler: guessed.filler,
           });
+          perfTrace.mark("msg.fillerSocket");
         }
       });
     }
@@ -493,6 +546,7 @@ async function addMessage(req, res, clients) {
     // guardians in one conversation those are different people, and a
     // transcript that cannot tell them apart makes Athena confidently put one
     // guardian's words in the other's mouth.
+    perfTrace.mark("msg.preSave");
     const humanChatUuid = await messageService.addMessage(
       session.id,
       true,
@@ -513,12 +567,20 @@ async function addMessage(req, res, clients) {
 
     // A client that plays fillers gets one the moment the guess lands; the
     // reply is told it was said, so she doesn't say it again.
+    perfTrace.mark("msg.saved", { messageUuid: humanChatUuid || null });
     let filler = null;
     if (ctx.companion?.filler && ctx.guessPromise) {
+      // The acknowledgement waits for the guess here, so this is time the
+      // person's message spends unanswered on the wire.
+      const endWait = perfTrace.begin("msg.ackWaitsForGuess");
       filler = (await ctx.guessPromise)?.filler || null;
+      endWait({ filler: filler?.key || null });
       if (filler) ctx.fillerSpoken = filler.text;
     }
 
+    // Before the response goes out, so its "finish" never ends the trace
+    // that the reply is about to carry on.
+    perfTrace.set({ replying: true });
     res.json({
       ...(filler ? { filler } : {}),
       message: {
@@ -534,8 +596,10 @@ async function addMessage(req, res, clients) {
       },
     });
 
+    perfTrace.mark("msg.ack", { fillerInAck: filler?.key || null });
     processAiResponse(session, text, clients, ctx);
   } catch (err) {
+    perfTrace.set({ preReplyError: err?.code || err?.name || "error" });
     console.error("Error in addMessage (Pre-AI):", err);
     if (!res.headersSent) {
       res

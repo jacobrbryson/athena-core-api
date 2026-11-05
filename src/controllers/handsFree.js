@@ -12,6 +12,12 @@
  * Nothing is stored and the person's words are never logged: the turn carries
  * the message uuid instead, which is enough to find the transcript in the
  * conversation itself when a misheard turn needs looking at.
+ *
+ * Conversation mode reports too (2026-11-05), including turns the phone heard
+ * and did not send — "notYou" (the voice filter dropped it) and "nothing" (speech
+ * began but no words came) — after a drive where nothing reached the server and
+ * the logs could not say why. `car` says the car's hands-free was in use, and
+ * `voiceFilter` is the filter's verdict: a fixed reason and a score, no audio.
  */
 
 // Milliseconds from the turn's start: the first sound of her name, or the
@@ -23,6 +29,7 @@ const STAGES = [
   "ready", // the request recogniser was listening
   "speechStart", // it heard speech begin
   "speechEnd", // it decided speech had ended
+  "notYou", // the voice filter said it wasn't the owner
   "sent", // the server accepted the message
   "filler", // a "let me check…" clip started playing
   "reply", // her reply was found by polling
@@ -30,8 +37,16 @@ const STAGES = [
   "speaking", // playback started
   "done", // playback finished
 ];
-const PATHS = new Set(["wake", "oneBreath", "followUp"]);
-const OUTCOMES = new Set(["answered", "nothing", "echo", "error"]);
+const PATHS = new Set(["wake", "oneBreath", "followUp", "conversation", "conversationPickup"]);
+const OUTCOMES = new Set(["answered", "nothing", "echo", "error", "notYou"]);
+const FILTER_REASONS = new Set([
+  "your voice",
+  "your voice in the car",
+  "not your voice",
+  "too quiet to tell",
+  "no print",
+  "check failed",
+]);
 const TRANSCRIBERS = new Set(["on-device", "vosk"]);
 const MAX_MS = 10 * 60 * 1000;
 
@@ -48,6 +63,8 @@ function parseTurn(body = {}) {
     if (ms != null) stages[stage] = ms;
   }
   const confidence = Number(body.confidence);
+  const filter = body.voiceFilter && typeof body.voiceFilter === "object" ? body.voiceFilter : null;
+  const score = Number(filter?.score);
   return {
     path: PATHS.has(body.path) ? body.path : "unknown",
     outcome: OUTCOMES.has(body.outcome) ? body.outcome : "unknown",
@@ -67,6 +84,17 @@ function parseTurn(body = {}) {
         : null,
     // The phone's own short error ("Athena answered 429"), never free text.
     error: typeof body.error === "string" ? body.error.slice(0, 160) : null,
+    car: body.car === true,
+    voiceFilter: filter
+      ? {
+          why: FILTER_REASONS.has(filter.why) ? filter.why : "unknown",
+          score:
+            filter.score != null && Number.isFinite(score) && score >= -1 && score <= 1
+              ? Math.round(score * 100) / 100
+              : null,
+          voicedMs: count(filter.voicedMs, MAX_MS),
+        }
+      : null,
     stages,
   };
 }

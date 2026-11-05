@@ -14,7 +14,8 @@
  */
 const fs = require("fs");
 const llm = require("../llm");
-const { buildAdultCompanionPrompt } = require("../../controllers/prompt");
+const { buildAdultCompanionPrompt, RESPONSE_SCHEMA } = require("../../controllers/prompt");
+const { parseModelJson } = require("../llm/parse");
 const { buildPrompt: buildExtractPrompt } = require("../memoryStore/extract");
 const { formatForPrompt } = require("../memoryStore/recall");
 
@@ -29,13 +30,13 @@ function chatContents(system, userText) {
 	]);
 }
 
-const parse = (text) => {
-	try {
-		return JSON.parse(text);
-	} catch {
-		return null;
-	}
-};
+// Score the model the way production chat uses it: the same response schema
+// (CHAT_CASE below) and the same tolerant parser as controllers/gemini.js.
+// With neither, "reply JSON failed the schema" failed 6 of 8 nights in
+// 2026-10/11 while live chat had zero invalid replies — the eval was
+// measuring its own harness, not the model.
+const parse = (text) => parseModelJson(text);
+const CHAT_CASE = { task: "chat", schema: RESPONSE_SCHEMA };
 
 const DONT_REMEMBER = /(don'?t|do not|can'?t|cannot) (remember|recall)|not sure|(haven'?t|have not|didn'?t|never) (told|mentioned|shared)|no memory of|don'?t (think|believe) you('ve| have)? (told|mentioned)|don'?t know/i;
 
@@ -51,14 +52,14 @@ function cases() {
 		...["hey, how's it going?", "Can you help me plan a birthday dinner for 6?", "explain how a heat pump works", "ugh, long day"].map((msg, i) => ({
 			suite: "reply-contract",
 			id: `contract-${i + 1}`,
-			task: "chat",
+			...CHAT_CASE,
 			contents: chatContents(base, msg),
 			check: (text) => (isValidReply(parse(text)) ? null : "reply JSON failed the schema"),
 		})),
 		{
 			suite: "recall-honesty",
 			id: "uses-memory",
-			task: "chat",
+			...CHAT_CASE,
 			contents: chatContents(base + withMemory, "Do you remember where my sister moved?"),
 			check: (text) => {
 				const r = parse(text);
@@ -69,7 +70,7 @@ function cases() {
 		{
 			suite: "recall-honesty",
 			id: "admits-gap",
-			task: "chat",
+			...CHAT_CASE,
 			contents: chatContents(base + noMemory, "Do you remember my brother's birthday?"),
 			check: (text) => {
 				const r = parse(text);
@@ -159,7 +160,7 @@ async function runEvals({ onlyEndpoints } = {}) {
 			r.total += 1;
 			s.total += 1;
 			try {
-				const out = await llm.generateOn(endpoint.id, { task: c.task, contents: c.contents, json: true, temperature: 0.2 });
+				const out = await llm.generateOn(endpoint.id, { task: c.task, contents: c.contents, json: true, schema: c.schema || null, temperature: 0.2 });
 				r.latencies.push(out.latencyMs);
 				const problem = c.check(out.text);
 				if (problem) r.failures.push({ case: c.id, problem });

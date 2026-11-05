@@ -32,8 +32,11 @@ The **Overview** is everything at a glance:
   the start of the story and what actually happened.
 - **System Health** — All systems operational, Some things need attention, or
   Something is down, from a live check of my database, whether a model is
-  answering chat (and not failing), and whether my nightly review has run in
-  the last two days, plus an Integrations entry that says how many of your
+  answering chat (and not failing), whether my nightly review has run in
+  the last two days, whether every AI provider still accepts my key, whether
+  my background jobs are being refused for lack of an authorized identity,
+  whether I can still open the sign-ins you saved with me, and whether any
+  step of last night's maintenance reported failures, plus an Integrations entry that says how many of your
   connected services can't be read right now. View details lists every check
   and why.
 - **Service Costs** — this month so far: the total, OpenAI and Google Cloud
@@ -79,6 +82,15 @@ Each provider also has its own panel:
 - **Twilio** — the account balance, outbound SMS messages sent this month, and
   what those messages cost.
 
+When something is actually broken — a provider rejecting my key, a job of
+mine refused for lacking an identity, saved sign-ins I can't open — the
+owner sees a **red banner across the top of every screen** saying what is
+broken and why, with a button to this page. Hide shrinks it to a thin red
+bar; a different problem opens it again, and it goes away by itself once
+the check passes. Every problem, including the "needs a look" ones, also
+goes into the owner's **Notifications** (the bell), marked in red, once a
+day while it lasts. That is not a push to the phone.
+
 It is a read-only operational view for the person using Companion. It does not
 send messages, change billing, top up an account or approve anything.
 
@@ -119,8 +131,14 @@ A signed-out or access-locked session must be signed in or unlocked first.
 - OpenAI's lifetime figure counts the whole OpenAI organization from the day
   my project was created (2025-10-27); if that organization also runs other
   things, they are included.
-- Health checks what the API process can see from where it runs; it doesn't
-  test every connector, the phone app, or the Guardians site.
+- Health checks what the API process can see from where it runs, plus what my
+  nightly and other jobs wrote to the shared logs; it doesn't test every
+  connector, the phone app, or the Guardians site.
+- The red banner and the system notifications go only to the owner; other
+  adults see the same checks on this page but no banner.
+- A broken provider key is noticed only when I next use it — dreams use
+  OpenAI once a night, so a key that dies at noon shows up after the next
+  night's dream.
 - OpenAI's "today" is the UTC day; Google Cloud's month follows its Pacific-time
   invoice month.
 - Time saved uses UTC months and counts only approved, completed actions, at
@@ -133,7 +151,8 @@ A signed-out or access-locked session must be signed in or unlocked first.
 
 - Backend readers: `../../src/services/twilioBilling.js`, `../../src/services/openaiBilling.js` (Costs API, `OPENAI_API_ADMIN_KEY`), `../../src/services/gcpBilling.js` (BigQuery `billing_export` dataset, table auto-discovered by the `gcp_billing_export_v1_` prefix; override with `GCP_BILLING_EXPORT_PROJECT` / `GCP_BILLING_EXPORT_DATASET`)
 - Time saved: `../../src/services/timeSaved.js` (`MINUTES` per registry action id; reads `athena_action` rows with `status = 'done'` for the caller's own profile, except `fix_code`, which counts only when `codeAgents.fixStatus` reports the pull request merged; a new action with no entry counts 0 and a test fails until it gets a deliberate value)
-- Health: `../../src/services/systemHealth.js` (database `SELECT 1`, `llm.status()` serving chat + error rate, latest `self_review_report.report_date`)
+- Health: `../../src/services/systemHealth.js` (database `SELECT 1`, `llm.status()` serving chat + error rate, latest `self_review_report.report_date`; since 2026-11-05 also `keys` — latest call per endpoint in `llm_call_log` (48 h) failing with HTTP 401/403 or an invalid-key message; `identity` — ≥5 and ≥50% of a task's calls in 6 h refused by the access gate; `credentials` — a `user_credential_audit` decrypt failure newer than that provider's last read/refresh; `nightlySteps` — `metrics.maintenance` of the latest report, steps with `ok:false` or `failed > 0`, degraded only)
+- Owner alerts: `isOwner` = Google id in `CODE_AGENT_GOOGLE_IDS` (Secret Manager) or `ATHENA_BACKGROUND_GOOGLE_ID`; `notifyOwner` writes `athena_notification` rows via `notifications/inbox.record` (kind `system_health`, source `health:<check>:<NY date>`, skipped while one for that check is unacknowledged) — from `../../src/jobs/nightly.js` at the end of every run (all non-ok checks) and from `GET /system/health` when the owner's poll finds a `down` check. No push. Banner: `../../../companion/src/components/SystemBanner.tsx` (5-min present poll, mounted under the header in `CompanionConsole.tsx`, Hide stored in sessionStorage); mock `?health=broken`
 - GCP history before the export: `billing_export.billing_history` (invoice_month, project_id, service, cost net of credits), loaded from a console Reports/Cost-table CSV with `npm run billing:history -- report.csv [--month YYYYMM] [--dry-run]` (`../../db/load-gcp-billing-history.js`, owner's own ADC). Any month it holds replaces the export for that month in the lifetime sum.
 - Lifetime reads: Twilio `Usage/Records/AllTime.json?Category=totalprice`; OpenAI Costs API from `ATHENA_BILLING_SINCE` (default 2025-10-27, cached 1h); GCP export sum for the project. Gemini is split out by service name (`Gemini API` / Generative Language / Vertex AI).
 - Route/controller: `../../src/routes/companion.js` (`/system/health`, `/system/time-saved`, `/system/twilio-billing`, `/system/openai-billing`, `/system/gcp-billing`), `../../src/controllers/system.js`

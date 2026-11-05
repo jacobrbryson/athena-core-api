@@ -9,6 +9,7 @@
  */
 
 const { AsyncLocalStorage } = require("node:async_hooks");
+const perfTrace = require("../perfTrace");
 
 const RING_SIZE = 200;
 const ring = [];
@@ -63,6 +64,12 @@ function recordCall(entry) {
 	};
 	ring.push(row);
 	if (ring.length > RING_SIZE) ring.shift();
+	// The same call on the current turn's trace, if there is one (no I/O).
+	try {
+		perfTrace.llmCall(row);
+	} catch {
+		// never let tracing touch a model call
+	}
 
 	if (!dbEnabled) return;
 	pool()

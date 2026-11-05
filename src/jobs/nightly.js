@@ -245,7 +245,9 @@ async function review({ dryRun, skipEvals, out }, maintenanceResults) {
          VALUES (?, ?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE metrics = VALUES(metrics), evals = VALUES(evals), plan = VALUES(plan),
            markdown = VALUES(markdown), served_by = VALUES(served_by), created_at = CURRENT_TIMESTAMP;`,
-				[date, JSON.stringify(metrics), JSON.stringify(evals), JSON.stringify(plan), markdown, String(plan.servedBy || "").slice(0, 80)]
+				// Step results ride along so the System page and the red banner can
+				// see a step that "succeeded" with failed: 1 (systemHealth nightlySteps).
+				[date, JSON.stringify({ ...metrics, maintenance: maintenanceResults || undefined }), JSON.stringify(evals), JSON.stringify(plan), markdown, String(plan.servedBy || "").slice(0, 80)]
 			)
 			.then(() => log("report stored in self_review_report"))
 			.catch((err) => log("could not store report in DB (file still written):", err.message));
@@ -278,6 +280,17 @@ async function main() {
 			.nightly(llm)
 			.then((out) => log("mission drafts:", JSON.stringify(out.map((f) => ({ family: f.familyId, saved: f.saved.length, dropped: f.dropped.length, skipped: f.skipped || null })))))
 			.catch((err) => log("mission drafts skipped:", err.message));
+	}
+
+	// Last, so tonight's report and every step's outcome are in: anything broken
+	// goes into the owner's notifications (inbox only, no push).
+	if (!args.dryRun) {
+		const systemHealth = require("../services/systemHealth");
+		await systemHealth
+			.getHealth()
+			.then((health) => systemHealth.notifyOwner(health))
+			.then((n) => log(`system health: ${n} new notification(s)`))
+			.catch((err) => log("system health check skipped:", err.message));
 	}
 
 	if (result && args.dryRun) console.log(`\n${result.markdown}`);

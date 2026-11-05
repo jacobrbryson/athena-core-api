@@ -33,10 +33,33 @@ async function timeSavedStatus(req, res) {
   }
 }
 
+/**
+ * GET /system/health. Every adult sees the same checks (the System page);
+ * `owner` says whether this person gets the red banner. While something is
+ * down for the owner it also lands in their notifications — once a day per
+ * problem, never a push — so it is still there after the banner is gone.
+ */
+async function healthStatus(req, res) {
+  res.set('Cache-Control', 'no-store');
+  const actor = await requireAdultActor(req, res);
+  if (!actor) return;
+  try {
+    const [health, owner] = await Promise.all([systemHealth.getHealth(), systemHealth.isOwner(actor.profileId)]);
+    if (owner && health.status === 'down') {
+      systemHealth.notifyOwner({ ...health, checks: health.checks.filter((c) => c.status === 'down') }, { profileIds: [actor.profileId] })
+        .catch(() => undefined);
+    }
+    return res.json({ ...health, owner });
+  } catch (err) {
+    console.warn('[system] Health unavailable:', err?.message || err);
+    return res.status(503).json({ success: false, message: 'Health data is unavailable. Please retry.' });
+  }
+}
+
 module.exports = {
   timeSavedStatus,
+  healthStatus,
   twilioBillingStatus: systemRead('Twilio billing', () => twilioBilling.getBilling()),
   openaiBillingStatus: systemRead('OpenAI billing', () => openaiBilling.getBilling()),
   gcpBillingStatus: systemRead('GCP billing', () => gcpBilling.getBilling()),
-  healthStatus: systemRead('Health', () => systemHealth.getHealth()),
 };
