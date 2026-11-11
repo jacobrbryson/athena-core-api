@@ -35,6 +35,8 @@ function harness({ weather = calm, sweep = {}, storm = {}, allowed = [1, 2], swe
 		push: () => ({ deliverNudge: async (profileId, nudge) => (deliveries.push({ profileId, ...nudge }), typeof pushResult.value === "function" ? pushResult.value(profileId) : pushResult.value) }),
 		weather: jest.fn(async () => (typeof weather === "function" ? weather() : weather)),
 		tonight: jest.fn(async () => ({ known: true, calm: true, phrase: null })),
+		today: jest.fn(async () => ({ known: false, phrase: null })),
+		personal: { morning: jest.fn(async () => null), evening: jest.fn(async () => null) },
 		homePlace: async () => ({ latitude: 35.6, longitude: -80.9 }),
 		cameraNames: async () => new Map([["GARAGECAM1", "Garage"], ["BACKCAM1", "Backyard"]]),
 		saveEvidence: jest.fn(async () => "evidence-uuid"),
@@ -625,7 +627,7 @@ describe("evening and morning reports", () => {
 		h.advance("2026-10-24T06:00:30-04:00");
 		await h.engine.plan(); // the job — it can't reach a camera, and doesn't need one
 		expect(h.deps.observeDeps.snapshot.mock.calls.length).toBe(shots);
-		expect(h.deliveries.at(-1).text).toBe("Good morning, I hope you slept well through the night. All quiet — nothing happened overnight.");
+		expect(h.deliveries.at(-1).text).toBe("Good morning. All quiet overnight.");
 		expect(h.db.runs.find((r) => r.occurrence_key === "morning:2026-10-24")).toMatchObject({ state: "safe", trigger_kind: "report" });
 	});
 
@@ -641,7 +643,7 @@ describe("evening and morning reports", () => {
 		h.advance("2026-10-24T06:00:30-04:00");
 		await h.engine.plan();
 		expect(h.deliveries.at(-1).text).toBe(
-			"Good morning, I hope you slept well through the night. Overnight: the garage door was open at 9:00 PM, fixed by 9:16 PM and the cameras saw a stranger 2 times (first at 2:14 AM on the Doorbell)."
+			"Good morning. Overnight: the garage door was open at 9:00 PM, fixed by 9:16 PM and the cameras saw a stranger 2 times (first at 2:14 AM on the Doorbell)."
 		);
 	});
 
@@ -673,6 +675,72 @@ describe("evening and morning reports", () => {
 		await h.ready;
 		await h.engine.plan();
 		expect(h.db.runs.some((r) => r.trigger_kind === "report")).toBe(false);
+	});
+
+	test("each adult's morning lines are their own, under the house's", async () => {
+		const h = reportHarness();
+		await h.ready;
+		h.deps.today.mockResolvedValue({ known: true, phrase: "High 54°, rain from around 3 PM" });
+		h.deps.personal.morning.mockImplementation(async (id) =>
+			id === 1
+				? { sleep: { asleepHours: 7.2, hrv: 58.4, rhr: 52 }, meeting: { at: at("2026-10-24T09:30:00-04:00"), title: "Standup" }, due: ["BMW inspection", "Mom's birthday"] }
+				: { sleep: null, meeting: null, due: [] }
+		);
+		await evening(h);
+		h.advance("2026-10-24T06:00:30-04:00");
+		await h.engine.plan();
+		const mine = h.deliveries.filter((d) => d.profileId === 1).at(-1).text;
+		const theirs = h.deliveries.filter((d) => d.profileId === 2).at(-1).text;
+		expect(mine).toBe("Good morning. All quiet overnight.\nSlept 7h 12m · HRV 58 · RHR 52.\nHigh 54°, rain from around 3 PM.\nFirst meeting 9:30 AM, Standup.\nDue today: BMW inspection, Mom's birthday.");
+		expect(theirs).toBe("Good morning. All quiet overnight.\nHigh 54°, rain from around 3 PM.");
+		expect(h.deps.personal.morning).toHaveBeenCalledWith(1, expect.objectContaining({ timeZone: "America/New_York" }));
+	});
+
+	test("a personal source that throws leaves the house report intact", async () => {
+		const h = reportHarness();
+		await h.ready;
+		h.deps.personal.morning.mockRejectedValue(new Error("whoop down"));
+		await evening(h);
+		h.advance("2026-10-24T06:00:30-04:00");
+		await h.engine.plan();
+		expect(h.deliveries.at(-1).text).toBe("Good morning. All quiet overnight.");
+	});
+
+	test("the evening report adds each adult's food line", async () => {
+		const h = reportHarness();
+		await h.ready;
+		h.deps.personal.evening.mockImplementation(async (id) =>
+			id === 1 ? { targets: { calories: 2400, protein_g: 180 }, totals: { calories: 2300, protein_g: 120 }, logged: true } : { targets: { calories: 2000 }, totals: {}, logged: false }
+		);
+		await evening(h);
+		const text = (id) => h.deliveries.find((d) => d.profileId === id).text;
+		expect(text(1)).toMatch(/peaceful tonight\.\nFood: protein 120 of 180 g \(33% under\)\.$/);
+		expect(text(2)).toMatch(/\nNo meals logged today\.$/);
+	});
+});
+
+describe("report lines", () => {
+	const reports = require("./reports");
+	test("food: only targets more than 20% off; on target says so; no targets says nothing", () => {
+		const targets = { calories: 2400, protein_g: 180, carbs_g: 250, fat_g: 80, water_oz: null };
+		expect(reports.macroLine({ targets, totals: { calories: 2500, protein_g: 170, carbs_g: 260, fat_g: 75 }, logged: true })).toBe("Food on target.");
+		expect(reports.macroLine({ targets, totals: { calories: 3100, protein_g: 180, carbs_g: 250, fat_g: 80 }, logged: true })).toBe("Food: calories 3,100 of 2,400 (29% over).");
+		expect(reports.macroLine({ targets, totals: { calories: 2880, protein_g: 180, carbs_g: 250, fat_g: 80 }, logged: true })).toBe("Food on target."); // exactly 20% is within
+		expect(reports.macroLine({ targets, totals: {}, logged: false })).toBe("No meals logged today.");
+		expect(reports.macroLine(null)).toBeNull();
+		expect(reports.macroLine({ targets: { sleep_hours: 8 }, totals: {}, logged: true })).toBeNull();
+	});
+
+	test("today's weather: the high and the one thing worth dressing for", async () => {
+		const hours = [
+			{ start: "2026-10-24T07:00:00-04:00", temperatureF: 41, shortForecast: "Cloudy", precipitationChance: 10, windMph: 8 },
+			{ start: "2026-10-24T14:00:00-04:00", temperatureF: 54, shortForecast: "Cloudy", precipitationChance: 20, windMph: 10 },
+			{ start: "2026-10-24T15:00:00-04:00", temperatureF: 52, shortForecast: "Rain Showers", precipitationChance: 70, windMph: 12 },
+			{ start: "2026-10-24T22:00:00-04:00", temperatureF: 70, shortForecast: "Thunderstorms", precipitationChance: 90, windMph: 40 },
+		];
+		const out = await weatherRisk.today({ latitude: 1, longitude: 1 }, {}, { now: at("2026-10-24T06:00:00-04:00"), read: { hourly: async () => ({ hours }) } });
+		expect(out).toEqual({ known: true, phrase: "High 54°, rain from around 3 PM" });
+		expect(await weatherRisk.today(null)).toEqual({ known: false, phrase: null });
 	});
 });
 

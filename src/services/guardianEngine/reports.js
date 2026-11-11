@@ -88,9 +88,63 @@ function morningText({ from, to, incidents = [], missed = [], strangers = null, 
 	}
 	if (missed.length) lines.push(`${missed.length === 1 ? "one check" : `${missed.length} checks`} didn't run (the cameras weren't reachable)`);
 	if (strangers?.count) lines.push(`the cameras saw a stranger ${strangers.count === 1 ? "once" : `${strangers.count} times`} (first at ${clock(new Date(strangers.firstAt))}${strangers.camera ? ` on the ${strangers.camera}` : ""})`);
-	const hello = "Good morning, I hope you slept well through the night.";
-	if (!lines.length) return { text: `${hello} All quiet — nothing happened overnight.`, severity: "advisory", quiet: true };
-	return { text: `${hello} Overnight: ${join(lines)}.`.slice(0, 600), severity: urgent ? "urgent" : "advisory", quiet: false };
+	if (!lines.length) return { text: "Good morning. All quiet overnight.", severity: "advisory", quiet: true };
+	return { text: `Good morning. Overnight: ${join(lines)}.`.slice(0, 600), severity: urgent ? "urgent" : "advisory", quiet: false };
 }
 
-module.exports = { eveningText, morningText, join };
+/** "7h 12m" */
+function hoursText(hours) {
+	const total = Math.round(hours * 60);
+	return `${Math.floor(total / 60)}h ${String(total % 60).padStart(2, "0")}m`;
+}
+
+/**
+ * The morning report's lines after the house (owner, 2026-11-10): values only,
+ * no comparisons, one line each, and a line is left out when there's nothing
+ * to say. Owner asked for it "as short and direct as possible".
+ *   weather:  "High 54°, rain from around 3 PM" | null
+ *   personal: { sleep: { asleepHours, hrv, rhr } | null, meeting: { at, title } | null, due: [string] } | null
+ */
+function morningPersonal({ weather = null, personal = null, clock }) {
+	const lines = [];
+	const s = personal?.sleep;
+	if (s) {
+		const bits = [s.asleepHours ? `Slept ${hoursText(s.asleepHours)}` : null, s.hrv ? `HRV ${Math.round(s.hrv)}` : null, s.rhr ? `RHR ${Math.round(s.rhr)}` : null].filter(Boolean);
+		if (bits.length) lines.push(`${bits.join(" · ")}.`);
+	}
+	if (weather) lines.push(`${capital(weather)}.`);
+	if (personal?.meeting) lines.push(`First meeting ${clock(personal.meeting.at)}, ${personal.meeting.title}.`);
+	if (personal?.due?.length) lines.push(`Due today: ${personal.due.join(", ")}.`);
+	return lines;
+}
+
+const MACROS = [
+	["calories", "calories", ""],
+	["protein_g", "protein", " g"],
+	["carbs_g", "carbs", " g"],
+	["fat_g", "fat", " g"],
+	["water_oz", "water", " oz"],
+];
+
+/**
+ * The evening report's food line (owner, 2026-11-10): only the targets more
+ * than 20% over or under, "No meals logged." when nothing was, and "Food on
+ * target." when everything is within 20% — so silence never stands in for a
+ * read that didn't happen. Null when the person has set no targets.
+ */
+function macroLine(food) {
+	if (!food?.targets) return null;
+	const set = MACROS.filter(([k]) => Number(food.targets[k]) > 0);
+	if (!set.length) return null;
+	if (!food.logged) return "No meals logged today.";
+	const off = [];
+	for (const [k, name, unit] of set) {
+		const target = Number(food.targets[k]);
+		const got = Math.round(Number(food.totals?.[k]) || 0);
+		const pct = Math.round(((got - target) / target) * 100);
+		if (Math.abs(pct) > 20) off.push(`${name} ${got.toLocaleString("en-US")} of ${Math.round(target).toLocaleString("en-US")}${unit} (${Math.abs(pct)}% ${pct > 0 ? "over" : "under"})`);
+	}
+	return off.length ? `Food: ${off.join(", ")}.` : "Food on target.";
+}
+
+module.exports = { eveningText, morningText, morningPersonal, macroLine, join };

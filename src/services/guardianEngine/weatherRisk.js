@@ -149,10 +149,48 @@ async function tonight(place, config = {}, { now = new Date(), read = {} } = {})
 	return { known: true, calm: bits.length === 0, phrase: bits.length ? bits.slice(0, 3).join(", and ") : null };
 }
 
+/**
+ * Today, in a phrase, for the morning report: from now until 9 PM local, the
+ * high and anything worth dressing for — "High 54°, rain from around 3 PM".
+ * Unreadable is { known: false }.
+ */
+async function today(place, config = {}, { now = new Date(), read = {} } = {}) {
+	const t = thresholdsOf(config);
+	const hourly = read.hourly || weather.hourlyRows;
+	if (!place || !Number.isFinite(Number(place.latitude)) || !Number.isFinite(Number(place.longitude))) return { known: false, phrase: null };
+	const sky = await hourly(place.latitude, place.longitude).catch(() => null);
+	if (!sky?.hours?.length) return { known: false, phrase: null };
+	const nowMs = now.getTime();
+	const hours = [];
+	for (const h of sky.hours) {
+		const at = weather.local(h.start);
+		if (!at || at.ms + 3_600_000 <= nowMs) continue;
+		if (at.hour >= 21 || at.ms - nowMs > 16 * 3_600_000) break;
+		hours.push(h);
+	}
+	if (!hours.length) return { known: false, phrase: null };
+	const temps = hours.map((h) => h.temperatureF).filter(Number.isFinite);
+	const has = (re, min = 0) => hours.find((h) => re.test(h.shortForecast || "") && (h.precipitationChance ?? 0) >= min);
+	const bits = [];
+	if (temps.length) bits.push(`High ${Math.max(...temps)}°`);
+	const thunder = has(/thunder/i, t.stormChance);
+	const snow = has(/snow|flurr|blizzard/i);
+	const ice = has(/sleet|freezing|ice/i);
+	const rain = has(/rain|shower|drizzle/i, 40);
+	if (thunder) bits.push(`thunderstorms around ${clockOf(thunder.start)}`);
+	else if (snow) bits.push(`snow from around ${clockOf(snow.start)}`);
+	else if (ice) bits.push(`freezing rain or sleet from around ${clockOf(ice.start)}`);
+	else if (rain) bits.push(`rain from around ${clockOf(rain.start)}`);
+	else if (hours[0]?.shortForecast) bits.push(String(hours[0].shortForecast).toLowerCase());
+	const gust = hours.reduce((worst, h) => (Number.isFinite(h.windMph) && h.windMph >= t.gustMph && (!worst || h.windMph > worst.windMph) ? h : worst), null);
+	if (gust) bits.push(`gusts up to ${gust.windMph} mph`);
+	return { known: bits.length > 0, phrase: bits.length ? bits.join(", ") : null };
+}
+
 /** One phrase for a notification: "a Severe Thunderstorm Warning", "gusts up to 35 mph around 7 PM". */
 function phrase(risk) {
 	if (!risk?.reasons?.length) return "rough weather on the way";
 	return risk.reasons.slice(0, 2).map((r) => r.text).join(" and ");
 }
 
-module.exports = { assess, tonight, phrase, thresholdsOf, DEFAULTS, DANGEROUS_ALERT };
+module.exports = { assess, tonight, today, phrase, thresholdsOf, DEFAULTS, DANGEROUS_ALERT };

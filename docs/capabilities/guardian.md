@@ -29,12 +29,27 @@ even when all is clear:
 Anything wrong goes in that one message rather than a separate alert. An
 umbrella left up on a calm night is mentioned but isn't an alert.
 
-At **6:00 AM** (unless you change it) I send a **morning report** about the
-night: "Good morning, I hope you slept well through the night." and then
-either "All quiet — nothing happened overnight." or what did happen — a door
+Under the house, each adult's evening report adds one line about their own
+food log, when they've set nutrition targets: only the targets more than 20%
+over or under ("Food: protein 120 of 180 g (33% under)."), "Food on target."
+when everything is within 20%, or "No meals logged today."
+
+At **6:00 AM** (unless you change it) I send a **morning report**. The house
+comes first: "Good morning. All quiet overnight." or what did happen — a door
 found open and when it was closed, something still open, a check that didn't
 run, or a stranger the cameras saw. It wakes no camera; it reads what I
-recorded overnight.
+recorded overnight. Then, one short line each, left out when there's nothing
+to say:
+
+- Last night's sleep, HRV and resting heart rate from WHOOP (values only).
+- Today's high and the weather worth dressing for at home.
+- Your first meeting today.
+- What's due today: Jira issues, vehicle registration, inspection, insurance
+  or service dates, unpaid tax installments, project steps, and birthdays of
+  your children and the family members linked to a Google Contact.
+
+Those lines are each adult's own: your sleep, meetings and food log only go
+in your report, never in another adult's.
 
 You can switch either report off, or change the sweep time and the morning
 time, in Settings — or just ask me ("move the evening report to 9:30", "stop
@@ -126,5 +141,5 @@ Only adults authorized for household security can see it or be told.
 - Migration: `db/migrations/0093_guardian_engine.up.sql` (`athena_guard_*`)
 - Frontend: `../../../companion/src/components/SecurityGuardian.tsx`, `../../../companion/src/api/propertyGuardian.ts`
 - Tests: `src/services/guardianEngine/guardianEngine.test.js` (in-memory store twin `memoryStore.testkit.js`), `src/controllers/guardian.test.js`
-- Reports: `src/services/guardianEngine/reports.js` (wording, pure), `weatherRisk.tonight()`; the evening report rides the `schedule` run (problems collected via `defer` and sent once by `sendReport`), the morning report is a `trigger_kind = 'report'` run (`morning:<date>`) executed by the planner itself. Chat action `set_guardian_reports` in `src/services/actions/registry.js` (test `src/services/actions/guardianReports.test.js`).
+- Reports: `src/services/guardianEngine/reports.js` (wording, pure: `morningText`, `morningPersonal`, `macroLine`), `weatherRisk.tonight()` / `weatherRisk.today()`; per-recipient lines from `src/services/guardianEngine/personal.js` (WHOOP behind health consent, calendar, Jira, vehicles, taxes, project steps, birthdays, food log vs targets; every source fails quiet), joined under the house text in `sendReport` via `personalize`; the evening report rides the `schedule` run (problems collected via `defer` and sent once by `sendReport`), the morning report is a `trigger_kind = 'report'` run (`morning:<date>`) executed by the planner itself. Chat action `set_guardian_reports` in `src/services/actions/registry.js` (test `src/services/actions/guardianReports.test.js`).
 - Notes: alerts are nudges (`trigger_id = 'guardian'`) pushed with `push.deliverNudge`, not Initiative triggers. Test runs use `sim:`-prefixed incident keys and close at the end so they can never swallow a real alert.

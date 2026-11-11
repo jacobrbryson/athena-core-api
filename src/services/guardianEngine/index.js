@@ -50,6 +50,9 @@ function createEngine(overrides = {}) {
 		push: () => require("../push"),
 		weather: (place, config, opts) => weatherRisk.assess(place, config, opts),
 		tonight: (place, config, opts) => weatherRisk.tonight(place, config, opts),
+		today: (place, config, opts) => weatherRisk.today(place, config, opts),
+		/** Each recipient's own lines of a report — their sleep, meetings, due dates, food (personal.js). */
+		personal: require("./personal"),
 		/** Stranger sightings between two times, one per visit (sightings log, migration 0083). */
 		overnightStrangers: (from, to) => deps.store.overnightStrangers(from, to),
 		homePlace: (profileId, placeUuid) => require("../weatherAlerts").homePlace(profileId, placeUuid),
@@ -491,7 +494,12 @@ function createEngine(overrides = {}) {
 			const garage = results.filter((r) => r.check === "garage_door" && r.subject).map((r) => ({ name: nameOf("garage_door", r.subject), status: r.status, reason: r.reason }));
 			const u = results.find((r) => r.check === "patio_umbrella" && r.subject);
 			const words = reports.eveningText({ garage, umbrella: u ? { name: nameOf("patio_umbrella", u.subject), status: u.status, reason: u.reason } : null, risk, tonight });
-			const deliveries = await sendReport(proto, run, { kind: "evening", ...words, deferred, now: deps.now(), simulated });
+			const evening = async (profileId) => {
+				const food = await Promise.resolve(deps.personal.evening(profileId, { now: deps.now(), timeZone: tzOf(all) })).catch(() => null);
+				const line = reports.macroLine(food);
+				return line ? [line] : [];
+			};
+			const deliveries = await sendReport(proto, run, { kind: "evening", ...words, personalize: evening, deferred, now: deps.now(), simulated });
 			report = { kind: "evening", text: words.text, deliveries };
 			notified = notified || deliveries.length > 0;
 		}
@@ -528,6 +536,13 @@ function createEngine(overrides = {}) {
 		return deps.tonight(place, storm.config.weather || {}, { now });
 	}
 
+	async function todayFor(all, now) {
+		const storm = all.storm_umbrella;
+		const operator = operatorOf(storm.updatedBy ? storm : all.nightly_sweep);
+		const place = operator ? await Promise.resolve(deps.homePlace(operator, storm.config.placeUuid)).catch(() => null) : null;
+		return deps.today(place, storm.config.weather || {}, { now });
+	}
+
 	/**
 	 * The morning report: what happened since last evening's sweep. It looks at
 	 * nothing new — it reads what the engine recorded overnight (and any
@@ -551,7 +566,15 @@ function createEngine(overrides = {}) {
 		const strangers = await Promise.resolve(deps.overnightStrangers(from, now)).catch(() => null);
 		const words = reports.morningText({ from, to: now, incidents, missed, strangers, clock: (d) => protocols.clockIn(d, tz) });
 		await store.updateRun(run.id, "observing", { state: runTransition("observing", "evaluating") });
-		const deliveries = await sendReport(proto, run, { kind: "morning", ...words, deferred: [], now, simulated });
+		// The house is everyone's; the weather is the house's; the rest is each recipient's own.
+		const ok = await authorize("weather.read", {}, { run, config: proto.config });
+		const sky = ok.allowed ? await todayFor(all, now).catch(() => null) : null;
+		const clock = (d) => protocols.clockIn(d, tz);
+		const morning = async (profileId) => {
+			const personal = await Promise.resolve(deps.personal.morning(profileId, { now, timeZone: tz })).catch(() => null);
+			return reports.morningPersonal({ weather: sky?.known ? sky.phrase : null, personal, clock });
+		};
+		const deliveries = await sendReport(proto, run, { kind: "morning", ...words, personalize: morning, deferred: [], now, simulated });
 		const report = { kind: "morning", text: words.text, deliveries };
 		await store.updateRun(run.id, "evaluating", { state: runTransition("evaluating", "safe"), finished_at: deps.now(), lease_until: null, summary: { results: [], report, window: { from, to: now }, simulated } });
 		return { state: "safe", report };
@@ -562,7 +585,7 @@ function createEngine(overrides = {}) {
 	 * rides in it: its alert rows are written with the report's delivery, so
 	 * dedupe, escalation and the failed-delivery retry all work as for any alert.
 	 */
-	async function sendReport(proto, run, { kind, text, severity, deferred = [], now, simulated }) {
+	async function sendReport(proto, run, { kind, text: houseText, severity, personalize = null, deferred = [], now, simulated }) {
 		const allowedIds = deps.allowedIds();
 		const recipients = recipientsFor(proto);
 		if (!recipients.length) await event("no_recipients", { run, detail: { kind }, now });
@@ -570,6 +593,9 @@ function createEngine(overrides = {}) {
 		for (const profileId of recipients) {
 			const decision = await authorize("notify.household", { recipientApproved: allowedIds.includes(Number(profileId)) }, { run, config: proto.config });
 			if (!decision.allowed) continue;
+			// The recipient's own lines go under the house's, read only for them.
+			const own = personalize ? await Promise.resolve(personalize(Number(profileId))).catch(() => []) : [];
+			const text = [houseText, ...(own || [])].join("\n").slice(0, 900);
 			let status = "simulated";
 			let nudgeUuid = null;
 			let result = null;
