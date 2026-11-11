@@ -59,6 +59,15 @@ router.post('/dashboard/incidents/test', requireAuth, express.json({ limit: '1kb
 // because a handset speaks for itself (same rule as location samples).
 router.post('/dashboard/incidents/phone-alert', requireAuthOrDevice, express.json({ limit: '8kb' }), require('../controllers/nearbyIncidents').phoneAlert);
 
+// Reading incoming texts (services/textMessages): the phone forwards each new
+// Google Messages text (device token only); the notification's buttons decide
+// a calendar suggestion or close a reply one. Nothing is ever sent from here.
+router.post('/dashboard/texts/incoming', requireAuthOrDevice, express.json({ limit: '16kb' }), require('../controllers/textMessages').incoming);
+router.get('/dashboard/texts/recent', requireAuthOrDevice, require('../controllers/textMessages').recent);
+router.post('/dashboard/texts/suggestions/:uuid/approve', requireAuthOrDevice, express.json({ limit: '1kb' }), require('../controllers/textMessages').approve);
+router.post('/dashboard/texts/suggestions/:uuid/decline', requireAuthOrDevice, express.json({ limit: '1kb' }), require('../controllers/textMessages').decline);
+router.post('/dashboard/texts/suggestions/:uuid/used', requireAuthOrDevice, express.json({ limit: '1kb' }), require('../controllers/textMessages').used);
+
 // Websites: the sites the person manages and their Search Console / Analytics
 // numbers (read-only). Shown on the Projects page.
 router.get('/dashboard/websites', requireAuth, require('../controllers/websites').list);

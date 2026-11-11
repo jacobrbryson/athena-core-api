@@ -67,7 +67,9 @@ is told to revoke its approval once no other Google service is on (or use
 ## Limits
 
 - I can **add** an event if you approve it first — see the Actions panel. I
-  still can't move, edit or cancel anything, or reply to an invite.
+  can also **update** one on your own calendar, again only once you approve:
+  add its address, add a note to its description, or move it to a new time.
+  I can't rename or cancel anything, change its guests, or reply to an invite.
 - Adding events needs a newer Google connection than reading does. If you
   linked your calendar before that existed, I can read it but not add to it
   until you reconnect it.

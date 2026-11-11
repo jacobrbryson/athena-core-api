@@ -593,12 +593,21 @@ async function requestHeartLive(profileId, untilMs) {
  */
 async function deliverNudge(profileId, nudge) {
 	if (!nudge?.uuid || !nudge?.text) return { sent: 0 };
+	// A text-message suggestion (services/textMessages) carries its own title
+	// and buttons (Add/Update, or the suggested reply), looked up here so the
+	// morning release of a push held overnight has them too. A suggestion that
+	// was already decided or expired is not pushed at all.
+	let extra = null;
+	if (String(nudge.trigger_id || "").startsWith("text_")) {
+		extra = await require("../textMessages").pushFor(nudge.uuid).catch(() => null);
+		if (!extra) return { sent: 0, skipped: "suggestion closed" };
+	}
 	let result;
 	try {
 		result = await sendToProfile(profileId, {
-			title: "Athena",
+			title: extra?.title || "Athena",
 			body: nudge.text,
-			data: { kind: "nudge", uuid: nudge.uuid, trigger: nudge.trigger_id || "" },
+			data: { kind: "nudge", uuid: nudge.uuid, trigger: nudge.trigger_id || "", ...(extra?.data || {}) },
 			// Per nudge, not per app: a redelivery of this one replaces it, two
 			// different ones stack. See the note above.
 			collapseKey: `nudge-${nudge.uuid}`,

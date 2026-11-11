@@ -1,9 +1,9 @@
 const { providerGet, providerRequest, isNotConnected } = require("./http");
 
 /**
- * Google Calendar reads, and the two writes the action layer can propose.
+ * Google Calendar reads, and the writes the action layer can propose.
  *
- * Reads are unconditional; writes are not. `createEvent` and `deleteEvent`
+ * Reads are unconditional; writes are not. `createEvent`, `updateEvent` and `deleteEvent`
  * are never called from a context builder or a tool loop — only from
  * services/actions, after a person approved the specific proposal. That is
  * why they take an already-validated params object and do no interpretation
@@ -549,6 +549,61 @@ async function deleteEvent(profileId, params = {}) {
 	return { ref: params.event_id };
 }
 
+/**
+ * One event on the person's PRIMARY calendar, or null when it isn't there
+ * (deleted, cancelled, or an id from somewhere else). Only the primary
+ * calendar: it is the only one updateEvent may write, and the action that
+ * calls this uses it to vouch for an event id a model suggested.
+ */
+async function getEvent(profileId, eventId) {
+	if (!eventId) return null;
+	let item;
+	try {
+		item = await providerGet(profileId, PROVIDER, `/calendars/primary/events/${encodeURIComponent(eventId)}`, {
+			invalidateOnAuthFailure: false,
+		});
+	} catch (err) {
+		if (err?.status === 404 || err?.status === 410) return null;
+		throw err;
+	}
+	if (!item || item.status === "cancelled") return null;
+	return { ...normalizeEvent(item), description: String(item.description || "").slice(0, 4000) };
+}
+
+/**
+ * Change an existing event on the primary calendar: its location, description
+ * and/or times, nothing else. A PATCH, so every other field (guests,
+ * reminders, colour) is left exactly as the person set it, and
+ * `sendUpdates: "none"` for the same reason as createEvent — an event with
+ * guests must not mail them because Athena added an address.
+ */
+async function updateEvent(profileId, params = {}) {
+	const body = {
+		...(params.location !== undefined ? { location: params.location } : {}),
+		...(params.description !== undefined ? { description: params.description } : {}),
+		...(params.start
+			? params.all_day
+				? { start: { date: params.start }, end: { date: params.end || params.start } }
+				: {
+						start: { dateTime: params.start, ...(params.time_zone ? { timeZone: params.time_zone } : {}) },
+						end: { dateTime: params.end, ...(params.time_zone ? { timeZone: params.time_zone } : {}) },
+					}
+			: {}),
+	};
+	let updated;
+	try {
+		updated = await providerRequest(
+			profileId,
+			PROVIDER,
+			`/calendars/primary/events/${encodeURIComponent(params.event_id)}`,
+			{ method: "PATCH", body, query: { sendUpdates: "none" } }
+		);
+	} catch (err) {
+		throw asWriteAuthError(err);
+	}
+	return { ref: updated?.id || params.event_id, html_link: updated?.htmlLink || null };
+}
+
 // ---------------------------------------------------------------------------
 // Gemini tools
 // ---------------------------------------------------------------------------
@@ -641,6 +696,8 @@ module.exports = {
 	buildContext,
 	createEvent,
 	deleteEvent,
+	getEvent,
+	updateEvent,
 	// Events plus the calendar list they came from, in one call. Exported for
 	// the initiative triggers, which need the account's own timezone to say
 	// "2pm" and would otherwise re-fetch the calendar list to get it.

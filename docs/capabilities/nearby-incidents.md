@@ -81,6 +81,15 @@ notify you about the call types you care about. It also has:
   it on, open Athena's app info → ⋮ → Allow restricted settings, then try again
   — Android does that for apps not installed from the Play Store. Then press
   Test PulsePoint alert.
+- **PulsePoint's alerts pile up in your notifications:** Android has stopped
+  running my reader, even though access is still on. That happens after the
+  app is killed, updated or put to sleep by the battery saver, and nothing
+  reaches me until it runs again. The Android app asks Android to restart it
+  every time you open Athena and whenever Android drops it. Emergency alerts on
+  this phone says "allowed, but Android isn't running my reader" while it's
+  stopped. If it stays that way, switch Athena off and back on in notification
+  access (it then reads and clears what's waiting), and set Athena's battery
+  use to Unrestricted.
 - **I still hear PulsePoint's own sound:** I clear its notification the moment
   I read it, but only PulsePoint's own notification setting (Silent) can stop
   the sound that plays before that.

@@ -1,5 +1,11 @@
 # Capability ledger
 
+- 2026-11-10 — The morning report now gives each adult their own short lines under the house: sleep, HRV and resting heart rate, today's weather, the first meeting, and what's due today (Jira, vehicle dates, tax installments, project steps, birthdays). The evening report adds a food line: targets more than 20% off, "Food on target." or "No meals logged today." Not deployed yet — `guardian.md` (status: partial)
+
+- 2026-11-10 — Reading your texts on the Android app: with your permission (its own Notification access line, inside Initiative), I read Google Messages texts. When one mentions a plan that isn't on your calendar, or your calendar copy is missing its address or details, I ask on a notification, with Add/Update or No thanks right there. When one is long I send a summary and a suggested reply that opens in Messages for you to edit and send, or Copy. I never send a text. New update_calendar_event action. Needs migration 0117, the server deployed and the new APK — `text-reading.md` (status: partial)
+
+- 2026-11-09 — PulsePoint on the Android app: when Android stops running my notification reader while access is still on (PulsePoint's alerts piling up unread), the app now asks Android to restart it when you open Athena and whenever it drops, and Emergency alerts on this phone says so instead of "on". Needs the new APK — `nearby-incidents.md` (status: live)
+
 - 2026-11-05 — Spoken replies start sooner: my voice for the first sentence is made while I double-check the reply, and the phone hears the moment it's ready instead of checking every couple of seconds. Needs the server deployed and the new APK — `conversation-mode.md` (status: partial)
 
 - 2026-11-05 — Only my voice now learns how you sound talking (from turns it's sure were you) and no longer drops a clearly spoken turn as "too quiet to tell", so you should have to repeat yourself less. Needs the new APK — `voice-filter.md` (status: partial)

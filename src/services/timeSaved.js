@@ -29,6 +29,7 @@ const MINUTES = {
   put_project_session_on_calendar: 0,
   close_out_project: 0,
   create_calendar_event: 2, // open Calendar, type the title, pick the time
+  update_calendar_event: 1, // find the event, paste the address or note in
   file_travel_or_school_email: 2.5, // the event above, plus labelling the email
   file_receipt_email: 0.5, // label and archive one email
   delete_email: 0.25, // open it and trash it

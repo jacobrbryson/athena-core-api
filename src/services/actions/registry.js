@@ -563,6 +563,111 @@ const ACTIONS = [
 		},
 	},
 
+	// Owner, 2026-11-10: "if the calendar is missing data like an address or
+	// description", offer to fill it in. Never standing — the owner's words were
+	// that every update asks — and narrower than create: an event that already
+	// exists on the PRIMARY calendar, and only its location, description and
+	// times. Guests, the calendar, reminders and the title are not reachable.
+	{
+		id: "update_calendar_event",
+		label: "Update a calendar event",
+		provider: "google_calendar",
+		consentType: "action_authority",
+		// The old values are kept in params, and the person can change it back
+		// in their own calendar; but there is no undo here, so never standing.
+		reversible: true,
+		standing: false,
+		describe:
+			"Fill in or correct an event already on the person's own Google Calendar: its address (location), " +
+			"a detail to add to its description, or a new time. Propose this when they ask to add an address or a " +
+			"note to an event, or to move it. Needs the event's id from get_calendar_events; only events on their " +
+			"own calendar (not a shared one) can be changed.",
+		params: {
+			// Same relative order as create_calendar_event's: the reply schema
+			// has one field order for every action (see paramOrder).
+			event_id: "The event's id from get_calendar_events. Required.",
+			start: "A new start: ISO 8601 with UTC offset, or give time_zone. Optional; moves the event.",
+			end: "A new end, same format. Optional; with only start given, the event keeps its length.",
+			time_zone: "IANA zone for start/end that carry no offset.",
+			location: "The address or place to set. Optional.",
+			description: "A detail to ADD to the event's description (kept with what is already there). Optional.",
+		},
+
+		async normalize(raw = {}, ctx = {}) {
+			if (!ctx.profileId) throw invalid("A calendar write needs a person");
+			if (raw.attendees || raw.guests) throw invalid("Athena cannot invite other people to an event");
+			if (raw.calendar_id) throw invalid("Athena can only change events on the primary calendar");
+			if (raw.title || raw.summary) throw invalid("Athena does not rename events");
+			const eventId = str(raw.event_id, 1024);
+			if (!eventId) throw invalid("Which event? An event_id is required");
+			const event = await googleCalendar.getEvent(ctx.profileId, eventId);
+			if (!event) throw invalid("That event isn't on your own calendar");
+
+			const out = { event_id: eventId, title: str(event.title, 200) || "(no title)" };
+			const location = str(raw.location, 200);
+			if (location && !sameText(location, event.location || "")) {
+				out.location = location;
+				if (event.location) out.was_location = str(event.location, 200);
+			}
+			const added = str(raw.description, 1000);
+			if (added && !String(event.description || "").toLowerCase().includes(added.toLowerCase())) {
+				out.description = event.description ? `${event.description}\n\n${added}`.slice(0, 4000) : added;
+				out.added_description = added;
+			}
+
+			if (raw.start) {
+				if (event.allDay) throw invalid("Athena can't change the time of an all-day event");
+				const timeZone = zone(raw.time_zone);
+				const start = instant(raw.start, { timeZone });
+				if (!start) throw invalid("A new start needs a UTC offset, or a time_zone to read it in");
+				const ms = (v) => new Date(/(?:Z|[+-]\d{2}:?\d{2})$/.test(v) ? v : `${v}Z`).getTime();
+				let end = raw.end ? instant(raw.end, { timeZone }) : null;
+				if (raw.end && !end) throw invalid("A new end needs a UTC offset, or a time_zone to read it in");
+				if (!end) {
+					// Keep the event's own length.
+					const length = Date.parse(event.end) - Date.parse(event.start);
+					if (!(length > 0)) throw invalid("Give an end time too");
+					end = new Date(ms(start) + length).toISOString();
+				}
+				const [startMs, endMs] = [ms(start), ms(end)];
+				if (endMs <= startMs) throw invalid("An event cannot end before it starts");
+				if ((endMs - startMs) / 3600000 > MAX_EVENT_HOURS) throw invalid("That event is longer than Athena will schedule unattended");
+				const daysOut = (startMs - Date.now()) / 86400000;
+				if (daysOut > MAX_EVENT_DAYS) throw invalid("That start date is too far in the future");
+				if (daysOut < -1) throw invalid("Athena will not move an event into the past");
+				if (!sameInstant(start, timeZone, event.start, null)) {
+					out.start = start;
+					out.end = end;
+					if (timeZone) out.time_zone = timeZone;
+					out.was_start = event.start;
+				}
+			}
+			if (!out.location && !out.description && !out.start) throw invalid("That event already has those details");
+			return out;
+		},
+
+		summarize(p) {
+			const changes = [];
+			if (p.location) changes.push(p.was_location ? `change the address to ${p.location}` : `add the address ${p.location}`);
+			if (p.added_description) changes.push(`add "${p.added_description.slice(0, 120)}" to the notes`);
+			if (p.start) changes.push(`move it to ${humanTime(p.start, p.time_zone)}`);
+			return `Update "${p.title}" on your calendar: ${changes.join(", ")}`.slice(0, 500);
+		},
+
+		sameAs: (a, b) => a.event_id === b.event_id && (a.location || null) === (b.location || null)
+			&& (a.added_description || null) === (b.added_description || null) && (a.start || null) === (b.start || null),
+
+		async execute(profileId, params) {
+			const { ref, html_link } = await googleCalendar.updateEvent(profileId, {
+				event_id: params.event_id,
+				...(params.location ? { location: params.location } : {}),
+				...(params.description ? { description: params.description } : {}),
+				...(params.start ? { start: params.start, end: params.end, time_zone: params.time_zone } : {}),
+			});
+			return { ref, detail: { html_link } };
+		},
+	},
+
 	{
 		id: "set_thermostat",
 		label: "Change a thermostat",
