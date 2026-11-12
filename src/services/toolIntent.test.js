@@ -45,7 +45,7 @@ describe("guess", () => {
 		llm.decide.mockResolvedValue(answers({}));
 		await intent.guess("how did I sleep?", { profileId: PROFILE, audience: "adult" });
 		const asked = Object.keys(llm.decide.mock.calls[0][0].questions);
-		expect(asked.sort()).toEqual(["calendar", "heart_rate", "memories", "web", "whoop", "whoop_also", "window"].sort());
+		expect(asked.sort()).toEqual(["calendar", "heart_rate", "memories", "person_update", "web", "whoop", "whoop_also", "window"].sort());
 		expect(asked).not.toContain("email");
 	});
 
@@ -135,7 +135,7 @@ describe("guess", () => {
 		heartRate.getPref.mockResolvedValue({ enabled: false });
 		llm.decide.mockResolvedValue(answers({ web: 0.9 }, "unspecified"));
 		const g = await intent.guess("who won the Braves game last night?", { profileId: PROFILE, audience: "adult" });
-		expect(Object.keys(llm.decide.mock.calls[0][0].questions).sort()).toEqual(["memories", "web", "window"]);
+		expect(Object.keys(llm.decide.mock.calls[0][0].questions).sort()).toEqual(["memories", "person_update", "web", "window"]);
 		expect(g.fetch).toEqual(["web"]);
 		expect(g.filler).toEqual({ key: "web", text: "Let me look that up." });
 	});
@@ -275,5 +275,22 @@ describe("location", () => {
 		whereabouts.matches.mockReturnValue(true);
 		const g = { fetch: ["location"], days: 1 };
 		expect(intent.extraGrounding(g, "where am I?")).toBe(null);
+	});
+});
+
+describe("person update", () => {
+	it("asks adults whether the message is news about someone, and returns the score", async () => {
+		llm.decide.mockResolvedValue(answers({ person_update: 0.91, memories: 0.3 }, "unspecified"));
+		const g = await intent.guess("It's been a while since I updated you about Cindy. She's selling her Jeep.", { profileId: PROFILE, audience: "adult" });
+		expect(llm.decide.mock.calls[0][0].questions.person_update.type).toBe("noul");
+		expect(g.personUpdate).toBe(0.91);
+		// Not a read: it never shows up as something to fetch or announce.
+		expect(g.fetch).not.toContain("person_update");
+		expect(g.filler).toBeNull();
+	});
+
+	it("never asks it without the adult memory source", () => {
+		const childSources = intent.SOURCES.filter((s) => s.provider === "google_calendar");
+		expect(intent.buildQuestions(childSources).person_update).toBeUndefined();
 	});
 });

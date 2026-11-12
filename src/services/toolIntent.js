@@ -180,6 +180,22 @@ function buildQuestions(sources) {
 			};
 		}
 	}
+	// Adults only, like the memory source it sits beside: is this news about
+	// someone in their life? Not a read — services/personUpdate searches their
+	// people and aims memory extraction at the one it is about.
+	if (sources.some((s) => s.memory)) {
+		questions.person_update = {
+			type: "noul",
+			instructions:
+				"Is the person giving Athena news or an update about someone in their life — " +
+				"a family member, friend or pet: how they are doing, what is going on with them, " +
+				"or something that changed for them?",
+			criteria: {
+				true: "Yes — they are telling Athena about that person",
+				false: "No — this is not news about someone they know",
+			},
+		};
+	}
 	questions.window = {
 		type: "choice",
 		instructions: "Which stretch of time is the person asking about?",
@@ -277,6 +293,8 @@ async function guess(message, { profileId, audience, sources } = {}) {
 		window,
 		days: WINDOWS[window].days,
 		scores,
+		// Asked only when the memory source was (adults); 0 otherwise.
+		personUpdate: noul("person_update"),
 		latencyMs: result.latencyMs,
 		model: result.model,
 	};

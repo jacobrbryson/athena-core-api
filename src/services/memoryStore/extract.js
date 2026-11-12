@@ -30,6 +30,14 @@ const EXPLICIT_CUE =
   /\b(remember (that|this|my|me|when)|don'?t forget|forget (that|about|what|my)|note that|keep in mind)\b/i;
 const PERSONAL_CUE =
   /\bmy (name|birthday|wife|husband|partner|son|daughter|kids?|mom|dad|brother|sister|dog|cat|pet|job|boss|favorite|anniversary)\b/i;
+// Bringing Athena up to date on someone ("It's been a while since I updated
+// you about Cindy…", the Family card's Update button). One message is the whole
+// update, so waiting for the third turn meant it was never read — and the turn
+// count lives in memory, so a restart between updates reset it every time.
+const UPDATE_CUE =
+  /\b(updated? you (about|on)|update on|catch(ing)? you up|fill(ing)? you in)\b/i;
+const isCue = (text) =>
+  EXPLICIT_CUE.test(text || "") || PERSONAL_CUE.test(text || "") || UPDATE_CUE.test(text || "");
 
 const inFlight = new Set();
 const pendingTurns = new Map(); // sessionId -> human turns since last extraction
@@ -90,8 +98,12 @@ function checkShape(data) {
   return null;
 }
 
-function buildPrompt({ lines, knownFacts, audience, now = new Date() }) {
+function buildPrompt({ lines, knownFacts, audience, now = new Date(), focus = null }) {
   const today = describeNow(now);
+  // services/personUpdate worked out who the latest message is news about.
+  const focusRule = focus
+    ? `\n- The latest message is an update about ${focus.name}, remembered as ${focus.category}: "${focus.key}"${focus.value ? ` = "${String(focus.value).slice(0, 600)}"` : ""}. Lasting news about them is a CHANGED value for exactly that category and key: write the whole value, every old detail kept and the new one added. A dated one-off plan with them is still a moment.`
+    : "";
   const known = knownFacts.length
     ? knownFacts
         .map(
@@ -121,7 +133,7 @@ Rules:
 - forget: exact keys of known facts the person explicitly asked you to forget or said were wrong.
 - These lines were written on ${today.weekday} ${today.iso}. A memory outlives the conversation, so never store a relative day ("tonight", "tomorrow", "Friday", "next week"): work out the real date from today and write it in, e.g. "line dancing on Fri 2026-09-25". Read later, "Friday night" says nothing about which Friday.
 - A one-off plan or event with a date is a moment, never a fact. Facts are only for things that stay true.
-- Empty arrays are normal and correct for most conversations.
+- Empty arrays are normal and correct for most conversations.${focusRule}
 ${audienceRules}
 
 Return ONLY JSON matching this schema: ${JSON.stringify(EXTRACT_SCHEMA)}
@@ -134,15 +146,15 @@ ${lines.join("\n")}`;
  * Called after every Athena reply. Cheap: it only counts turns and decides
  * whether to launch an extraction in the background.
  */
-function afterTurn(session, userText, { audience, memoryEnabled }) {
+function afterTurn(session, userText, { audience, memoryEnabled, focus = null }) {
   if (!session?.profile_id || !memoryEnabled) return;
   const count = (pendingTurns.get(session.id) || 0) + 1;
   pendingTurns.set(session.id, count);
-  const cue =
-    EXPLICIT_CUE.test(userText || "") || PERSONAL_CUE.test(userText || "");
+  // An update about a known person (services/personUpdate) is read now, aimed at them.
+  const cue = !!focus || isCue(userText);
   if (cue || count >= TURNS_BEFORE_EXTRACT) {
     pendingTurns.set(session.id, 0);
-    extractSession(session, { audience, source: "turn" }).catch((err) =>
+    extractSession(session, { audience, source: "turn", focus }).catch((err) =>
       console.warn("[memory] extraction failed:", err.message),
     );
   }
@@ -170,7 +182,7 @@ async function setCursor(sessionId, createdAt) {
  */
 async function extractSession(
   session,
-  { audience = "child", source = "turn" } = {},
+  { audience = "child", source = "turn", focus = null } = {},
 ) {
   const empty = emptyResult();
   if (!session?.profile_id || inFlight.has(session.id)) return empty;
@@ -226,6 +238,7 @@ async function extractSession(
         knownFacts,
         audience,
         now: new Date(messages[messages.length - 1].created_at),
+        focus,
       }),
       check: checkShape,
       temperature: 0.1,
@@ -533,6 +546,7 @@ async function extractPendingSessions({ limit = 200, audienceFor } = {}) {
 
 module.exports = {
   afterTurn,
+  isCue,
   extractSession,
   applyExtraction,
   extractPendingSessions,

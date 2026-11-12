@@ -768,3 +768,7 @@ See [`README.md`](README.md) for the full contract.
 - 2026-11-01 — Guardians missions: a step can be proven by what I see on a house camera, with a They're there button to make me look, a spoken greeting after I have seen them, and a notification to the supervising adult when a mission finishes — `guardians-missions.md` (status: partial)
 
 - 2026-11-01 — Guardians missions: a camera check can want several people in one frame, including a visitor taught under Security once an adult confirms they said yes — `guardians-missions.md` (status: partial)
+
+- 2026-11-12 — Family Edit is now a side drawer with Details, Connections, Health and Memory tabs, a camera button on the picture and a relationship list — `companion-dashboard.md` (status: partial)
+
+- 2026-11-12 — Catching Athena up on someone (the Family card's Update button, or just telling her news) saves to that person's memory on the same turn; she asks which person when two fit — `memories.md` (status: live)

@@ -22,6 +22,13 @@ talk. Two kinds:
 You can see everything I hold, search it, add a note yourself, and delete
 anything. If you tell me to forget something, it goes.
 
+**Catching me up on someone.** When you tell me news about someone in your
+life — the Family card's **Update** button starts exactly that — I work out
+who you mean from their name, what you call them ("Mom"), or what we were
+just talking about, and save the news to that person's memory right away, so
+their card shows it as updated. If it could be either of two people (two
+Emmas), I ask which one you mean instead of guessing.
+
 ## Where to find it
 
 The **⋯ menu in the top right corner** → **Memories** ("What Athena
@@ -46,6 +53,8 @@ deleted from its own row.
 
 ## Limits
 
+- I only recognise someone you've already told me about. News about someone
+  new is remembered the usual way, not filed under an existing person.
 - Remembering isn't automatic or perfect — I keep what looks durable, not a
   transcript.
 - Memories belong to your account. I don't carry them between people, and the

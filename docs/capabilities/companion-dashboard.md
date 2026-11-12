@@ -95,12 +95,14 @@ When I've got something wrong — "dad's sister" when she's only your mom's
 sister — Edit lets you rewrite what I remember about that person in your own
 words; your wording replaces mine, and I only change it again if you clearly
 tell me something different in conversation.
-Edit opens one dialog with their name, relationship, remembered notes and any
-separately saved details, such as their birthday. Name changes appear on both
-the Family page and card; I show a person's name rather than the memory key
-("Spouse"). The dialog also lets you link, change or unlink their Google
-Contact, choose a private picture from your device, and open their health
-watch. A chosen picture takes priority over the Google Contact photo, appears
+Edit opens a side drawer: their picture (tap the camera to choose a new one)
+and relationship at the top, then four tabs — Details (name, relationship from
+a list or your own words, and what I remember), Connections (link, change or
+unlink their Google Contact), Health (open their health watch) and Memory (any
+separately saved details, such as their birthday). The linked contact shows
+under every tab, and Remove person sits at the bottom beside Save Changes.
+Name changes appear on both the Family page and card; I show a person's name
+rather than the memory key ("Spouse"). A chosen picture takes priority over the Google Contact photo, appears
 on your other devices, and can be removed to show the contact photo again.
 On Family → Pets, tap a pet's row to open this editor. You can also remove a
 pet there after confirming; its family memory and chosen picture are removed.

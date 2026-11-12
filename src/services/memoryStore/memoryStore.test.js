@@ -454,6 +454,33 @@ describe("extraction safety", () => {
 	});
 });
 
+describe("extraction cue", () => {
+	const { isCue } = require("./extract");
+
+	test("an update about someone is read on its own turn", () => {
+		// The Family card's Update button opens with exactly this.
+		expect(isCue("It's been a while since I updated you about Cindy Bryson. She's doing well.")).toBe(true);
+		expect(isCue("Let me catch you up on Grandpa")).toBe(true);
+		expect(isCue("quick update on the kids: Eli lost a tooth")).toBe(true);
+		expect(isCue("filling you in on Mom's surgery")).toBe(true);
+	});
+
+	test("an update aimed at a person tells extraction which key the news belongs to", () => {
+		const { buildPrompt } = require("./extract");
+		const focus = { key: "mother", category: "family", name: "Cindy Bryson", value: "Cindy Bryson; alive" };
+		const prompt = buildPrompt({ lines: ["[person] Cindy is selling her Jeep"], knownFacts: [], audience: "adult", focus });
+		expect(prompt).toContain('update about Cindy Bryson, remembered as family: "mother" = "Cindy Bryson; alive"');
+		expect(buildPrompt({ lines: [], knownFacts: [], audience: "adult" })).not.toContain("update about");
+	});
+
+	test("the existing cues still count, and small talk does not", () => {
+		expect(isCue("remember that my dentist is Dr. Lee")).toBe(true);
+		expect(isCue("my sister moved to Denver")).toBe(true);
+		expect(isCue("what's the weather tomorrow?")).toBe(false);
+		expect(isCue("can you update the calendar")).toBe(false);
+	});
+});
+
 describe("extraction sweep and cursor", () => {
 	const memory = require("../memory");
 	const messageService = require("../message");

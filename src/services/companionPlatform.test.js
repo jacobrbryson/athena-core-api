@@ -165,6 +165,6 @@ describe("chat pipeline fallback", () => {
 		const { processAiResponse } = require("../controllers/gemini");
 		await processAiResponse({ id: 1, uuid: "s1", mode: "companion", profile_id: 42 }, "hello there", new Map(), {});
 		expect(addMessage).toHaveBeenCalledWith(1, false, "Hi Ross", "companion", null, null);
-		expect(afterTurn).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), "hello there", { audience: "adult", memoryEnabled: true });
+		expect(afterTurn).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), "hello there", { audience: "adult", memoryEnabled: true, focus: null });
 	});
 });

@@ -10,6 +10,7 @@ const heartRate = require("../services/heartRate");
 const healthPlan = require("../services/healthPlan");
 const tradingContext = require("../services/trading/context");
 const toolIntent = require("../services/toolIntent");
+const personUpdate = require("../services/personUpdate");
 const webSearch = require("../services/webSearch");
 const travel = require("../services/travel");
 const whereabouts = require("../services/whereabouts");
@@ -631,13 +632,34 @@ async function processAiResponse(session, message, clients, ctx = {}) {
       ? perfTrace.timed("needs.available", needs.available(profileId, { audience: memoryCtx.audience }).catch(() => []))
       : Promise.resolve([]);
 
-    const [actionBlock, blocks, guessedBlock, web, needIds] = await Promise.all([
+    // Is this news about someone in their life, and who (services/personUpdate)?
+    // Rides on the same Jev guess; searches their people, and asks Jev to pick
+    // when several (or none by name) fit. Never throws; null changes nothing.
+    const personUpdatePromise =
+      guessPromise && mayPropose
+        ? perfTrace.timed(
+            "personUpdate.resolve",
+            Promise.all([guessPromise, historyPromise])
+              .then(([guessed, recent]) =>
+                personUpdate.resolve(message, { profileId, guessed, recent: recent || [] }),
+              )
+              .catch(() => null),
+          )
+        : Promise.resolve(null);
+
+    const [actionBlock, blocks, guessedBlock, web, needIds, personUpdated] = await Promise.all([
       actionBlockPromise,
       contextBlocks,
       guessedGrounding,
       webGrounding,
       needIdsPromise,
+      personUpdatePromise,
     ]);
+    const personUpdateBlock = personUpdate.promptBlock(personUpdated);
+    if (personUpdateBlock)
+      integrationContext = [integrationContext, personUpdateBlock]
+        .filter(Boolean)
+        .join("\n\n");
     const initiativeBlock = blocks.filter(Boolean).join("\n\n") || null;
     if (guessedBlock)
       integrationContext = [integrationContext, guessedBlock]
@@ -982,6 +1004,7 @@ async function processAiResponse(session, message, clients, ctx = {}) {
       memoryStore.afterTurn(session, message, {
         audience: memoryCtx.audience,
         memoryEnabled: memoryCtx.memoryEnabled,
+        focus: personUpdate.focusOf(personUpdated),
       });
     }
 
