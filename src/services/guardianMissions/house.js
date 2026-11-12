@@ -158,6 +158,24 @@ async function say(familyId, serial, text, by, speech) {
 	return speak(familyId, serial, pcmToWav(pcm, voice.sampleRate || 24000), "audio/wav", by);
 }
 
+/**
+ * Say `text` through a camera because a parent asked to (the
+ * say_through_camera action). Same gate and log as `say`, but no test result:
+ * everyday use is not evidence for her ability scores, and a bridge outage
+ * shouldn't mark the capability as failing.
+ */
+async function announce(familyId, serial, text, by, speech) {
+	if (!eufyBridge.SERIAL.test(String(serial || ""))) throw failure("Unknown camera.");
+	const words = String(text || "").trim().slice(0, 300);
+	if (!words) throw failure("Nothing to say.");
+	await permit(familyId, "speak_through_camera", by);
+	const voice = await speech(words);
+	const audio = pcmToWav(Buffer.from(voice.audioBase64, "base64"), voice.sampleRate || 24000);
+	const result = await call(`/v1/devices/${serial}/talk`, audio, { timeoutMs: 90_000, contentType: "audio/wav" });
+	await missions.log(familyId, "speak_through_camera_command", { actorId: by.actor?.id || null, outcome: result.ok ? "ok" : "failed", detail: { stage: "everyday", serial, chars: words.length, error: result.error || null } });
+	return result;
+}
+
 /** Cameras the bridge knows, with what each can be told to do. Never captures anything. */
 async function cameras() {
 	if (!eufyBridge.configured()) return { state: "not_connected", cameras: [] };
@@ -178,4 +196,4 @@ async function look(familyId, serial, by) {
 	return record(familyId, "view_cameras", by, "fresh_snapshot", result, shot.ok ? `${shot.jpeg?.length || 0} bytes` : null);
 }
 
-module.exports = { porchLight, setPorchLight, porchLightState, morse, pan, speak, say, look, cameras, permit, pcmToWav };
+module.exports = { porchLight, setPorchLight, porchLightState, morse, pan, speak, say, announce, look, cameras, permit, pcmToWav };

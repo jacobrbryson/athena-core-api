@@ -1,5 +1,7 @@
 # Capability ledger
 
+- 2026-11-11 — Speaking through a house camera from chat: ask me to say something through the doorbell, driveway or back yard camera and I put the camera and the exact words on a card. It plays in my voice once you approve. New say_through_camera action. Not deployed yet, and talkback hasn't been tried on the real cameras — `camera-voice.md` (status: partial)
+
 - 2026-11-10 — The morning report now gives each adult their own short lines under the house: sleep, HRV and resting heart rate, today's weather, the first meeting, and what's due today (Jira, vehicle dates, tax installments, project steps, birthdays). The evening report adds a food line: targets more than 20% off, "Food on target." or "No meals logged today." Not deployed yet — `guardian.md` (status: partial)
 
 - 2026-11-10 — Reading your texts on the Android app: with your permission (its own Notification access line, inside Initiative), I read Google Messages texts. When one mentions a plan that isn't on your calendar, or your calendar copy is missing its address or details, I ask on a notification, with Add/Update or No thanks right there. When one is long I send a summary and a suggested reply that opens in Messages for you to edit and send, or Copy. I never send a text. New update_calendar_event action. Needs migration 0117, the server deployed and the new APK — `text-reading.md` (status: partial)

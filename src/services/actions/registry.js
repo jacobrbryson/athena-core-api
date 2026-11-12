@@ -859,6 +859,79 @@ const ACTIONS = [
 	},
 
 	{
+		id: "say_through_camera",
+		label: "Say something through a house camera",
+		// Added on the owner's instruction (2026-11-11): Athena's voice out of a
+		// Eufy camera's speaker through the home bridge, the exact words on a card.
+		// Never standing: anyone near that camera hears it, so it can't be undone.
+		provider: null,
+		consentType: "action_authority",
+		reversible: false,
+		standing: false,
+		describe:
+			"Say a short message out loud through one of the house cameras' speakers (the doorbell, " +
+			"driveway or back yard camera), in Athena's voice. Propose this when they ask you to say " +
+			"or tell someone something through a camera, and only then. Put the exact words to be " +
+			"spoken in message — what they asked you to say, not a reply to them.",
+		params: {
+			camera: 'Which camera, by its name or where it is ("Doorbell", "Driveway", "Back yard"). Required.',
+			message: "The exact words to speak, at most 300 characters. Required.",
+		},
+		// Saying the same words again later is a new request.
+		sameAs: false,
+
+		// The household adults authorized for the cameras, in the family whose
+		// house the bridge is in (only that one has the capability).
+		async availableTo(profileId) {
+			const eufyBridge = require("../eufyBridge");
+			if (!eufyBridge.configured() || !eufyBridge.allowed(profileId)) return false;
+			const missions = require("../guardianMissions");
+			const parent = await missions.parentActor(profileId);
+			return Boolean(parent && (await missions.capabilityByKey(parent.family_id, "speak_through_camera")));
+		},
+
+		async normalize(raw = {}) {
+			const wanted = str(raw.camera, 80);
+			if (!wanted) throw invalid("Say which camera");
+			// Refused rather than cut: the card must show every word that will play.
+			const message = str(raw.message, 301);
+			if (!message) throw invalid("Say what to say");
+			if (message.length > 300) throw invalid("Keep it to 300 characters");
+			// Only a camera the home bridge reports right now: a model-written
+			// serial could otherwise point at anything.
+			const { state, cameras } = await require("../guardianMissions/house").cameras();
+			if (!cameras.length) throw invalid(state === "not_connected" ? "The cameras aren't connected" : "The cameras at home can't be reached right now");
+			const key = (s) => String(s || "").toLowerCase().replace(/\b(camera|cam|the)\b/g, "").replace(/[^a-z0-9]+/g, "");
+			const want = key(wanted);
+			let matches = cameras.filter((c) => key(c.name) === want);
+			if (!matches.length && want) matches = cameras.filter((c) => key(c.name).includes(want));
+			const names = cameras.map((c) => c.name).join(", ");
+			if (!matches.length) throw invalid(`There is no camera called "${wanted}". The cameras are: ${names}`);
+			if (matches.length > 1) throw invalid(`More than one camera matches "${wanted}" (${matches.map((c) => c.name).join(", ")}); name it more exactly`);
+			const cam = matches[0];
+			if (!cam.control?.talkback) throw invalid(`The ${cam.name} camera can't play sound`);
+			return { camera_serial: cam.serial, camera_name: cam.name, message };
+		},
+
+		summarize(p) {
+			return `Say through the ${p.camera_name} camera: "${p.message}"`.slice(0, 500);
+		},
+
+		async execute(profileId, params) {
+			const missions = require("../guardianMissions");
+			const parent = await missions.parentActor(profileId);
+			if (!parent) throw invalid("Only a parent in this house can do that");
+			// The person's approval, so a parent's standing: the kill switch and
+			// the capability's own switch still apply (house.permit).
+			const by = { kind: "parent", actor: parent };
+			const llm = require("../llm");
+			const result = await require("../guardianMissions/house").announce(Number(parent.family_id), params.camera_serial, params.message, by, llm.speech);
+			if (!result.ok) throw Object.assign(new Error(`The ${params.camera_name} camera didn't play it: ${result.error}`), { status: 503 });
+			return { ref: params.camera_serial, detail: `Said through the ${params.camera_name} camera` };
+		},
+	},
+
+	{
 		id: "look_through_camera",
 		label: "Take a look through your camera",
 		// Internal: the "provider" is a browser on the person's desk, which the
