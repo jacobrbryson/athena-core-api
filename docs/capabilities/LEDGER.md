@@ -1,5 +1,7 @@
 # Capability ledger
 
+- 2026-11-12 — Google Tasks in Connected apps (a Tasks row on the Google card, and asked at sign-in): I read your task lists and, on a card you approve, add, tick off, rename, re-date, add notes to or delete a task. New add_google_task, update_google_task and delete_google_task actions. Needs the Tasks API enabled and the tasks scope on the consent screen; not deployed yet — `google-tasks.md` (status: partial)
+
 - 2026-11-11 — Speaking through a house camera from chat: ask me to say something through the doorbell, driveway or back yard camera and I put the camera and the exact words on a card. It plays in my voice once you approve. New say_through_camera action. Not deployed yet, and talkback hasn't been tried on the real cameras — `camera-voice.md` (status: partial)
 
 - 2026-11-10 — The morning report now gives each adult their own short lines under the house: sleep, HRV and resting heart rate, today's weather, the first meeting, and what's due today (Jira, vehicle dates, tax installments, project steps, birthdays). The evening report adds a food line: targets more than 20% off, "Food on target." or "No meals logged today." Not deployed yet — `guardian.md` (status: partial)

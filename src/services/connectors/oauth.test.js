@@ -674,6 +674,7 @@ function idToken(claims) {
 const GMAIL_SCOPES = "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.modify";
 const CAL_SCOPES = "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events";
 const CONTACTS_SCOPE = "https://www.googleapis.com/auth/contacts.readonly";
+const TASKS_SCOPE = "https://www.googleapis.com/auth/tasks";
 
 describe("google group", () => {
 	it("asks for every member's scopes on one screen, hinted to the signed-in account", async () => {
@@ -685,7 +686,7 @@ describe("google group", () => {
 		expect(provider).toBe("google");
 		expect(url.searchParams.get("redirect_uri")).toBe("https://api.athena.test/api/v1/integrations/google_calendar/callback");
 		const scopes = url.searchParams.get("scope").split(" ");
-		expect(scopes).toEqual(expect.arrayContaining(["openid", "email", "profile", ...GMAIL_SCOPES.split(" "), ...CAL_SCOPES.split(" "), CONTACTS_SCOPE]));
+		expect(scopes).toEqual(expect.arrayContaining(["openid", "email", "profile", ...GMAIL_SCOPES.split(" "), ...CAL_SCOPES.split(" "), CONTACTS_SCOPE, TASKS_SCOPE]));
 		expect(new Set(scopes).size).toBe(scopes.length);
 		expect(url.searchParams.get("login_hint")).toBe("ross@example.com");
 		expect(url.searchParams.get("access_type")).toBe("offline");
@@ -717,7 +718,7 @@ describe("google group", () => {
 		const result = await oauth.completeGroup("google", { code: "c", state: stateFrom(authorize_url) });
 		expect(result.linked).toEqual(["google_contacts"]);
 		expect(result.kept).toEqual(["gmail"]);
-		expect(result.declined).toEqual(["google_calendar", "websites"]);
+		expect(result.declined).toEqual(["google_calendar", "google_tasks", "websites"]);
 		expect(mockCredentials.put).toHaveBeenCalledTimes(1);
 		expect(mockCredentials.put.mock.calls[0][0]).toMatchObject({
 			profileId: 42,

@@ -30,6 +30,9 @@ const MINUTES = {
   close_out_project: 0,
   create_calendar_event: 2, // open Calendar, type the title, pick the time
   update_calendar_event: 1, // find the event, paste the address or note in
+  add_google_task: 0.5, // open Tasks, pick the list, type it in
+  update_google_task: 0.25, // find the task and tick or edit it
+  delete_google_task: 0.25, // find the task and delete it
   file_travel_or_school_email: 2.5, // the event above, plus labelling the email
   file_receipt_email: 0.5, // label and archive one email
   delete_email: 0.25, // open it and trash it

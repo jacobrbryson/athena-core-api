@@ -13,18 +13,20 @@ triggers: [connect, connected, connection, link, linked, unlink, disconnect, int
 
 I can link to accounts you already have and read from them during our
 conversation — so "what's on tomorrow?" gets a real answer instead of a guess.
-Right now that's **Google** (Gmail, Calendar and Contacts),
+Right now that's **Google** (Gmail, Calendar, Contacts and Tasks),
 **Google Nest** (thermostats), **Smartcar** (your car's odometer, fuel, locks
 and location), **Whoop**, **Jira** and **Slack**. Family Chores links differently (from the
 Family Chores side).
 
-Signing in with Google also asks, on one Google screen, for Gmail, Calendar
-and Contacts — so those links are renewed every time you sign in. Anything
+Signing in with Google also asks, on one Google screen, for Gmail, Calendar,
+Contacts and Tasks — so those links are renewed every time you sign in. Anything
 you untick there can be turned on later from the Google card.
 
 Three things are always true of a connected app:
 
-- **I only read.** I never create, edit, or delete anything in your accounts.
+- **I only change things you approve.** Reading needs nothing from you; adding
+  an event, ticking off a task or archiving an email is always a card you
+  approve first.
 - **I only look when it's relevant.** A message about dinner never touches
   WHOOP. I check an app when what you said is plausibly about it.
 - **You can cut it off at any time.** Disconnecting deletes the stored
@@ -36,8 +38,8 @@ Your credentials are encrypted at rest and never appear in our conversation.
 
 The **⋯ menu in the top right corner** → **Connected apps**. Each app has its
 own row showing whether it's connected, with a **Connect** or **Disconnect**
-button. Gmail, Calendar and Contacts sit together on one **Google** card:
-**Connect all** asks for all three at once, each service's own row connects
+button. Gmail, Calendar, Contacts and Tasks sit together on one **Google** card:
+**Connect all** asks for all of them at once, each service's own row connects
 (or turns off) just that one, and **Disconnect all** withdraws Google's
 approval entirely.
 
@@ -84,7 +86,7 @@ reach your calendar.
 - Generic OAuth dance: `src/services/connectors/oauth.js`. Credential storage
   and encryption: `src/services/credentials.js`.
 - Provider groups (`GROUPS` in the registry): `google` = gmail +
-  google_calendar + google_contacts. One consent (`beginGroup`), one code
+  google_calendar + google_contacts + google_tasks + websites. One consent (`beginGroup`), one code
   exchange, one credential per granted member (`completeGroup`); a member
   whose live link is on another account is kept, not swapped. A single member's
   disconnect skips the upstream revoke while a sibling is linked (Google's

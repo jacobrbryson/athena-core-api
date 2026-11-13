@@ -27,7 +27,7 @@ const credentials = require("../credentials");
  * contents and a reason for not having them.
  */
 
-const CONNECTORS = [googleCalendar, gmail, whoop, require("./vesync"), require("./nest"), require("./smartcar"), require("./googleKeep"), require("./webull"), ...require('./work').connectors];
+const CONNECTORS = [googleCalendar, gmail, require("./googleTasks"), whoop,require("./vesync"), require("./nest"), require("./smartcar"), require("./googleKeep"), require("./webull"), ...require('./work').connectors];
 
 /** Connectors whose keyword gate the message trips. */
 function relevantConnectors(message) {

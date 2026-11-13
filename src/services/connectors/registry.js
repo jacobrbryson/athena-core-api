@@ -197,6 +197,45 @@ const PROVIDERS = {
 	},
 
 	// -----------------------------------------------------------------
+	// Google Tasks — read, and writes through the action layer only
+	// -----------------------------------------------------------------
+	// Owner, 2026-11-12: Google Tasks in Connected apps, managed from Athena.
+	// `tasks` is read and write (there is no narrower write scope); every
+	// write is an approval card — add_google_task, update_google_task,
+	// delete_google_task in services/actions/registry.js.
+	google_tasks: {
+		id: "google_tasks",
+		label: "Google Tasks",
+		authorizeUrl: env(
+			"GOOGLE_OAUTH_AUTHORIZE_URL",
+			"https://accounts.google.com/o/oauth2/v2/auth"
+		),
+		tokenUrl: env("GOOGLE_OAUTH_TOKEN_URL", "https://oauth2.googleapis.com/token"),
+		revokeUrl: env("GOOGLE_OAUTH_REVOKE_URL", "https://oauth2.googleapis.com/revoke"),
+		revokeMethod: "POST",
+		revokeBody: (token) => ({ token }),
+		scopes: [
+			"https://www.googleapis.com/auth/tasks",
+			"openid",
+			"email",
+		],
+		scopeSeparator: " ",
+		clientIdSecret: "GOOGLE_OAUTH_CLIENT_ID",
+		clientSecretSecret: "GOOGLE_OAUTH_CLIENT_SECRET",
+		pkce: true,
+		authorizeParams: {
+			access_type: "offline",
+			prompt: "consent",
+			include_granted_scopes: "true",
+		},
+		tokenAuth: "body",
+		consentType: null,
+		rotatesRefreshToken: false,
+		apiBase: env("GOOGLE_TASKS_API_BASE", "https://tasks.googleapis.com/tasks/v1"),
+		identify: googleIdentity,
+	},
+
+	// -----------------------------------------------------------------
 	// Websites: Search Console + Analytics (GA4) — read-only
 	// -----------------------------------------------------------------
 	// One credential for both because they are one question ("how are my sites
@@ -443,7 +482,7 @@ const GROUPS = {
 	google: {
 		id: "google",
 		label: "Google",
-		members: ["gmail", "google_calendar", "google_contacts", "websites"],
+		members: ["gmail", "google_calendar", "google_contacts", "google_tasks", "websites"],
 		// Always asked, whatever the members are: the id_token is how the
 		// callback learns which Google account consented.
 		identityScopes: ["openid", "email", "profile"],
@@ -453,7 +492,7 @@ const GROUPS = {
 		// with the console, and a redirect_uri_mismatch when it isn't. The
 		// callback tells the two flows apart by the state's own provider.
 		callbackVia: "google_calendar",
-		accountKey: { gmail: "email", google_calendar: "sub", google_contacts: "sub", websites: "sub" },
+		accountKey: { gmail: "email", google_calendar: "sub", google_contacts: "sub", google_tasks: "sub", websites: "sub" },
 	},
 };
 

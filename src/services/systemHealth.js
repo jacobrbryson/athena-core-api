@@ -142,7 +142,7 @@ async function backgroundIdentity() {
   }
 }
 
-const CONNECTOR_NAMES = { google_keep: 'Google Keep', google_contacts: 'Google Contacts', google_calendar: 'Google Calendar', webull: 'Webull', whoop: 'WHOOP', vesync: 'VeSync', nest: 'Nest' };
+const CONNECTOR_NAMES = { google_keep: 'Google Keep', google_contacts: 'Google Contacts', google_tasks: 'Google Tasks', google_calendar: 'Google Calendar', webull: 'Webull', whoop: 'WHOOP', vesync: 'VeSync', nest: 'Nest' };
 const connectorName = (p) => CONNECTOR_NAMES[p] || String(p).replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 
 async function savedSignIns() {

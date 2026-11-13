@@ -51,6 +51,7 @@ const projectShape = require("../projects/shape");
 const projectEntries = require("../projects/entries");
 const familyChores = require("../familyChores");
 const googleKeep = require("../connectors/googleKeep");
+const googleTasks = require("../connectors/googleTasks");
 
 /** A rejection that is the model's fault, not the person's or the server's. */
 function invalid(message) {
@@ -665,6 +666,183 @@ const ACTIONS = [
 				...(params.start ? { start: params.start, end: params.end, time_zone: params.time_zone } : {}),
 			});
 			return { ref, detail: { html_link } };
+		},
+	},
+
+	// Google Tasks (owner, 2026-11-12: "can be managed from Athena"). Three
+	// actions, each on one task of the person's OWN lists, every list and task
+	// id checked against what Google returns for them before it reaches a card.
+	{
+		id: "add_google_task",
+		label: "Add a Google Task",
+		provider: "google_tasks",
+		consentType: "action_authority",
+		// They can tick it off or delete it in Google Tasks themselves.
+		reversible: true,
+		standing: true,
+		describe:
+			"Add one task to the person's own Google Tasks. Propose this when they ask to add something " +
+			"to their to-do list or tasks, or to a named task list. One task per proposal. Not for a reminder " +
+			"at a time or place (remind_at_time / remind_at_place), and not for the grocery list in Keep.",
+		params: {
+			title: "What the task is. Required.",
+			task_due: "Optional due date, YYYY-MM-DD (Google Tasks keeps a date, not a time).",
+			task_notes: "Optional notes to keep on the task.",
+			task_list: "Exact title of the task list to add to. Omit for their default list.",
+		},
+
+		async normalize(raw = {}, ctx = {}) {
+			if (!ctx.profileId) throw invalid("A task needs a person");
+			const title = str(raw.title, 300);
+			if (!title) throw invalid("A task needs a title");
+			const out = { title };
+			if (raw.task_due) {
+				const due = str(raw.task_due, 10);
+				if (!googleTasks.DATE_ONLY.test(due || "") || Number.isNaN(Date.parse(`${due}T00:00:00Z`))) {
+					throw invalid("A due date is YYYY-MM-DD");
+				}
+				const days = (Date.parse(`${due}T00:00:00Z`) - Date.now()) / 86400000;
+				if (days > 3 * 366) throw invalid("That due date is too far in the future");
+				if (days < -2) throw invalid("Athena will not add a task already past due");
+				out.due = due;
+			}
+			const notes = str(raw.task_notes, 2000);
+			if (notes) out.notes = notes;
+			const list = await googleTasks.resolveList(ctx.profileId, raw.task_list);
+			if (!list) throw invalid(raw.task_list ? `There's no task list called "${str(raw.task_list, 100)}"` : "Google Tasks has no list to add to");
+			const open = await googleTasks.listTasks(ctx.profileId, list);
+			if (open.some((t) => sameText(t.title, title))) throw invalid(`"${title}" is already on "${list.title}"`);
+			return { ...out, list_id: list.id, list_title: list.title };
+		},
+
+		summarize(p) {
+			return `Add "${p.title}" to your Google Tasks list "${p.list_title}"${p.due ? `, due ${p.due}` : ""}`.slice(0, 500);
+		},
+
+		sameAs: (a, b) => a.list_id === b.list_id && sameText(a.title, b.title) && (a.due || null) === (b.due || null),
+
+		async execute(profileId, params) {
+			const { ref, link } = await googleTasks.createTask(profileId, params);
+			return { ref, detail: { link } };
+		},
+	},
+
+	{
+		id: "update_google_task",
+		label: "Change a Google Task",
+		provider: "google_tasks",
+		consentType: "action_authority",
+		// The old values are kept in params and it can be changed back in Google
+		// Tasks; but there is no undo here, so never standing.
+		reversible: true,
+		standing: false,
+		describe:
+			"Tick off, reopen, rename, re-date or add notes to one task already on the person's own Google " +
+			"Tasks. Propose this when they say they did something on their list, or ask to change a task. " +
+			"Needs the task's id from get_google_tasks or the Google Tasks block.",
+		params: {
+			task_id: "The task's id (task_id). Required.",
+			task_done: "true to tick it off, false to reopen it. Optional.",
+			title: "A new title. Optional; only when they ask to rename it.",
+			task_due: "A new due date, YYYY-MM-DD. Optional.",
+			task_notes: "A note to ADD to the task's notes (kept with what is there). Optional.",
+			task_list: "The task's list title, when known. Optional.",
+		},
+
+		async normalize(raw = {}, ctx = {}) {
+			if (!ctx.profileId) throw invalid("A task change needs a person");
+			const taskId = str(raw.task_id, 200);
+			if (!taskId) throw invalid("Which task? A task_id is required");
+			const task = await googleTasks.findTask(ctx.profileId, taskId, str(raw.task_list, 200));
+			if (!task) throw invalid("That task isn't on your Google Tasks");
+
+			const out = { task_id: task.id, list_id: task.list_id, list_title: task.list, was_title: task.title };
+			if (raw.task_done === true || raw.task_done === false) {
+				if (raw.task_done !== task.done) out.done = raw.task_done;
+			}
+			const title = str(raw.title, 300);
+			if (title && title !== task.title) out.title = title;
+			if (raw.task_due) {
+				const due = str(raw.task_due, 10);
+				if (!googleTasks.DATE_ONLY.test(due || "") || Number.isNaN(Date.parse(`${due}T00:00:00Z`))) {
+					throw invalid("A due date is YYYY-MM-DD");
+				}
+				if ((Date.parse(`${due}T00:00:00Z`) - Date.now()) / 86400000 > 3 * 366) throw invalid("That due date is too far in the future");
+				if (due !== task.due) {
+					out.due = due;
+					if (task.due) out.was_due = task.due;
+				}
+			}
+			const added = str(raw.task_notes, 1000);
+			if (added && !String(task.notes || "").toLowerCase().includes(added.toLowerCase())) {
+				out.notes = task.notes ? `${task.notes}\n\n${added}`.slice(0, 4000) : added;
+				out.added_notes = added;
+			}
+			if (out.done === undefined && !out.title && !out.due && !out.notes) {
+				throw invalid(raw.task_done === true && task.done ? "That task is already done" : "That task already looks like that");
+			}
+			return out;
+		},
+
+		summarize(p) {
+			const changes = [];
+			if (p.done === true) changes.push("tick it off");
+			if (p.done === false) changes.push("reopen it");
+			if (p.title) changes.push(`rename it "${p.title}"`);
+			if (p.due) changes.push(`make it due ${p.due}`);
+			if (p.added_notes) changes.push(`add "${p.added_notes.slice(0, 120)}" to its notes`);
+			return `"${p.was_title}" on your Google Tasks list "${p.list_title}": ${changes.join(", ")}`.slice(0, 500);
+		},
+
+		sameAs: (a, b) => a.task_id === b.task_id && a.done === b.done && (a.title || null) === (b.title || null)
+			&& (a.due || null) === (b.due || null) && (a.added_notes || null) === (b.added_notes || null),
+
+		async execute(profileId, params) {
+			const { ref, link } = await googleTasks.updateTask(profileId, {
+				task_id: params.task_id,
+				list_id: params.list_id,
+				...(params.done !== undefined ? { done: params.done } : {}),
+				...(params.title ? { title: params.title } : {}),
+				...(params.due ? { due: params.due } : {}),
+				...(params.notes ? { notes: params.notes } : {}),
+			});
+			return { ref, detail: { link } };
+		},
+	},
+
+	{
+		id: "delete_google_task",
+		label: "Delete a Google Task",
+		provider: "google_tasks",
+		consentType: "action_authority",
+		// Google Tasks has no bin to restore a deleted task from.
+		reversible: false,
+		standing: false,
+		describe:
+			"Delete one task from the person's own Google Tasks. Propose this only when they ask to delete or " +
+			"remove a task — when they did it, tick it off with update_google_task instead. Needs the task's id.",
+		params: {
+			task_id: "The task's id (task_id). Required.",
+			task_list: "The task's list title, when known. Optional.",
+		},
+
+		async normalize(raw = {}, ctx = {}) {
+			if (!ctx.profileId) throw invalid("A task change needs a person");
+			const taskId = str(raw.task_id, 200);
+			if (!taskId) throw invalid("Which task? A task_id is required");
+			const task = await googleTasks.findTask(ctx.profileId, taskId, str(raw.task_list, 200));
+			if (!task) throw invalid("That task isn't on your Google Tasks");
+			return { task_id: task.id, list_id: task.list_id, list_title: task.list, title: task.title };
+		},
+
+		summarize(p) {
+			return `Delete "${p.title}" from your Google Tasks list "${p.list_title}" (it can't be restored)`.slice(0, 500);
+		},
+
+		sameAs: (a, b) => a.task_id === b.task_id,
+
+		async execute(profileId, params) {
+			return googleTasks.deleteTask(profileId, params);
 		},
 	},
 
@@ -3052,6 +3230,7 @@ const PARAM_TYPES = {
 	operation: { type: "string", enum: ["add", "bought"] },
 	grocery_items: { type: "array", items: { type: "string" } },
 	all_day: { type: "boolean" },
+	task_done: { type: "boolean" },
 	// Closed sets, so the model picks a real value instead of inventing one
 	// ("companion-dashboard"). normalize() still checks; this only stops waste.
 	repo: { type: "string", enum: Object.keys(codeAgents.REPOS) },
