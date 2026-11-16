@@ -161,6 +161,7 @@ async function getStats({ days = 1 } = {}) {
 		byEndpoint: roll((r) => r.endpointId),
 		byTask: rows.sort((a, b) => b.calls - a.calls).map(({ inChars, outChars, ...r }) => r),
 		incidents: incidents((hourly || []).map((h) => ({ endpointId: h.endpoint_id, hour: Number(h.hour), calls: Number(h.calls), errors: Number(h.errors), quota: Number(h.quota) }))),
+		savings,
 		tests: { smoke: Number(tests?.[0]?.smoke || 0), evals: Number(tests?.[0]?.evals || 0) },
 	};
 }
