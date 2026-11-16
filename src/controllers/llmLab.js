@@ -185,7 +185,7 @@ async function compare(req, res) {
 			Promise.all(
 				endpoints.map(async (e) => {
 					try {
-						const out = await llm.generateOn(e.id, { task: "chat", contents, json: true, schema: require("./prompt").RESPONSE_SCHEMA, temperature: 0.4 });
+						const out = await llm.generateOn(e.id, { task: "chat", contents, json: true, schema: require("./prompt").RESPONSE_SCHEMA, temperature: 0.4, logAs: "compare" });
 						const check = replyCheck(out.text);
 						return { endpointId: e.id, tier: e.tier, model: out.model, latencyMs: out.latencyMs, valid: check.ok, reply: check.reply, error: check.ok ? null : "reply failed the schema" };
 					} catch (err) {

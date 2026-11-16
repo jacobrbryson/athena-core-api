@@ -97,6 +97,13 @@ test("preview explains the choice without calling a model", async () => {
 	expect(mockGenerateContent).not.toHaveBeenCalled();
 });
 
+test("the side-by-side is logged as a comparison, not an eval", async () => {
+	const r = res();
+	await lab.compare({ body: { message: "how do I unwind?" } }, r);
+	expect(r.body.results.map((x) => x.endpointId).sort()).toEqual(["desk", "gemini"]);
+	expect(telemetry.recent(5).map((c) => c.task)).toEqual(["smoke:compare", "smoke:compare"]);
+});
+
 test("bad input is a 400", async () => {
 	const r = res();
 	await lab.drillTest({ body: { scenario: "nope" } }, r);

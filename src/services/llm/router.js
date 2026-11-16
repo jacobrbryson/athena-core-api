@@ -169,10 +169,11 @@ async function generate({ task = "chat", contents, json = true, schema = null, a
 
 /**
  * Call ONE specific endpoint, no fallback — used by the nightly capability
- * evals to score each model on its own. Still logged, but as task "eval" so
- * it never skews production metrics.
+ * evals to score each model on its own. Still logged, but as task "eval" (or
+ * the caller's `logAs`, e.g. "compare" for the lab's side-by-side) so it never
+ * skews production metrics.
  */
-async function generateOn(endpointId, { task = "chat", contents, json = true, schema = null, temperature }) {
+async function generateOn(endpointId, { task = "chat", contents, json = true, schema = null, temperature, logAs = "eval" }) {
 	const endpoint = allEndpoints().find((e) => e.id === endpointId);
 	if (!endpoint) throw new Error(`Unknown endpoint "${endpointId}"`);
 	if (!endpoint.models?.[task]) throw new Error(`${endpointId} has no model for "${task}"`);
@@ -181,10 +182,10 @@ async function generateOn(endpointId, { task = "chat", contents, json = true, sc
 	const started = Date.now();
 	try {
 		const out = await adapterFor(endpoint).generate(endpoint, { task, contents, json, schema, temperature });
-		telemetry.recordCall({ task: "eval", endpointId, tier: endpoint.tier, model: out.model, outcome: "ok", latencyMs: Date.now() - started });
+		telemetry.recordCall({ task: logAs, endpointId, tier: endpoint.tier, model: out.model, outcome: "ok", latencyMs: Date.now() - started });
 		return { text: out.text, latencyMs: Date.now() - started, model: out.model, tier: endpoint.tier };
 	} catch (err) {
-		telemetry.recordCall({ task: "eval", endpointId, tier: endpoint.tier, model: endpoint.models[task], outcome: "error", latencyMs: Date.now() - started, error: err.message });
+		telemetry.recordCall({ task: logAs, endpointId, tier: endpoint.tier, model: endpoint.models[task], outcome: "error", latencyMs: Date.now() - started, error: err.message });
 		throw err;
 	}
 }
