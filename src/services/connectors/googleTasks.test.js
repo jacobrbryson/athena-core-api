@@ -147,3 +147,23 @@ describe("delete_google_task", () => {
 		await expect(action.normalize({ task_id: "zzz" }, ctx)).rejects.toThrow(/isn't on/);
 	});
 });
+
+describe("Tasks card checkbox (direct actions)", () => {
+	const tick = actions.get("complete_google_task");
+	const reopen = actions.get("reopen_google_task");
+
+	test("are direct only and never standing", () => {
+		expect(tick).toMatchObject({ direct: true, standing: false, provider: "google_tasks" });
+		expect(reopen).toMatchObject({ direct: true, standing: false });
+		expect(actions.ACTIONS.some((a) => a.id === "complete_google_task")).toBe(false);
+	});
+
+	test("tick finds the task on its list and completes it; refuses one already done", async () => {
+		const p = await tick.normalize({ task_id: "t1", task_list: "L1" }, ctx);
+		expect(p).toEqual({ task_id: "t1", list_id: "L1", list_title: "My Tasks", title: "Call the dentist" });
+		await tick.execute(7, p);
+		expect(http.providerRequest).toHaveBeenCalledWith(7, "google_tasks", "/lists/L1/tasks/t1", { method: "PATCH", body: { status: "completed" } });
+		await expect(reopen.normalize({ task_id: "t1" }, ctx)).rejects.toThrow(/already open/);
+		await expect(tick.normalize({ task_id: "zzz" }, ctx)).rejects.toThrow(/isn't on/);
+	});
+});

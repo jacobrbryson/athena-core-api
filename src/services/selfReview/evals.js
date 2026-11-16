@@ -146,7 +146,7 @@ async function visionCase() {
  * Run the suite against every endpoint that supports each case's task.
  * Returns { endpoints: { [id]: { tier, passed, total, passRate, avgLatencyMs, failures[] } } }.
  */
-async function runEvals({ onlyEndpoints } = {}) {
+async function runEvals({ onlyEndpoints, source = "nightly" } = {}) {
 	const all = cases();
 	const vision = await visionCase();
 	if (vision) all.push(vision);
@@ -156,7 +156,7 @@ async function runEvals({ onlyEndpoints } = {}) {
 		for (const endpoint of llm.endpointsFor(c.task)) {
 			if (onlyEndpoints && !onlyEndpoints.includes(endpoint.id)) continue;
 			const r = (results[endpoint.id] ||= { tier: endpoint.tier, passed: 0, total: 0, latencies: [], failures: [], bySuite: {} });
-			const s = (r.bySuite[c.suite] ||= { passed: 0, total: 0 });
+			const s = (r.bySuite[c.suite] ||= { passed: 0, total: 0, model: endpoint.models?.[c.task] || null });
 			r.total += 1;
 			s.total += 1;
 			try {
@@ -178,7 +178,14 @@ async function runEvals({ onlyEndpoints } = {}) {
 		r.avgLatencyMs = r.latencies.length ? Math.round(r.latencies.reduce((a, b) => a + b, 0) / r.latencies.length) : null;
 		delete r.latencies;
 	}
-	return { endpoints: results, cases: all.map((c) => ({ suite: c.suite, id: c.id, task: c.task })) };
+	const run = { endpoints: results, cases: all.map((c) => ({ suite: c.suite, id: c.id, task: c.task })) };
+	// The router's evidence for letting a local model answer first.
+	try {
+		require("../llm/evalStore").record(run, { source });
+	} catch (err) {
+		console.warn("[evals] could not store results:", err?.message || err);
+	}
+	return run;
 }
 
 module.exports = { runEvals, cases, isValidReply, DONT_REMEMBER };

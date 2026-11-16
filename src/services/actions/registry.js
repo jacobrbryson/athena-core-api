@@ -372,6 +372,16 @@ async function projectSession(ctx, row, { on, step, timeZone, pastOnly = false }
 	return list[0];
 }
 
+/** A task on the person's own Google Tasks lists, in the expected done state, or refused. */
+async function ownGoogleTask(profileId, raw, wantDone) {
+	const taskId = str(raw.task_id, 200);
+	if (!profileId || !taskId) throw invalid("Which task? A task_id is required");
+	const task = await googleTasks.findTask(profileId, taskId, str(raw.task_list, 200));
+	if (!task) throw invalid("That task isn't on your Google Tasks");
+	if (task.done !== wantDone) throw invalid(wantDone ? "That task is already open" : "That task is already done");
+	return { task_id: task.id, list_id: task.list_id, list_title: task.list, title: task.title };
+}
+
 const ACTIONS = [
 	require('./workspaceReview'),
 	...require('../workItems/actions'),
@@ -3106,6 +3116,51 @@ const DIRECT_ACTIONS = [
 			} catch (err) {
 				throw choreWriteError(err);
 			}
+		},
+	},
+	// The Tasks card's checkbox and its Undo (owner, 2026-11-13), the same
+	// pattern as the chore checkbox above: the click is the decision. Only a
+	// task found on the person's own lists, in the state the click expects.
+	{
+		id: "complete_google_task",
+		label: "Tick off a Google Task",
+		provider: "google_tasks",
+		consentType: "action_authority",
+		reversible: true,
+		standing: false,
+		direct: true,
+		describe: "Tick off one of their own Google Tasks (the Tasks card checkbox).",
+		params: { task_id: "The Google Tasks task id.", task_list: "The task's list id." },
+		sameAs: false,
+		async normalize(raw = {}, ctx = {}) {
+			return ownGoogleTask(ctx.profileId, raw, false);
+		},
+		summarize(p) {
+			return `Tick off "${p.title}" in Google Tasks`.slice(0, 500);
+		},
+		async execute(profileId, params) {
+			return googleTasks.updateTask(profileId, { task_id: params.task_id, list_id: params.list_id, done: true });
+		},
+	},
+	{
+		id: "reopen_google_task",
+		label: "Undo ticking off a Google Task",
+		provider: "google_tasks",
+		consentType: "action_authority",
+		reversible: true,
+		standing: false,
+		direct: true,
+		describe: "Reopen one of their own Google Tasks (the Tasks card's Undo).",
+		params: { task_id: "The Google Tasks task id.", task_list: "The task's list id." },
+		sameAs: false,
+		async normalize(raw = {}, ctx = {}) {
+			return ownGoogleTask(ctx.profileId, raw, true);
+		},
+		summarize(p) {
+			return `Reopen "${p.title}" in Google Tasks`.slice(0, 500);
+		},
+		async execute(profileId, params) {
+			return googleTasks.updateTask(profileId, { task_id: params.task_id, list_id: params.list_id, done: false });
 		},
 	},
 	{

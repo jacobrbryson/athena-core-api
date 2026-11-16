@@ -19,8 +19,11 @@ const allowed = profileId => new Set(authorizedProfileIds()).has(String(profileI
 function bridgeDispatcher(root) {
   const proxy = process.env.EUFY_TAILSCALE_HTTP_PROXY;
   if (!proxy) return undefined;
-  // The proxy is local to the Cloud Run container. Keep its use scoped to the
-  // one HTTPS tailnet destination, never to other provider or model traffic.
+  // The proxy is local to the Cloud Run container. Keep this agent's use
+  // scoped to the one HTTPS tailnet destination. Since 2026-11-14 (owner) the
+  // only other traffic allowed through the same proxy is the desktop Ollama
+  // fallback, which has its own agent and checks in llm/adapters/openaiCompat.js
+  // — never Gemini, OpenAI or any other provider.
   if (root.protocol !== 'https:' || !root.hostname.endsWith('.ts.net') || proxy !== 'http://127.0.0.1:1055') throw new Error('invalid_tailnet_config');
   if (!tailnetProxy) tailnetProxy = new ProxyAgent(proxy);
   return tailnetProxy;

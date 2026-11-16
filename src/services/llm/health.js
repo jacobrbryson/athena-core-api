@@ -18,12 +18,41 @@
  * models (that was 2026-09-27: probe green every minute, every chat 60s late).
  * It closes the way it should: the cooldown lapses, one real call goes through
  * (half-open), and it succeeds.
+ *
+ * A spent quota is the other failure that deserves its own rule (2026-11, when
+ * Gemini ran out and most of the app went with it). "You have exceeded your
+ * quota" is not going to change in 30 seconds, so retrying on the normal
+ * backoff only makes every chat wait on a refusal before the next tier
+ * answers. One quota error opens the circuit for LLM_QUOTA_COOLDOWN_MS (an
+ * hour by default); after that a single real call checks whether it is back.
+ * A per-minute rate limit (429 without quota/billing wording) opens it for the
+ * normal cooldown instead — that one does clear quickly.
  */
 
 const FAILURE_THRESHOLD = 3;
 const BASE_COOLDOWN_MS = 30_000;
 const MAX_COOLDOWN_MS = 5 * 60_000;
 const EWMA_ALPHA = 0.2;
+const quotaCooldownMs = () => {
+	const v = Number(process.env.LLM_QUOTA_COOLDOWN_MS);
+	return Number.isFinite(v) && v > 0 ? v : 60 * 60_000;
+};
+
+/**
+ * What kind of failure this was: quota | rate_limit | timeout | auth | error.
+ * Gemini's SDK sets `status` (429 + RESOURCE_EXHAUSTED); the OpenAI-compatible
+ * adapter puts "HTTP <code>" in the message (OpenAI's spent credit is a 429
+ * `insufficient_quota`).
+ */
+function classify(error) {
+	const msg = String(error?.message || error || "");
+	const status = Number(error?.status || error?.code) || Number(msg.match(/HTTP (\d{3})/)?.[1]) || null;
+	if (/RESOURCE_EXHAUSTED|quota|insufficient_quota|billing|credit balance|exceeded your current/i.test(msg)) return "quota";
+	if (status === 429 || /rate.?limit|too many requests/i.test(msg)) return "rate_limit";
+	if (isTimeout(error)) return "timeout";
+	if (status === 401 || status === 403 || /unauthori[sz]ed|permission denied|invalid api key/i.test(msg)) return "auth";
+	return "error";
+}
 
 const state = new Map(); // endpointId -> health record
 
@@ -58,6 +87,7 @@ function reportSuccess(id, latencyMs, now = Date.now()) {
 	h.openUntil = 0;
 	h.trips = 0;
 	h.openedByTimeout = false;
+	h.openReason = null;
 	h.lastOkAt = now;
 	h.errorRate = h.errorRate * (1 - EWMA_ALPHA);
 	if (Number.isFinite(latencyMs)) {
@@ -76,17 +106,27 @@ function isTimeout(error) {
 
 function reportFailure(id, error, now = Date.now()) {
 	const h = record(id);
-	const timedOut = isTimeout(error);
+	const kind = classify(error);
+	const timedOut = kind === "timeout";
 	h.calls += 1;
 	h.consecutiveFailures += 1;
 	h.lastErrorAt = now;
 	h.lastError = String(error?.message || error || "unknown").slice(0, 300);
+	h.lastErrorKind = kind;
 	h.errorRate = h.errorRate * (1 - EWMA_ALPHA) + EWMA_ALPHA;
-	if (timedOut || h.consecutiveFailures >= FAILURE_THRESHOLD) {
+	if (kind === "quota") {
+		h.trips += 1;
+		h.openUntil = now + quotaCooldownMs();
+		h.openedByTimeout = false;
+		h.openReason = "quota";
+		h.openedAt = now;
+	} else if (timedOut || kind === "rate_limit" || h.consecutiveFailures >= FAILURE_THRESHOLD) {
 		const cooldown = Math.min(MAX_COOLDOWN_MS, BASE_COOLDOWN_MS * 2 ** h.trips);
 		h.trips += 1;
 		h.openUntil = now + cooldown;
 		h.openedByTimeout = timedOut;
+		h.openReason = kind === "error" ? "errors" : kind;
+		h.openedAt = now;
 	}
 }
 
@@ -107,6 +147,9 @@ function snapshot(now = Date.now()) {
 		available: h.openUntil <= now,
 		circuit: h.openUntil > now ? "open" : "closed",
 		openedByTimeout: h.openUntil > now && !!h.openedByTimeout,
+		openReason: h.openUntil > now ? h.openReason || "errors" : null,
+		openedAt: h.openUntil > now ? h.openedAt || null : null,
+		lastErrorKind: h.lastErrorKind || null,
 		reopensInMs: Math.max(0, h.openUntil - now),
 		latencyMs: h.latencyMs == null ? null : Math.round(h.latencyMs),
 		errorRate: Math.round(h.errorRate * 100) / 100,
@@ -129,6 +172,8 @@ module.exports = {
 	reportFailure,
 	reportProbeOk,
 	isTimeout,
+	classify,
+	quotaCooldownMs,
 	snapshot,
 	reset,
 };

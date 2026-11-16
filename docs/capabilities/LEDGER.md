@@ -1,5 +1,9 @@
 # Capability ledger
 
+- 2026-11-14 — Property's summary metrics are now buttons: Property health and Active issues open Issues, Open projects opens Projects, Open concerns opens the Concerns tab, and Done this month opens Projects filtered to Done. Concerns no longer colour or appear on the Home dashboard's Property card (only open issues do), and the Open concerns metric is uncoloured. The Home Property card now answers whether the property is secure (the Guardian sweep's Secure / Needs attention / Couldn't verify, or each open incident) and whether there are open issues. Not deployed yet — `property.md` (status: live)
+
+- 2026-11-13 — Tasks card on Home, beside Your day: your open Google Tasks, overdue and soonest-due first, with a checkbox that ticks one off in Google Tasks (and Undo), and Open Google Tasks. Not deployed yet — `google-tasks.md` (status: partial)
+
 - 2026-11-12 — Google Tasks in Connected apps (a Tasks row on the Google card, and asked at sign-in): I read your task lists and, on a card you approve, add, tick off, rename, re-date, add notes to or delete a task. New add_google_task, update_google_task and delete_google_task actions. Needs the Tasks API enabled and the tasks scope on the consent screen; not deployed yet — `google-tasks.md` (status: partial)
 
 - 2026-11-11 — Speaking through a house camera from chat: ask me to say something through the doorbell, driveway or back yard camera and I put the camera and the exact words on a card. It plays in my voice once you approve. New say_through_camera action. Not deployed yet, and talkback hasn't been tried on the real cameras — `camera-voice.md` (status: partial)
@@ -774,3 +778,7 @@ See [`README.md`](README.md) for the full contract.
 - 2026-11-12 — Family Edit is now a side drawer with Details, Connections, Health and Memory tabs, a camera button on the picture and a relationship list — `companion-dashboard.md` (status: partial)
 
 - 2026-11-12 — Catching Athena up on someone (the Family card's Update button, or just telling her news) saves to that person's memory on the same turn; she asks which person when two fit — `memories.md` (status: live)
+
+- 2026-11-13 — Sprint Progress on a workspace dashboard and the Dashboard Work section: story points done/in progress/not started vs 64 for you, the team average and each developer, who is behind, and PRs reviewed vs created — `sprint-progress.md` (status: partial)
+- 2026-11-13 — Sprint Progress now counts only the Red team (Jira Team field or red-team label); says so when it can't find one — `sprint-progress.md` (status: partial)
+- 2026-11-14 — Backup models and outages: Gemini out of quota or down → she keeps answering on the desktop's Ollama (over Tailscale, behind a token gate) or OpenAI, with an outage banner for everyone, a BACKUP mark on the brain pill and on replies; the "smart" policy lets the desktop answer first only where its evals match Gemini's; owner-only System → Models tab with routing stats, eval scorecard, outages, drills (one request or the whole server, max 30 min), decision preview, side-by-side and desktop ping — `model-fallback.md` (status: partial)

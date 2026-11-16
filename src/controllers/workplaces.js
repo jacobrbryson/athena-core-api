@@ -42,8 +42,21 @@ async function dashboard(req, res) {
   }
 }
 
+/** The open sprint's story points per developer and PRs reviewed vs created. `:uuid` may be `primary`. */
+async function sprint(req, res) {
+  res.set('Cache-Control', 'no-store');
+  const actor = await requireAdultActor(req, res);
+  if (!actor) return;
+  try {
+    return res.json(await require('../services/workspaceSprint').read(actor.profileId, req.params.uuid));
+  } catch (err) {
+    return fail(res, err);
+  }
+}
+
 module.exports = {
   dashboard,
+  sprint,
   list: handler(async () => null),
   save: handler(async (profileId, req) => ({ workplace: await workplaces.save(profileId, { ...(req.body || {}), uuid: undefined }) })),
   update: handler(async (profileId, req) => ({ workplace: await workplaces.save(profileId, { ...(req.body || {}), uuid: req.params.uuid }) })),

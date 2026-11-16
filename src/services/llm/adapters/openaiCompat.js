@@ -79,6 +79,32 @@ async function resolveKey(endpoint) {
 	return (await require("../../secrets").getSecret(endpoint.apiKeySecret)) || "";
 }
 
+/**
+ * The tailnet route to a home model box (owner-authorized 2026-11-14: Ollama
+ * on the desktop as the fallback when the cloud models are down).
+ *
+ * Cloud Run reaches the tailnet only through tailscaled's local HTTP proxy
+ * (tailscale-start.sh). Only an endpoint config.js marked `tailnet` gets it,
+ * and only for a fixed https *.ts.net base URL — re-checked here, since this
+ * is the code that opens the connection. The model never picks an address.
+ * No other provider traffic (Gemini, OpenAI) goes through the proxy.
+ */
+const TAILNET_PROXY = "http://127.0.0.1:1055";
+let tailnetAgent;
+
+function dispatcherFor(endpoint) {
+	if (!endpoint.tailnet || endpoint.tailnet === "direct") return undefined;
+	const url = new URL(endpoint.baseUrl);
+	if (endpoint.tailnet !== TAILNET_PROXY || url.protocol !== "https:" || !url.hostname.endsWith(".ts.net")) {
+		throw new Error(`${endpoint.id}: invalid tailnet configuration`);
+	}
+	if (!tailnetAgent) {
+		const { ProxyAgent } = require("undici");
+		tailnetAgent = new ProxyAgent(TAILNET_PROXY);
+	}
+	return tailnetAgent;
+}
+
 async function post(endpoint, path, body, timeoutMs) {
 	await require("../../../security/access").assertModelAccess();
 	const apiKey = await resolveKey(endpoint);
@@ -93,6 +119,8 @@ async function post(endpoint, path, body, timeoutMs) {
 			},
 			body: JSON.stringify(body),
 			signal: controller.signal,
+			redirect: "error",
+			dispatcher: dispatcherFor(endpoint),
 		});
 		if (!res.ok) {
 			const detail = await res.text().catch(() => "");
@@ -219,6 +247,8 @@ async function probe(endpoint) {
 		const res = await fetch(`${endpoint.baseUrl}/models`, {
 			headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
 			signal: controller.signal,
+			redirect: "error",
+			dispatcher: dispatcherFor(endpoint),
 		});
 		if (!res.ok) throw new Error(`HTTP ${res.status}`);
 		const data = await res.json().catch(() => ({}));
@@ -229,4 +259,4 @@ async function probe(endpoint) {
 }
 
 module.exports = {
-	toStrictSchema, generate, embed, image, probe, toMessages, cleanOutput };
+	toStrictSchema, generate, embed, image, probe, toMessages, cleanOutput, dispatcherFor };

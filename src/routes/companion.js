@@ -86,6 +86,7 @@ router.get('/dashboard/workplaces', requireAuth, require('../controllers/workpla
 router.post('/dashboard/workplaces', requireAuth, express.json({ limit: '2kb' }), require('../controllers/workplaces').save);
 router.patch('/dashboard/workplaces/:uuid', requireAuth, express.json({ limit: '2kb' }), require('../controllers/workplaces').update);
 router.get('/dashboard/workplaces/:uuid/dashboard', requireAuth, require('../controllers/workplaces').dashboard);
+router.get('/dashboard/workplaces/:uuid/sprint', requireAuth, require('../controllers/workplaces').sprint);
 router.get('/dashboard/workplaces/:uuid/review-settings', requireAuth, require('../controllers/workspaceReviews').settings);
 router.patch('/dashboard/workplaces/:uuid/review-settings', requireAuth, express.json({ limit: '2kb' }), require('../controllers/workspaceReviews').saveSettings);
 router.get('/dashboard/workplaces/:uuid/repository-review', requireAuth, require('../controllers/workspaceReviews').criteria);
@@ -211,6 +212,19 @@ router.get("/llm/status", requireAuthOrDevice, companion.llmStatus);
 // The Brain panel's "what I almost said": the caller's own turns only.
 router.get("/llm/monologue", requireAuth, companion.llmMonologue);
 router.post("/llm/device-report", requireAuthOrDevice, companion.deviceReport);
+
+// The Models tab's stats and test tools. Owner only (checked in the controller).
+const llmLab = require("../controllers/llmLab");
+router.get("/llm/lab", requireAuth, llmLab.overview);
+router.get("/llm/lab/stats", requireAuth, llmLab.stats);
+router.get("/llm/lab/evals", requireAuth, llmLab.evals);
+router.post("/llm/lab/evals", requireAuth, llmLab.runEvalsNow);
+router.get("/llm/lab/preview", requireAuth, llmLab.preview);
+router.get("/llm/lab/ping", requireAuth, llmLab.ping);
+router.post("/llm/lab/drill/test", requireAuth, express.json({ limit: "4kb" }), llmLab.drillTest);
+router.post("/llm/lab/drill/server", requireAuth, express.json({ limit: "1kb" }), llmLab.serverDrillStart);
+router.delete("/llm/lab/drill/server", requireAuth, llmLab.serverDrillStop);
+router.post("/llm/lab/compare", requireAuth, express.json({ limit: "4kb" }), llmLab.compare);
 
 // Where to reach a handset. Device-authenticated: only the device knows its
 // own registration, and revoking the device revokes this with it.

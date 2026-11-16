@@ -18,7 +18,9 @@
  *   LLM_ORCWOOD_ENDPOINTS  JSON array of endpoints, e.g.
  *     [{"id":"orcwood-1","baseUrl":"http://10.0.0.5:11434/v1",
  *       "models":{"chat":"qwen3:8b","vision":"qwen2.5vl:7b","embed":"nomic-embed-text"}}]
- *   LLM_POLICY             local-first (default) | frontier-first | frontier-only
+ *   LLM_POLICY             local-first (default) | frontier-first | frontier-only |
+ *                          smart (local answers first only where it has proved
+ *                          itself — see preference.js; production runs this)
  *   LLM_CHILD_POLICY       policy for child-profile sessions (default frontier-first:
  *                          hosted models carry stronger safety tuning for kids)
  *   LLM_EMBED_MODEL        "<endpointId>:<model>" naming the ONE active embedding
@@ -40,7 +42,32 @@
 
 const GEMINI_CHAT_MODEL = "gemini-3.5-flash-lite";
 
-const POLICIES = new Set(["local-first", "frontier-first", "frontier-only"]);
+const POLICIES = new Set(["local-first", "frontier-first", "frontier-only", "smart"]);
+
+// The one tailnet proxy Cloud Run runs (tailscale-start.sh). An endpoint may
+// route through it only to a fixed https *.ts.net address the owner configured.
+const TAILNET_PROXY = "http://127.0.0.1:1055";
+
+function tailnetFor(e, baseUrl) {
+	if (e.viaTailnet !== true) return null;
+	let url;
+	try {
+		url = new URL(baseUrl);
+	} catch {
+		return null;
+	}
+	if (url.protocol !== "https:" || !url.hostname.endsWith(".ts.net") || url.username || url.password) {
+		console.warn(`[llm] endpoint ${e.id || "?"} asks for the tailnet but ${baseUrl} is not an https *.ts.net address — ignoring the endpoint`);
+		return false;
+	}
+	const proxy = process.env.LLM_TAILSCALE_HTTP_PROXY || "";
+	if (proxy && proxy !== TAILNET_PROXY) {
+		console.warn(`[llm] LLM_TAILSCALE_HTTP_PROXY must be ${TAILNET_PROXY} — ignoring the endpoint`);
+		return false;
+	}
+	// No proxy set (local dev on the tailnet itself): connect directly.
+	return proxy || "direct";
+}
 
 // Tasks the router understands. A `pinned` task never leaves that tier because
 // the other tiers can't do it (yet).
@@ -88,12 +115,24 @@ function parseJsonEnv(name, fallback) {
 function normalizeEndpoint(e, index) {
 	if (!e || typeof e !== "object" || typeof e.baseUrl !== "string") return null;
 	const models = e.models && typeof e.models === "object" ? e.models : {};
+	const baseUrl = e.baseUrl.replace(/\/$/, "");
+	const tailnet = tailnetFor(e, baseUrl);
+	if (tailnet === false) return null;
 	return {
 		id: typeof e.id === "string" && e.id.trim() ? e.id.trim() : `orcwood-${index + 1}`,
 		tier: "orcwood",
 		kind: "openai",
-		baseUrl: e.baseUrl.replace(/\/$/, ""),
+		baseUrl,
 		apiKey: typeof e.apiKey === "string" ? e.apiKey : "",
+		// The gate token for a tunnelled box, read from Secret Manager at call
+		// time (same resolver as OpenAI's key) rather than inlined in env JSON.
+		apiKeySecret: typeof e.apiKeySecret === "string" && /^[A-Z][A-Z0-9_]{2,63}$/.test(e.apiKeySecret) ? e.apiKeySecret : null,
+		// "http://127.0.0.1:1055" (Cloud Run's tailnet proxy), "direct", or null.
+		tailnet: tailnet || null,
+		// How much prompt the model's context window takes before answers
+		// degrade (Ollama: set OLLAMA_CONTEXT_LENGTH to match). The smart
+		// policy sends bigger prompts to the frontier first.
+		maxInputChars: Number(e.maxInputChars) > 0 ? Number(e.maxInputChars) : 24000,
 		// Per-task model names. `chat` doubles as the default for json/extract/review.
 		models: {
 			chat: models.chat || null,

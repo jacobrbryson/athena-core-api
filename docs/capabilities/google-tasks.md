@@ -27,14 +27,22 @@ I can also manage them, always on a card you approve first:
 Adding a task can be put on a standing approval if you'd rather I just do it;
 changes and deletions always ask.
 
+Your open tasks are also on the **Home** dashboard, on the **Tasks** card beside
+**Your day**: overdue and soonest-due first, with the list each is on. Tick the
+box beside one and it's ticked off in Google Tasks right away (the tick is
+your approval); **Undo** reopens it for a moment afterwards.
+
 ## Where to find it
 
 When you sign in with Google, Google's approval screen asks for Gmail,
 Calendar, Contacts and Tasks together. Leave Tasks ticked and it's connected.
 
 If you unticked it, the **⋯ menu in the top right corner** → **Connected
-apps** → the **Google** card → the **Tasks** row → **Connect**. To turn it off,
-the same row has **Off**.
+apps** → the **Google** card → the **Tasks** row → **Connect**, or the
+**Connect** button on the Tasks card on Home. To turn it off, the Tasks row
+has **Off**.
+
+The Tasks card's **Open Google Tasks** button opens Google Tasks itself.
 
 ## When it doesn't work
 
@@ -73,6 +81,12 @@ the same row has **Off**.
   (standing allowed, refuses a duplicate open title on that list),
   `update_google_task` and `delete_google_task` (never standing; both look
   the task up on the person's own lists via `findTask` before a card exists).
+- Tasks card on Home: `getDashboard` in `src/services/dashboard.js` (`tasks`
+  source, up to 50 open tasks), card `tasks` in `src/services/dashboardPriority.js`
+  and `../../../companion/src/components/Dashboard.tsx` (after calendar), list
+  in `../../../companion/src/components/TasksCard.tsx`. The checkbox and Undo
+  are direct actions `complete_google_task` / `reopen_google_task`
+  (DIRECT_ACTIONS, `POST /actions/direct/:id`), never offered to the model.
 - UI: Tasks row on the Google card in
   `../../../companion/src/components/IntegrationsPanel.tsx`; line in
   `../../../companion/src/components/KnowsPanel.tsx`.

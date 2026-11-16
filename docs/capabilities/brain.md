@@ -35,7 +35,9 @@ wrong with it, what I searched and what I sent instead.
 
 The **⋯ menu in the top right corner** → **Brain**, or tap the small brain pill
 in the top bar next to the menu. It's read-only — a window into how I'm
-working, not a control panel.
+working, not a control panel. When I'm running on a backup model the pill says
+**BACKUP** and the panel says why; **Details, stats and test tools** at the
+bottom of the panel opens **System → Models** (see Backup models and outages).
 
 ## When it doesn't work
 

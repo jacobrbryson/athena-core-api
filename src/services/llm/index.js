@@ -37,7 +37,7 @@ async function generateJson({ check, ...opts }) {
 			return null;
 		},
 	});
-	return { data: parsed, endpointId: result.endpointId, tier: result.tier, model: result.model };
+	return { data: parsed, endpointId: result.endpointId, tier: result.tier, model: result.model, fallback: !!result.fallback, why: result.why || null };
 }
 
 module.exports = {
@@ -54,6 +54,9 @@ module.exports = {
 	decide: router.decide,
 	status: router.status,
 	servingTier: router.servingTier,
+	preview: router.preview,
+	outage: router.outage,
+	pingLocal: router.pingLocal,
 	startHealthLoop: router.startHealthLoop,
 	manifest: buildManifest,
 	reload: router.reload,

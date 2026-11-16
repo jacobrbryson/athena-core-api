@@ -38,6 +38,10 @@ function models() {
   const calls = (status.recentCalls || []).filter((c) => c.task !== 'eval');
   const failed = calls.filter((c) => c.outcome !== 'ok').length;
   const where = `${chat.model} (${chat.tier})`;
+  // A known outage (Gemini out of quota, a drill) says more than error rates.
+  if (status.outage?.level === 'degraded' && status.outage.message) {
+    return { id: 'models', label: 'Models', status: 'degraded', detail: status.outage.message };
+  }
   if (endpoint?.health?.calls > 0 && endpoint.health.errorRate > FAILING_SHARE) {
     return { id: 'models', label: 'Models', status: 'degraded', detail: `Chat is on ${where}, which is failing ${Math.round(endpoint.health.errorRate * 100)}% of calls.` };
   }

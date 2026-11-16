@@ -128,4 +128,4 @@ async function read(profileId, workplaceUuid) {
 	return { pullRequests: pulls, epics: epicList };
 }
 
-module.exports = { read };
+module.exports = { read, credentialFor };

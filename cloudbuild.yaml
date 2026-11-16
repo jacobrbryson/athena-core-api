@@ -50,7 +50,7 @@ steps:
       # needs must be listed here. Anything set out-of-band with `gcloud run
       # services update` is wiped by the next deploy — which is exactly how the
       # OAuth connector callback broke once already.
-      - "--set-env-vars=^|^GCP_PROJECT_ID=$PROJECT_ID|DB_HOST=$_DB_HOST|DB_USER=$_DB_USER|DB_NAME=$_DB_NAME|RECAPTCHA_PROJECT_ID=$_RECAPTCHA_PROJECT_ID|RECAPTCHA_SITE_KEY=$_RECAPTCHA_SITE_KEY|FAMILY_CHORES_ADMIN_ROLES=$_FAMILY_CHORES_ADMIN_ROLES|PUBLIC_API_BASE_URL=$_PUBLIC_API_BASE_URL|OAUTH_GOOGLE_CALLBACK_URL=$_OAUTH_GOOGLE_CALLBACK_URL|INTEGRATION_REDIRECT_ALLOWLIST=$_INTEGRATION_REDIRECT_ALLOWLIST|FAMILY_CHORES_PARTNER_GOOGLE_ID=$_FAMILY_CHORES_PARTNER_GOOGLE_ID|NEST_DEVICE_ACCESS_PROJECT_ID=$_NEST_DEVICE_ACCESS_PROJECT_ID|NEST_PUBSUB_AUDIENCE=$_NEST_PUBSUB_AUDIENCE|NEST_PUBSUB_SERVICE_ACCOUNT=$_NEST_PUBSUB_SERVICE_ACCOUNT|EUFY_BRIDGE_URL=$_EUFY_BRIDGE_URL|EUFY_AUTHORIZED_PROFILE_IDS=$_EUFY_AUTHORIZED_PROFILE_IDS|EUFY_TAILSCALE_HTTP_PROXY=$_EUFY_TAILSCALE_HTTP_PROXY|GUARDIAN_DISPATCH_AUDIENCE=$_GUARDIAN_DISPATCH_AUDIENCE|GUARDIAN_DISPATCH_SERVICE_ACCOUNTS=$_GUARDIAN_DISPATCH_SA|GUARDIAN_DISPATCH_URL=$_GUARDIAN_DISPATCH_AUDIENCE/internal/guardian/dispatch|GUARDIAN_TASK_SA=$_GUARDIAN_DISPATCH_SA"
+      - "--set-env-vars=^|^GCP_PROJECT_ID=$PROJECT_ID|DB_HOST=$_DB_HOST|DB_USER=$_DB_USER|DB_NAME=$_DB_NAME|RECAPTCHA_PROJECT_ID=$_RECAPTCHA_PROJECT_ID|RECAPTCHA_SITE_KEY=$_RECAPTCHA_SITE_KEY|FAMILY_CHORES_ADMIN_ROLES=$_FAMILY_CHORES_ADMIN_ROLES|PUBLIC_API_BASE_URL=$_PUBLIC_API_BASE_URL|OAUTH_GOOGLE_CALLBACK_URL=$_OAUTH_GOOGLE_CALLBACK_URL|INTEGRATION_REDIRECT_ALLOWLIST=$_INTEGRATION_REDIRECT_ALLOWLIST|FAMILY_CHORES_PARTNER_GOOGLE_ID=$_FAMILY_CHORES_PARTNER_GOOGLE_ID|NEST_DEVICE_ACCESS_PROJECT_ID=$_NEST_DEVICE_ACCESS_PROJECT_ID|NEST_PUBSUB_AUDIENCE=$_NEST_PUBSUB_AUDIENCE|NEST_PUBSUB_SERVICE_ACCOUNT=$_NEST_PUBSUB_SERVICE_ACCOUNT|EUFY_BRIDGE_URL=$_EUFY_BRIDGE_URL|EUFY_AUTHORIZED_PROFILE_IDS=$_EUFY_AUTHORIZED_PROFILE_IDS|EUFY_TAILSCALE_HTTP_PROXY=$_EUFY_TAILSCALE_HTTP_PROXY|GUARDIAN_DISPATCH_AUDIENCE=$_GUARDIAN_DISPATCH_AUDIENCE|GUARDIAN_DISPATCH_SERVICE_ACCOUNTS=$_GUARDIAN_DISPATCH_SA|GUARDIAN_DISPATCH_URL=$_GUARDIAN_DISPATCH_AUDIENCE/internal/guardian/dispatch|GUARDIAN_TASK_SA=$_GUARDIAN_DISPATCH_SA|LLM_POLICY=$_LLM_POLICY|LLM_TAILSCALE_HTTP_PROXY=$_LLM_TAILSCALE_HTTP_PROXY|LLM_ORCWOOD_ENDPOINTS=$_LLM_ORCWOOD_ENDPOINTS"
       - "--memory=1Gi"
 
   # 4. Move the Cloud Run JOBS onto the image this build just deployed.
@@ -148,6 +148,17 @@ substitutions:
   _EUFY_BRIDGE_URL: "https://bt-one.tail91d9bb.ts.net"
   _EUFY_AUTHORIZED_PROFILE_IDS: "1"
   _EUFY_TAILSCALE_HTTP_PROXY: "http://127.0.0.1:1055"
+  # Model routing (services/llm/config.js, preference.js). "smart": Gemini
+  # first, the desktop's Ollama first only where its evals match Gemini's,
+  # and always the fallback when Gemini fails or runs out of quota (owner,
+  # 2026-11-14). The desktop is reached over the same tailnet proxy as the
+  # bridge, to one fixed https *.ts.net address, behind a token gate whose
+  # token the runtime reads from Secret Manager (OLLAMA_GATE_TOKEN). Setup:
+  # ../eufy-bridge/ollama-gate/README.md. With the desktop off, this endpoint
+  # is simply unhealthy and Gemini answers as before.
+  _LLM_POLICY: "smart"
+  _LLM_TAILSCALE_HTTP_PROXY: "http://127.0.0.1:1055"
+  _LLM_ORCWOOD_ENDPOINTS: '[{"id":"desk","baseUrl":"https://bt-one.tail91d9bb.ts.net:8443/v1","viaTailnet":true,"apiKeySecret":"OLLAMA_GATE_TOKEN","timeoutMs":60000,"maxInputChars":36000,"models":{"chat":"qwen2.5:7b-instruct","vision":"qwen2.5vl:7b"}}]'
   # Guardian Engine dispatch (docs/architecture/guardian-engine.md). The
   # athena-incidents job and Cloud Tasks call POST /internal/guardian/dispatch
   # signed as this dedicated account — never the default compute account,

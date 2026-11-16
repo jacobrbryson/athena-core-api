@@ -34,6 +34,8 @@ const CARDS = [
 	// The house (2026-10-13). Placement after the hierarchy is the owner's call.
 	{ id: "home", title: "Home" },
 	{ id: "calendar", title: "Calendar" },
+	// Google Tasks (owner, 2026-11-12), beside the calendar it is planned against.
+	{ id: "tasks", title: "Tasks" },
 	{ id: "mail", title: "Mail" },
 	{ id: "work", title: "Work" },
 	{ id: "news", title: "News & Updates" },
@@ -88,6 +90,8 @@ function describe(summary, pendingCount) {
 	const emailNew = summary?.emailTriage?.data?.newCount ?? null;
 	const strain = latest(summary?.strain?.data)?.day_strain ?? null;
 	const activities = summary?.activity?.data?.activities?.length ?? null;
+	const tasks = summary?.tasks?.data?.tasks || [];
+	const today = new Date().toISOString().slice(0, 10);
 
 	return [
 		{
@@ -98,6 +102,17 @@ function describe(summary, pendingCount) {
 			signals: {
 				eventsNext7Days: events.length,
 				nextTimedEventInMinutes: next ? minutesUntil(next.start) : null,
+			},
+		},
+		{
+			id: "tasks",
+			title: "Tasks",
+			source: status("tasks"),
+			empty: tasks.length === 0,
+			signals: {
+				openTasks: tasks.length,
+				overdue: tasks.filter((t) => t.due && t.due < today).length,
+				dueToday: tasks.filter((t) => t.due === today).length,
 			},
 		},
 		{

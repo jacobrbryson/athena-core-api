@@ -6,7 +6,7 @@ where: the left menu → Property → Add property or Edit property; Report an i
 status: live
 surfaces: [companion]
 audiences: [adult]
-triggers: [property, property map, acreage, aerial image, property health, key areas, property details, report an issue, property issue, something broke, not working, repair, find a pro, hvac, plumbing, leak]
+triggers: [property, property map, concerns, acreage, aerial image, property health, key areas, property details, report an issue, property issue, something broke, not working, repair, find a pro, hvac, plumbing, leak]
 ---
 
 ## What I can do
@@ -35,8 +35,13 @@ image. You can place named areas or structures on the image and draw a boundary.
 Your header photo spans the top of the page, behind the title, controls and
 summary cards above the tabs. The title and description sit beside Ask Athena
 and weather on wider screens; they stack on smaller screens.
-The summary metrics have circular icons: a house for property health, a list
-for open projects, a warning triangle for concerns and a checkmark for completed work.
+The summary metrics are **Property health**, **Active issues**, **Open projects**,
+**Open concerns** and **Done this month**. Each one is a button: health and
+issues open the Issues tab, Open projects opens Projects, Open concerns opens the
+Concerns tab, and Done this month opens Projects filtered to Done. Open concerns is never coloured — many are
+years-long — and concerns don't show on the Home dashboard. The
+**Concerns** tab lists your open home concerns, most serious first, with **Add a
+concern**; tap one to edit it, link projects, or mark it resolved.
 Below **Ask Athena**, I show the hourly weather forecast for your saved property
 address, with highs and lows for the next
 24 hours. It refreshes every 15 minutes while the Property page is open.
@@ -70,7 +75,7 @@ you can tap. Delete a note with its ✕. I see the latest few notes on each open
 issue when we talk.
 The **Active issues** card counts open issues, and Recent activity lists issues
 reported and resolved beside project updates.
-The rounded navigation bar has icons for **Overview**, **Issues**, **Vehicles**, **Taxes**, **Projects**, **Concerns**,
+The rounded navigation bar has icons for **Overview**, **Issues**, **Vehicles**, **Taxes**, **Utilities**, **Security**, **Projects**, **Concerns**,
 **Property Map** and **Seasonal focus**. Selecting a tab replaces the content
 below the bar and highlights the tab in cyan. The selected highlight fills its
 entire segment, following the bar's rounded outer edges. **Overview** shows the

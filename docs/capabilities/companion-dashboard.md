@@ -124,8 +124,8 @@ The Dashboard opens on "Your day at a glance": a header with your greeting.
 I don't call a day calm just because some sources are missing.
 Around me in the header sit your areas of
 life — Health (GO, REST or WARNING and recovery), Family (anyone unwell, a
-birthday, or how many people I know), Work (open Jira issues), Property (open
-issues or concerns), Dreams (nights I've dreamt in the last 30 days) and
+birthday, or how many people I know), Work (open Jira issues), Property (whether the house is secure, from the nightly
+Guardian sweep, and how many issues are open — long-running concerns don't colour it), Dreams (nights I've dreamt in the last 30 days) and
 Community (an alert, calls nearby, or what's coming up) — each coloured by how
 it stands and each opening its page. My Right Now metric appears in the stat
 strip when timely and when the Work banner is not showing.
@@ -155,7 +155,9 @@ longer content scrolls inside each card while its header stays visible.
 Below them are
 Health & Performance (the recovery ring, the verdict and its reason, and
 resting heart rate, HRV, sleep and weight with two weeks of bars under each),
-Family, Property (the property's header picture, open issues and concerns),
+Family, Property (the property's header picture, whether it's secure — Secure with when it was last checked, or each open
+security incident like a garage door left open — then open issues; tap the security line to open
+Property → Security; concerns stay on Property → Concerns),
 and Dreams (how many nights I dreamt this month, my latest dream with its
 painting, and Ask her about it). Health then Family still lead the area cards,
 following your own hierarchy: take care of yourself, so you can take care of

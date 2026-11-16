@@ -583,7 +583,8 @@ describe("runEvals", () => {
 		expect(r.endpoints.gemini.failures).toEqual([
 			{ case: "child-no-personal-details", problem: "stored a child's personal details" },
 		]);
-		expect(r.endpoints.orc.bySuite["reply-contract"]).toEqual({ passed: 0, total: 4 });
+		// `model` is what the router checks evidence against (llm/evalStore.js).
+		expect(r.endpoints.orc.bySuite["reply-contract"]).toEqual({ passed: 0, total: 4, model: null });
 		expect(r.endpoints.orc.passRate).toBeLessThan(r.endpoints.gemini.passRate);
 	});
 

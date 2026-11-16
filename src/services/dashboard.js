@@ -14,6 +14,7 @@ const emailTriage = require('./emailTriage');
 const emailSync = require('./emailSync');
 const familyHealth = require('./familyHealth');
 const keep = require('./connectors/googleKeep');
+const googleTasks = require('./connectors/googleTasks');
 
 const { technicalDetail } = require('./connectors/context');
 
@@ -77,7 +78,7 @@ async function getDashboard(profileId, user) {
     if (health && !healthConsent) return section('consent_required');
     return read(fn);
   }
-  const [calendarData, recovery, sleep, strain, body, familyChores, jira, slack, emailTriageData, familyHealthData, groceries] = await Promise.all([
+  const [calendarData, recovery, sleep, strain, body, familyChores, jira, slack, emailTriageData, familyHealthData, groceries, tasks] = await Promise.all([
     provider('google_calendar', async () => {
       const result = await calendar.collectEvents(profileId, { days: 7, maxResults: 25 });
       const timeZone = calendar.displayTimeZone(result.calendars);
@@ -169,8 +170,21 @@ async function getDashboard(profileId, user) {
         appUrl: 'https://keep.google.com/',
       };
     }),
+    // Google Tasks (owner, 2026-11-12): open tasks on every list, soonest due
+    // first. Ticking one runs the complete_google_task direct action.
+    provider('google_tasks', async () => {
+      const { lists, tasks: open, failed } = await googleTasks.collectTasks(profileId);
+      const sorted = [...open].sort((a, b) => (a.due && b.due ? a.due.localeCompare(b.due) : a.due ? -1 : b.due ? 1 : 0));
+      return {
+        lists: lists.map(l => l.title),
+        tasks: sorted.slice(0, 50).map(t => ({ id: t.id, listId: t.list_id, list: t.list, title: t.title, due: t.due || null, notes: t.notes || null })),
+        total: open.length,
+        unreadableLists: failed,
+        appUrl: 'https://tasks.google.com/',
+      };
+    }),
   ]);
-  const result = { calendar: calendarData, recovery, sleep, strain, body, familyChores, jira, slack, emailTriage: emailTriageData, familyHealth: familyHealthData, groceries };
+  const result = { calendar: calendarData, recovery, sleep, strain, body, familyChores, jira, slack, emailTriage: emailTriageData, familyHealth: familyHealthData, groceries, tasks };
   for (const [id, entry] of snapshots) if (Date.now() - entry.at >= CACHE_TTL_MS) snapshots.delete(id);
   if (snapshots.size >= 128) snapshots.delete(snapshots.keys().next().value);
   snapshots.set(profileId, { at: Date.now(), data: result });

@@ -734,6 +734,9 @@ async function processAiResponse(session, message, clients, ctx = {}) {
             contents: prompt,
             audience: memoryCtx.audience,
             ...(prefer ? { prefer } : {}),
+            // A spoken turn has a tight time budget, so the router only lets
+            // a local model answer it when it has been fast (preference.js).
+            urgency: ctx.companion?.handsFree || ctx.companion?.conversation || ctx.companion?.filler ? "voice" : "interactive",
             // Constrain the model to the reply schema (Gemini structured
             // output) rather than only asking for JSON in the prompt.
             schema: CHAT_SCHEMA,
@@ -748,7 +751,11 @@ async function processAiResponse(session, message, clients, ctx = {}) {
           });
           if (result?.text && candidateReply) {
             endWrite({ attempt, endpoint: result.endpointId || null, tier: result.tier || null, chars: result.text.length });
-            return { reply: candidateReply, endpointId: result.endpointId };
+            return {
+              reply: candidateReply,
+              endpointId: result.endpointId,
+              servedBy: { endpoint_id: result.endpointId || null, tier: result.tier || null, fallback: !!result.fallback, why: result.why || null },
+            };
           }
         } catch (err) {
           console.warn(
@@ -1135,6 +1142,9 @@ async function processAiResponse(session, message, clients, ctx = {}) {
         ...(sources ? { sources } : {}),
         ...(ctx.replyTo ? { reply_to_uuid: ctx.replyTo } : {}),
         ...(proposal ? { action_uuid: proposal.uuid, action: proposal } : {}),
+        // Which model wrote this and why (live socket only), so the chat can
+        // mark a reply that came from a fallback during an outage.
+        ...(drafted?.servedBy ? { served_by: drafted.servedBy } : {}),
       },
     });
 
