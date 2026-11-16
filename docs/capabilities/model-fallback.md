@@ -12,7 +12,9 @@ triggers: [outage, out of quota, quota, backup model, fallback, gemini down, gem
 ## What I can do
 
 I run on more than one model. My main one is Gemini in the cloud; the backups
-are a model on the owner's desktop computer and, when it's set up, OpenAI.
+are OpenAI (a small, inexpensive model) and a model on the owner's desktop
+computer. Until the desktop has proved itself on my tests, OpenAI takes over
+first and the desktop after it.
 If Gemini fails or runs out of quota, I move to a backup straight away and keep
 answering, and I stop retrying Gemini for about an hour so you aren't kept
 waiting on it.
@@ -62,8 +64,8 @@ check that the desktop is reachable and locked with its token.
 
 ## Limits
 
-- The backup is only as available as the owner's desktop. If it's off, there's
-  no backup unless OpenAI is set up.
+- With the desktop off, OpenAI is the only backup, and it doesn't read photos.
+  If Gemini and OpenAI are both down too, I can't answer until one is back.
 - The desktop model is smaller than Gemini: plainer answers, slower, no voice,
   no web search, no pictures.
 - I don't choose models freely. I can only pick among the ones the owner set up,
