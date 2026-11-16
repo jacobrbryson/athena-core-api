@@ -164,6 +164,22 @@ function toStrictSchema(schema) {
 	return out;
 }
 
+/**
+ * Can OpenAI enforce this schema strictly? Not when it has an object with no
+ * declared properties — the reply schema's proposed_action.params, which each
+ * action shapes for itself and its normalize() checks on the server. Strict
+ * mode refuses such a schema outright (HTTP 400, seen 2026-11-16), so those
+ * calls send the same schema non-strict: the model still follows it, and the
+ * callers validate the reply as they do for every other model.
+ */
+function strictable(schema) {
+	if (!schema || typeof schema !== "object") return true;
+	if (Array.isArray(schema)) return schema.every(strictable);
+	const isObject = schema.type === "object" || (Array.isArray(schema.type) && schema.type.includes("object"));
+	if (isObject && !(schema.properties && Object.keys(schema.properties).length)) return false;
+	return Object.values(schema).every(strictable);
+}
+
 /** Reasoning models (gpt-5*, o-series) reject any temperature but the default. */
 const fixedTemperature = (model) => /^(gpt-5|gpt-6|o\d)/.test(String(model));
 
@@ -175,10 +191,12 @@ async function generate(endpoint, { task, contents, json = true, schema = null, 
 	if (Number.isSafeInteger(maxOutputTokens) && maxOutputTokens > 0) body.max_completion_tokens = maxOutputTokens;
 	if (Number.isFinite(temperature) && !fixedTemperature(model)) body.temperature = temperature;
 	if (json) {
-		body.response_format =
-			schema && endpoint.supportsJsonSchema
-				? { type: "json_schema", json_schema: { name: "athena", schema: toStrictSchema(schema), strict: true } }
-				: { type: "json_object" };
+		if (schema && endpoint.supportsJsonSchema) {
+			const shaped = toStrictSchema(schema);
+			body.response_format = { type: "json_schema", json_schema: { name: "athena", schema: shaped, strict: strictable(shaped) } };
+		} else {
+			body.response_format = { type: "json_object" };
+		}
 	}
 
 	const data = await post(endpoint, "/chat/completions", body);
@@ -259,4 +277,4 @@ async function probe(endpoint) {
 }
 
 module.exports = {
-	toStrictSchema, generate, embed, image, probe, toMessages, cleanOutput, dispatcherFor };
+	toStrictSchema, strictable, generate, embed, image, probe, toMessages, cleanOutput, dispatcherFor };

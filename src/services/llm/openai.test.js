@@ -166,6 +166,42 @@ describe("routing", () => {
 	});
 });
 
+describe("structured chat replies", () => {
+	const endpoint = { id: "openai", tier: "frontier", baseUrl: "https://api.openai.com/v1", apiKey: "sk-test", models: { chat: "gpt-5.4-mini" }, supportsJsonSchema: true, timeoutMs: 30000 };
+	const reply = apiResponse({ choices: [{ message: { content: '{"response":"hi"}' } }] });
+
+	it("is strict when every object declares its fields", async () => {
+		global.fetch.mockResolvedValue(reply);
+		await openaiAdapter.generate(endpoint, { task: "chat", contents: "hi", schema: { type: "object", properties: { response: { type: "string" } }, required: ["response"] } });
+		const fmt = JSON.parse(global.fetch.mock.calls[0][1].body).response_format;
+		expect(fmt.json_schema.strict).toBe(true);
+		expect(fmt.json_schema.schema.additionalProperties).toBe(false);
+	});
+
+	it("sends the real reply schema non-strict, because action params are open", async () => {
+		// Strict mode answered HTTP 400 for proposed_action.params (2026-11-16).
+		global.fetch.mockResolvedValue(reply);
+		// The shape of controllers/prompt.js RESPONSE_SCHEMA (requiring it here
+		// pulls in an ESM dependency jest can't load).
+		const RESPONSE_SCHEMA = { type: "object", properties: {
+			response: { type: "string" },
+			proposed_action: { type: "object", properties: { id: { type: "string" }, params: { type: "object" }, rationale: { type: "string" } }, required: ["id", "params"] },
+		}, required: ["response"] };
+		await openaiAdapter.generate(endpoint, { task: "chat", contents: "hi", schema: RESPONSE_SCHEMA });
+		const fmt = JSON.parse(global.fetch.mock.calls[0][1].body).response_format;
+		expect(fmt.type).toBe("json_schema");
+		expect(fmt.json_schema.strict).toBe(false);
+		expect(fmt.json_schema.schema.properties.response).toBeDefined();
+	});
+
+	it("knows which schemas strict mode can take", () => {
+		expect(openaiAdapter.strictable({ type: "object", properties: { a: { type: "string" } } })).toBe(true);
+		expect(openaiAdapter.strictable({ type: "object", properties: { p: { type: "object" } } })).toBe(false);
+		expect(openaiAdapter.strictable({ type: "object", properties: { p: { type: ["object", "null"] } } })).toBe(false);
+		expect(openaiAdapter.strictable({ type: "array", items: { type: "object", properties: { a: { type: "number" } } } })).toBe(true);
+	});
+});
+
 describe("image generation", () => {
 	const endpoint = {
 		id: "openai",
