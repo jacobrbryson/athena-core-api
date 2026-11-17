@@ -1,5 +1,17 @@
 # Capability ledger
 
+- 2026-11-17 — Home's Open tasks tile now counts your Google Tasks instead of Jira (open, overdue and due today, with a bar split the same way) and jumps to the Tasks card; Next event shows the countdown on its own line and an icon for a meeting, video call, place or calendar block. Not deployed yet — `companion-dashboard.md`, `google-tasks.md` (status: partial)
+
+- 2026-11-17 — Home's metric tiles no longer show "Checked just now" or the reading date; a tile says when it was checked only once its data is behind (Recovery from before today, Calendar and Jira over 30 minutes, the forecast over two hours), in amber. Not deployed yet — `companion-dashboard.md` (status: partial)
+
+- 2026-11-17 — The Home weather tile now shows the next three days beside today's reading (weekday, an icon and the high / low), from the National Weather Service outlook; under the reading on a phone, and a short icon-and-high list on narrower tiles. Not deployed yet — `companion-dashboard.md` (status: partial)
+
+- 2026-11-16 — Home's Recovery and Sleep tiles are now one Recovery & sleep tile: the recovery score, readiness and change, with last night's sleep and % of need on a line under it. Not deployed yet — `companion-dashboard.md` (status: partial)
+
+- 2026-11-16 — Today's Food is now a sidebar instead of a pop-up, from the Health page's Nutrition card and the Home Nutrition tile: the day with arrows, a rings card for calories, protein, carbs and fat against targets with percentages, a full-width Add Food button (was "New record"), then the logged foods with star, edit and remove. Not deployed yet — `training-and-nutrition.md` (status: partial)
+
+- 2026-11-16 — Nutrition tile on Home, in the row of numbers right after Recovery & sleep: today's calories against the calorie target, and rings with a legend for carbs, protein and fat against theirs; tapping it opens the Today food log. Not deployed yet — `training-and-nutrition.md` (status: partial)
+
 - 2026-11-14 — Property's summary metrics are now buttons: Property health and Active issues open Issues, Open projects opens Projects, Open concerns opens the Concerns tab, and Done this month opens Projects filtered to Done. Concerns no longer colour or appear on the Home dashboard's Property card (only open issues do), and the Open concerns metric is uncoloured. The Home Property card now answers whether the property is secure (the Guardian sweep's Secure / Needs attention / Couldn't verify, or each open incident) and whether there are open issues. Not deployed yet — `property.md` (status: live)
 
 - 2026-11-13 — Tasks card on Home, beside Your day: your open Google Tasks, overdue and soonest-due first, with a checkbox that ticks one off in Google Tasks (and Undo), and Open Google Tasks. Not deployed yet — `google-tasks.md` (status: partial)

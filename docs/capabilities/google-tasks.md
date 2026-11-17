@@ -2,7 +2,7 @@
 id: google-tasks
 title: Google Tasks
 summary: I read your Google Tasks lists and, on a card you approve, add, tick off, change or delete a task.
-where: the ⋯ menu (top right) → Connected apps → Google → Tasks → Connect (or approve it when you sign in)
+where: the ⋯ menu (top right) → Connected apps → Google → Tasks → Connect (or approve it when you sign in); Home → the Tasks card and the Open tasks tile
 status: partial
 surfaces: [companion]
 audiences: [adult]

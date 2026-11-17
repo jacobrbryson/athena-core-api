@@ -2,7 +2,7 @@
 id: training-and-nutrition
 title: Training program and nutrition
 summary: I keep your weekly training program and your food log against daily targets, and read both alongside WHOOP and your scale.
-where: Health page → Training Program card (Week N of N) and Nutrition card (Today)
+where: Health page → Training Program card (Week N of N) and Nutrition card (Today); Home → Nutrition tile in the row of numbers
 status: partial
 surfaces: [companion]
 audiences: [adult]
@@ -51,14 +51,25 @@ Open the Health page from the sidebar (or Dashboards in the bottom bar on a phon
   favorites (tap one to log a serving), **Tell Athena** (type what you ate,
   then Log it), **Take a picture** (the food or its
   barcode) or **Manual entry** (name, serving, calories, macros, water, and a
-  "Save to favorites" box). "Today" lists what's logged: the star adds or
-  removes a favorite, the pencil corrects an entry, ✕ removes it. The arrows
-  beside the date page back through past days (never ahead of today) to fix,
-  remove or add to them; **New record** opens the same menu — favorites, Tell Athena, Take a picture and Manual entry — logged to the day shown. Entries from
+  "Save to favorites" box). "Today" opens the Today's Food sidebar on the
+  right (full screen on a phone): the day with arrows, a rings card with
+  calories, protein, carbs and fat against your targets, **Add Food**, then
+  what's logged: the star adds or removes a favorite, the pencil corrects an
+  entry, ✕ removes it. The arrows page back through past days (never ahead of
+  today) to fix, remove or add to them; **Add Food** opens the same menu —
+  favorites, Tell Athena, Take a picture and Manual entry — logged to the day
+  shown. Entries from
   a photo are tagged "Photo estimate", barcode lookups "Barcode", and what you
   told me "Told Athena".
 - **Targets:** the Nutrition card → "Targets" (or "Set a target" under
   Progress).
+- **On Home:** the Nutrition tile in the row of numbers (right after Recovery & sleep) shows
+  today's calories with the calorie target under it (marked with a checkered
+  flag), and rings for carbs, protein
+  and fat (outside in), each listed against its target in grams when the tile
+  has room (hover the rings on a wide screen). Tapping it opens the same
+  Today's Food sidebar as the Health page — log, correct, star or remove food
+  there. It says "No calorie target" until you set targets on the Health page.
 
 ## When it doesn't work
 
@@ -108,7 +119,7 @@ Open the Health page from the sidebar (or Dashboards in the bottom bar on a phon
 - Migration: `db/migrations/0073_training_nutrition.up.sql` — `training_program`, `training_session`, `training_log`, `nutrition_target`, `nutrition_entry`
 - Routes (`src/routes/companion.js`): `GET /api/v1/dashboard/health/plan?today=`, `PUT|DELETE /dashboard/health/program`, `PUT /dashboard/health/program/sessions/:uuid/mark`, `PUT /dashboard/health/targets`, `POST /dashboard/health/nutrition`, `DELETE /dashboard/health/nutrition/:uuid`
 - Chat: `src/controllers/gemini.js` adds the `healthPlan.buildContext` block when `healthPlan.matches(message)`; adults only
-- Frontend: `../../../companion/src/components/HealthPage.tsx` (+ `health.css`), `../../../companion/src/api/healthPlan.ts`; `Dashboard.tsx` HealthPage passes WHOOP/scale data through `SectionPage`'s `hero`
+- Frontend: `../../../companion/src/components/HealthPage.tsx` (+ `health.css`), `../../../companion/src/api/healthPlan.ts`; `Dashboard.tsx` HealthPage passes WHOOP/scale data through `SectionPage`'s `hero`. Home tile: `NutritionStat` in `DashboardHome.tsx` (+ `home.css`), fed by `useHomeExtras`' plan read; opens `TodayFoodLog` exported from `HealthPage.tsx`
 - Food by camera: `src/services/foodScan.js` — barcode read on the phone (`BarcodeDetector`, EAN/UPC) or by the "vision" task from the photo, check digit validated, looked up at `world.openfoodfacts.org/api/v2/product/:code`; otherwise the vision task estimates the plate. Values clamped to the entry bounds; the photo is never stored. `POST /dashboard/health/nutrition/scan` (8 MB body, listed in `server.js`)
 - Tell Athena: `foodScan.describe` — `llm.search` (Google-grounded, frontier, 12 s cap; a failure falls back to an estimate) for the published nutrition, then the "json" task reads one entry's macros out of it; clamped like a scan, `source: "described"` (no migration: `source` is VARCHAR(16)). `POST /dashboard/health/nutrition/describe` (2 KB body, `{ text, eaten_on, today }`). Adults only via `requireAdultActor`.
 - Favorites + corrections (migration `0074_nutrition_favorites`: `nutrition_favorite`, `nutrition_entry.source/serving/barcode`): `GET /dashboard/health/nutrition?date=&today=` (a past day's log), `PATCH /dashboard/health/nutrition/:uuid`, `POST /dashboard/health/favorites`, `DELETE /dashboard/health/favorites/:uuid`, `POST /dashboard/health/favorites/:uuid/log`. An entry is starred when a favorite has its label; correcting a starred entry updates the favorite.

@@ -24,9 +24,10 @@ projects options. It still appears only when there is a timely suggestion or
 an ongoing or imminent event, outside working hours. Close the drawer with
 Escape, the close button or the backdrop.
 
-The top strip shows your latest WHOOP sleep duration and, when available, the
-percentage of the sleep your body asked for. It is separate from Recovery, so
-you can see both how long you slept and how ready your body is. Tap it to open
+The top strip's Recovery & sleep tile shows your WHOOP recovery and, on a line
+under it (with a moon), your latest sleep duration and, when available, the
+percentage of the sleep your body asked for — so one tile tells you both how
+ready your body is and how long you slept. Tap it to open
 Health & Performance. Missing or disconnected sleep data stays clearly marked;
 I do not estimate it.
 
@@ -138,11 +139,18 @@ successful or partial dream. These are dated source records, not a complete
 activity history or a comparison with your last visit. Each opens its area page.
 
 Under the header, a strip of
-tiles: Recovery, today's Gym session from your training plan (or Rest day, or
-No plan), your Next event, Open tasks (Jira),
-and the weather at your home point of interest from the National Weather
-Service. Recovery shows its reading date, Calendar and Jira their check times,
-and weather its forecast check time. Next event has a countdown that moves as
+tiles: Recovery & sleep, Nutrition (today's calories and macros), your Next
+event (with an icon for a meeting, video call, place or plain calendar block), Open tasks
+(your Google Tasks: how many are open, how many overdue or due today, and a bar
+split the same way; tap it to jump to the Tasks card), and the weather at your home point of interest from
+the National Weather Service. A tile only says when it was checked once its
+data is behind, in amber: Recovery when the latest reading is from before today
+("Last reading yesterday"), Next event and Open tasks when they were last
+checked more than 30 minutes ago, and weather when the forecast is more than two
+hours old. The weather tile also shows the next three
+days (an icon and the high / low for each) beside the reading when it has room,
+under it on a phone, and as a short list (icon, weekday and high — or just icon
+and high when it's narrowest; hover for the rest) when the tiles sit six across. Next event has a countdown that moves as
 the clock advances. Then the cards: Your day (the next three days that have
 events in a compact scrollable preview, expandable all-day entries, a Now marker and muted ended calendar events;
 an ended event does not mean you attended), Work (your Jira issues with a tab
