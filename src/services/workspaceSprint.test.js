@@ -128,3 +128,42 @@ describe("read", () => {
 		await expect(sprint.read("p-3", "nope")).rejects.toMatchObject({ status: 404 });
 	});
 });
+
+describe("jiraRedEpics", () => {
+	const json = (body) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+	const key = { kind: "api_key", externalAccountId: "red.atlassian.net", displayName: "me@red.com", accessToken: "t" };
+	const epic = (k, due, team, extra = {}) => ({ key: k, fields: { summary: `Epic ${k}`, status: { name: "In Progress", statusCategory: { key: "indeterminate" } }, project: { name: "Dream" }, duedate: due, labels: [], customfield_10001: team ? { name: team } : null, ...extra } });
+	const kid = (parent, cat, sp) => ({ key: `${parent}-k`, fields: { parent: { key: parent }, status: { statusCategory: { key: cat } }, customfield_10016: sp } });
+
+	beforeEach(() => {
+		global.fetch = jest.fn((url) => {
+			const u = decodeURIComponent(url.replace(/\+/g, " "));
+			if (u.endsWith("/rest/api/3/field")) return json([
+				{ id: "customfield_10016", name: "Story point estimate", schema: { custom: "com.pyxis.greenhopper.jira:jsw-story-points" } },
+				{ id: "customfield_10001", name: "Team", schema: { custom: "com.atlassian.jira.plugin.system.customfieldtypes:atlassian-team" } },
+				{ id: "customfield_10023", name: "Target end", schema: { type: "date" } },
+			]);
+			if (u.includes("issuetype = Epic")) return json({ issues: [
+				epic("DR-1", "2026-12-20", "Red Team"),
+				epic("DR-2", null, "Blue Team"),
+				epic("DR-3", null, null, { customfield_10023: "2026-11-30" }),
+				epic("DR-4", "2026-11-25", null),
+			], isLast: true });
+			if (u.includes("parent in")) return json({ issues: [kid("DR-1", "done", 3), kid("DR-1", "new", 1), kid("DR-3", "done", 0), kid("DR-3", "indeterminate", 0)], isLast: true });
+			return json({});
+		});
+	});
+
+	it("keeps Red's epics (by team, or by the Red sprint's parents), soonest due first, with progress", async () => {
+		const out = await sprint.jiraRedEpics(key, ["DR-3"]);
+		expect(out.error).toBeNull();
+		// D-2 is Blue's; D-4 has no team and no Red work under it.
+		expect(out.items.map((e) => e.key)).toEqual(["DR-3", "DR-1"]);
+		expect(out.items[0]).toMatchObject({ due: "2026-11-30", by: "issues", done: 1, inProgress: 1, total: 2, percent: 50, via: "sprint" });
+		expect(out.items[1]).toMatchObject({ due: "2026-12-20", by: "points", pointsDone: 3, points: 4, percent: 75, via: "team" });
+	});
+
+	it("says when there's no Jira key", async () => {
+		expect(await sprint.jiraRedEpics(null)).toEqual({ items: [], error: "not_connected" });
+	});
+});

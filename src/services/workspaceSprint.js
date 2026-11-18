@@ -24,6 +24,7 @@ const GITHUB = "https://api.github.com";
 const JIRA_HOST = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.atlassian\.net$/i;
 const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
 const FIELD_ID = /^[a-z0-9_]+$/i;
+const ISSUE_KEY = /^[A-Z][A-Z0-9_]+-\d+$/;
 const DAY = 86400000;
 /** The only Jira team the owner cares about (2026-11-13): "I only care about red team members". */
 const TEAM = /\bred\b/i;
@@ -125,7 +126,9 @@ async function jiraFields(host, headers) {
 		.filter((f) => /atlassian-team|teams-plugin|\bteam\b/i.test(f?.schema?.custom || "") || /^team$/i.test(f?.name || ""))
 		.map((f) => f.id)
 		.filter((id) => FIELD_ID.test(id || ""));
-	const value = { sprint: FIELD_ID.test(sprint || "") ? sprint : null, points: [...new Set(points)], team: [...new Set(team)] };
+	// Epics often carry their date in "Target end" (Plans) rather than Jira's own Due date.
+	const targetEnd = list.find((f) => /^target end$/i.test(f?.name || ""))?.id || null;
+	const value = { sprint: FIELD_ID.test(sprint || "") ? sprint : null, points: [...new Set(points)], team: [...new Set(team)], targetEnd: FIELD_ID.test(targetEnd || "") ? targetEnd : null };
 	fieldCache.set(host, { at: Date.now(), value });
 	return value;
 }
@@ -159,7 +162,7 @@ async function jiraSprint(c) {
 	try {
 		const [fields, me] = await Promise.all([jiraFields(host, headers), getJson(`https://${host}/rest/api/3/myself`, headers)]);
 		if (!fields.sprint) return { error: "no_sprint_field" };
-		const wanted = ["summary", "status", "assignee", "labels", fields.sprint, ...fields.points, ...(fields.team || [])].join(",");
+		const wanted = ["summary", "status", "assignee", "labels", "parent", fields.sprint, ...fields.points, ...(fields.team || [])].join(",");
 		const issues = [];
 		let token;
 		for (let page = 0; page < 10; page += 1) {
@@ -206,8 +209,13 @@ async function jiraSprint(c) {
 			if (cat === "done") p.done += sp; else if (cat === "indeterminate") p.inProgress += sp; else p.notStarted += sp;
 			people.set(a.accountId, p);
 		}
+		// What the Red team's sprint work rolls up to, so an epic Jira doesn't mark Red still counts when Red is working it.
+		const redParents = teamFound ? [...new Set(chosen.issues
+			.filter((i) => isRedTeam(i, fields.team || []) || (members.size > 0 && members.has(i.fields?.assignee?.accountId)) || (members.size === 0 && TEAM.test(chosen.sprint.name || "")))
+			.map((i) => i.fields?.parent?.key).filter((k) => ISSUE_KEY.test(k || "")))] : [];
 		const s = chosen.sprint;
 		return {
+			redParents,
 			error: null,
 			sprint: { id: s.id, name: s.name || "Sprint", start: s.startDate || null, end: s.endDate || null, goal: s.goal || null },
 			people: [...people.values()],
@@ -219,6 +227,72 @@ async function jiraSprint(c) {
 	} catch (err) {
 		console.warn("[workspaceSprint] jira unavailable:", err.message);
 		return { error: errorOf(err) };
+	}
+}
+
+/**
+ * The Red team's open epics, soonest due first, with how far along each is (owner, 2026-11-17:
+ * "list epics by due date assigned to the red team and the progress / % complete").
+ * An epic is the Red team's when its Team field or labels say so, or when the Red team's
+ * sprint work rolls up to it. Progress is story points done of total when the children
+ * are pointed, else children done of total. Read-only; the same key as the sprint read.
+ */
+async function jiraRedEpics(c, redParents = []) {
+	if (!c) return { items: [], error: "not_connected" };
+	const host = String(c.externalAccountId || "").toLowerCase();
+	if (c.kind !== "api_key" || !JIRA_HOST.test(host) || !c.displayName) return { items: [], error: "unsupported" };
+	const headers = { Authorization: `Basic ${Buffer.from(`${c.displayName}:${c.accessToken}`).toString("base64")}`, Accept: "application/json" };
+	const search = (jql, fields, token) => getJson(`https://${host}/rest/api/3/search/jql?${new URLSearchParams({ jql, fields, maxResults: "100", ...(token ? { nextPageToken: token } : {}) })}`, headers);
+	const all = async (jql, fields, pages) => {
+		const out = [];
+		let token;
+		for (let page = 0; page < pages; page += 1) {
+			const res = await search(jql, fields, token);
+			out.push(...(res.issues || []));
+			token = res.nextPageToken;
+			if (!token || res.isLast) break;
+		}
+		return out;
+	};
+	try {
+		const fields = await jiraFields(host, headers);
+		const epicFields = ["summary", "status", "project", "duedate", "labels", "assignee", ...(fields.team || []), ...(fields.targetEnd ? [fields.targetEnd] : [])].join(",");
+		const open = await all("issuetype = Epic AND statusCategory != Done ORDER BY duedate ASC", epicFields, 3);
+		const parents = new Set(redParents);
+		const red = open.filter((e) => ISSUE_KEY.test(e.key || "") && (isRedTeam(e, fields.team || []) || parents.has(e.key)));
+		const progress = new Map(red.map((e) => [e.key, { done: 0, inProgress: 0, total: 0, pointsDone: 0, points: 0 }]));
+		for (let i = 0; i < red.length; i += 40) {
+			const keys = red.slice(i, i + 40).map((e) => e.key);
+			const kids = await all(`parent in (${keys.join(",")})`, ["status", "parent", ...fields.points].join(","), 5).catch(() => []);
+			for (const kid of kids) {
+				const p = progress.get(kid.fields?.parent?.key);
+				if (!p) continue;
+				const cat = kid.fields?.status?.statusCategory?.key;
+				const sp = pointsOf(kid, fields.points);
+				p.total += 1; p.points += sp;
+				if (cat === "done") { p.done += 1; p.pointsDone += sp; } else if (cat === "indeterminate") p.inProgress += 1;
+			}
+		}
+		const dueOf = (e) => {
+			const v = e.fields?.duedate || (fields.targetEnd ? e.fields?.[fields.targetEnd] : null);
+			return typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : null;
+		};
+		const items = red.map((e) => {
+			const p = progress.get(e.key);
+			const percent = p.points > 0 ? Math.round((p.pointsDone / p.points) * 100) : p.total ? Math.round((p.done / p.total) * 100) : null;
+			return {
+				key: e.key, title: String(e.fields?.summary || e.key).slice(0, 200), status: e.fields?.status?.name || "",
+				statusCategory: e.fields?.status?.statusCategory?.key || null, project: e.fields?.project?.name || null,
+				due: dueOf(e), owner: e.fields?.assignee?.displayName || null,
+				url: `https://${host}/browse/${encodeURIComponent(e.key)}`,
+				done: p.done, inProgress: p.inProgress, total: p.total, pointsDone: round1(p.pointsDone), points: round1(p.points),
+				percent, by: p.points > 0 ? "points" : "issues", via: isRedTeam(e, fields.team || []) ? "team" : "sprint",
+			};
+		}).sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999") || a.key.localeCompare(b.key));
+		return { items, error: null };
+	} catch (err) {
+		console.warn("[workspaceSprint] jira epics unavailable:", err.message);
+		return { items: [], error: errorOf(err) };
 	}
 }
 
@@ -365,9 +439,11 @@ async function read(profileId, workplaceUuid) {
 		github = await githubCounts(githubKey, jira.people, jira.sprint.start);
 		value = { workplace: { uuid: workspace.uuid, name: workspace.name }, error: null, ...summarize(jira, github) };
 	}
+	// The Red team's epics, read whether or not a sprint is open; their own failure is theirs alone.
+	value.epics = jira.error === "not_connected" || jira.error === "unsupported" ? { items: [], error: jira.error } : await jiraRedEpics(jiraKey, jira.redParents || []);
 	// Failures and GitHub gaps aren't cached, so a fixed key shows on the next load.
-	if (!value.error && !github?.error && !github?.note) cache.set(key, { at: Date.now(), value });
+	if (!value.error && !github?.error && !github?.note && !value.epics.error) cache.set(key, { at: Date.now(), value });
 	return value;
 }
 
-module.exports = { read, statusOf, matchLogin, elapsedFraction, summarize, TARGET_SP };
+module.exports = { read, statusOf, matchLogin, elapsedFraction, summarize, jiraRedEpics, TARGET_SP };

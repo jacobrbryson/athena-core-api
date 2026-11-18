@@ -141,8 +141,9 @@ activity history or a comparison with your last visit. Each opens its area page.
 Under the header, a strip of
 tiles: Recovery & sleep, Nutrition (today's calories and macros), your Next
 event (with an icon for a meeting, video call, place or plain calendar block), Open tasks
-(your Google Tasks: how many are open, how many overdue or due today, and a bar
-split the same way; tap it to jump to the Tasks card), and the weather at your home point of interest from
+(your Google Tasks and your open Jira issues together: how many are open, how
+many overdue or due today, how many of each source, and a bar split by
+overdue / due today / later; tap it to jump to the Tasks card), and the weather at your home point of interest from
 the National Weather Service. A tile only says when it was checked once its
 data is behind, in amber: Recovery when the latest reading is from before today
 ("Last reading yesterday"), Next event and Open tasks when they were last
@@ -151,23 +152,57 @@ hours old. The weather tile also shows the next three
 days (an icon and the high / low for each) beside the reading when it has room,
 under it on a phone, and as a short list (icon, weekday and high — or just icon
 and high when it's narrowest; hover for the rest) when the tiles sit six across. Next event has a countdown that moves as
-the clock advances. Then the cards: Your day (the next three days that have
-events in a compact scrollable preview, expandable all-day entries, a Now marker and muted ended calendar events;
-an ended event does not mean you attended), Work (your Jira issues with a tab
-per Jira site and their status), Projects (non-work projects with a tab per area
-and a bar for steps done, or No steps set). Your day, Work and Projects match
-heights when side by side; the schedule preview keeps its scrollable height limit.
+the clock advances. Then, in a row of their own, Your Day and Tasks. Your Day says today's
+date and counts today's events, your Google Tasks and Jira issues due today or overdue, games
+on the calendar today ("game", "match", "tournament" or "vs" in the title) and
+the high / low at home; then a timeline of what's left — today's all-day events,
+then what's on now (highlighted, Now, with the current time and when it ends)
+or coming next (highlighted, Next, with a countdown), and the events after it
+with a countdown or the weekday. Each event has a small icon from its own
+words (a game, a practice, a 1:1 or meeting, a video call, a trial, a meal, an
+appointment, a birthday, a place). The bell beside an upcoming event asks me to
+remind you 15 minutes before it — I show the reminder on a card and nothing is
+set until you approve it. Ended events drop off the card; the Calendar page
+still has them. Tasks — your Google Tasks and open Jira issues in one list — is described with Google Tasks. Below them, side by side,
+Work and Projects. Work's header gives the sprint's dates; under it a sprint
+box (its name and days left, your On track / At risk / Behind chip, your points
+done, in progress and not started of 64 with a bar, when it ends, and the Red
+team's first names — amber for anyone behind or at risk; tap it for the full
+Sprint Progress card), then **Active Work**: the Red team's open epics, soonest
+due first, each with its key, a bar and % complete, its status and how that's
+counted (story points done of total, or child issues done of total when they
+aren't pointed), and a due-date chip (amber when overdue). Tap an epic to open
+it in Jira. With no epics to show, it says why and lists your In Progress and
+Ready to Start issues instead. Projects' header counts active, on-hold
+(waiting or blocked) and ready projects; area chips filter it; each of the top
+five non-work projects shows its cover photo (or an area icon), area and
+state, and a step bar with done / total, a check when every step is done, or
+a Ready chip.
 The Work card's header has a single View all link to the full Work page.
-Health & Performance, Family, Property and Dreams share a 400-pixel card height;
-longer content scrolls inside each card while its header stays visible.
-Below them are
-Health & Performance (the recovery ring, the verdict and its reason, and
-resting heart rate, HRV, sleep and weight with two weeks of bars under each),
-Family, Property (the property's header picture, whether it's secure — Secure with when it was last checked, or each open
-security incident like a garage door left open — then open issues; tap the security line to open
-Property → Security; concerns stay on Property → Concerns),
-and Dreams (how many nights I dreamt this month, my latest dream with its
-painting, and Ask her about it). Health then Family still lead the area cards,
+Below them, side by side, Health & Performance and Family. Health &
+Performance: a recovery dial (green, amber or red by score), the GO / REST /
+WARNING verdict with the date and the change since the last scored day, two
+weeks of recovery bars, and last night's sleep performance with HRV and resting
+heart rate against your baseline (green when they moved the better way, amber
+when not); then the verdict's reason in a bar (tap for Health), and tiles for
+resting heart rate, HRV, sleep and weight, each with its trend and two weeks of
+bars. Family: one row per person, most pressing first and the first
+highlighted, with their photo, relation, what's going on (amber when they're
+overdue an update) and its button — Update, Plan something, Feeling better? —
+or an arrow to the Family page for a calendar plan; then the grocery list and
+Add someone. Under those, side by side, Property and Dreams. Property: the property's
+header picture; a security bar — Secure with when it was last checked, or each
+open security incident like a garage door left open in amber or red — with how
+many cameras are watched (a ! when one hasn't been seen in a day), how many
+things the last sweep checked, and open incidents (tap it for Property →
+Security); Active Projects, the top open house project with its photo, state and
+step bar and how many are open; and four tiles — open issues, house projects
+due this week, yard and outdoor projects, and Systems (All good, or missed
+sweeps and quiet cameras). Concerns stay on Property → Concerns. Dreams: how
+many nights I dreamt in the last 30 days with a bar per night, then my most
+recent dream — its date, how the night went, its painting and the start of the
+dream — with Ask her about it, Plain version (the same night told plainly) and
+All dreams. Health then Family still lead the area cards,
 following your own hierarchy: take care of yourself, so you can take care of
 your family, so your family can take care of the community. Every tile and card
 whose app isn't connected says so and carries the button that fixes it.

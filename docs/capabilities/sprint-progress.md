@@ -35,6 +35,14 @@ The Dashboard's Work section shows the short version: your points and status,
 your review ratio against the team average, and who on the team is behind or
 at risk. Tap it to open the full card.
 
+The Home **Work** card also lists the Red team's open epics under **Active
+Work**, soonest due first, with how far along each one is. An epic counts as
+the Red team's when Jira's Team field or a red-team label says so, or when the
+Red team's sprint work rolls up to it. Its % complete is story points done of
+the total under it, or child issues done of total when they aren't pointed.
+Due dates come from the epic's Due date, or its Target end when it has no due
+date.
+
 ## Where to find it
 
 Open **Work**, then the workspace card (for example Vivacity Tech PBC). The
@@ -97,6 +105,12 @@ section, for your primary workplace.
   workspace and per key (a sha256 fingerprint of each token, in memory only), so a
   replaced key never sees the old key's result; errors and GitHub notes aren't
   cached, nor are empty member lists.
+- Red epics: `jiraRedEpics(key, redParents)` in the same service — `search/jql`
+  `issuetype = Epic AND statusCategory != Done ORDER BY duedate ASC` (up to 3
+  pages), kept when `isRedTeam` or its key is a parent of Red sprint work
+  (`redParents` from the sprint read), then `parent in (…)` 40 keys at a time
+  for children's status and points. Returned as `epics: { items, error }` on the
+  sprint response, read even when no sprint is open; an epics error isn't cached.
 - Route: `GET /api/v1/dashboard/workplaces/:uuid/sprint`
   (`src/controllers/workplaces.js` `sprint`, `src/routes/companion.js`).
 - Frontend: `../../../companion/src/components/SprintCard.tsx` (`SprintPanel`,

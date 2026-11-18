@@ -28,9 +28,23 @@ Adding a task can be put on a standing approval if you'd rather I just do it;
 changes and deletions always ask.
 
 Your open tasks are also on the **Home** dashboard, on the **Tasks** card beside
-**Your day**: overdue and soonest-due first, with the list each is on. Tick the
-box beside one and it's ticked off in Google Tasks right away (the tick is
-your approval); **Undo** reopens it for a moment afterwards.
+**Your Day**, together with your open Jira issues (the ones assigned to you
+that aren't done). Its header says how many are open, how many Jira issues are
+in progress, and how many are due today and overdue. Under it, a ring splits
+everything by overdue, due today, later and no date, with the share that isn't
+overdue ("on track") in the middle, and a small bar chart counts what's due on
+each of the next seven days. Google Tasks has no "in progress", so only Jira's
+own status says In Progress. Then the list, soonest due first (undated: Jira
+issues you're working on, then Google Tasks, then other Jira issues). A Google
+Task has a coloured chip for its list (the icon comes from the list's name — a
+house for Property, a sprout for Home, and so on); tick its box and it's ticked
+off in Google Tasks right away (the tick is your approval), stays on the card
+struck through as "Completed just now", and **Undo** reopens it for a moment
+afterwards. A Jira issue shows its key, status and project; I can't change Jira
+issues, so tapping one opens it in Jira, where you move it along.
+
+The **Open tasks** tile on Home counts the same list — Google Tasks plus open
+Jira issues.
 
 ## Where to find it
 
