@@ -289,6 +289,30 @@ async function favorites(profileId) {
 	return rows.map(favoriteOf);
 }
 
+const RECENT_LIMIT = 25;
+/**
+ * The person's last 25 distinct foods (by name, any case), newest first, that
+ * aren't starred — the Log food menu's Recent tab. Shaped like a favorite;
+ * the uuid is the latest entry's. Logging one is an ordinary addEntry.
+ */
+async function recentFoods(profileId, starred = []) {
+	const [rows] = await pool.query(
+		`SELECT uuid, label, calories, protein_g, carbs_g, fat_g, water_oz, serving, barcode FROM nutrition_entry
+		 WHERE profile_id = ? AND deleted_at IS NULL ORDER BY eaten_on DESC, id DESC LIMIT 400`,
+		[profileId],
+	);
+	const seen = new Set(starred.map((f) => String(f.label).trim().toLowerCase()));
+	const out = [];
+	for (const row of rows) {
+		const key = String(row.label).trim().toLowerCase();
+		if (seen.has(key)) continue;
+		seen.add(key);
+		out.push(favoriteOf(row));
+		if (out.length >= RECENT_LIMIT) break;
+	}
+	return out;
+}
+
 /** The label, numbers and serving of a food, validated: what an entry and a favorite share. */
 function foodOf(body) {
 	const values = bounded(body, ENTRY);
@@ -349,7 +373,8 @@ async function nutrition(profileId, { today } = {}) {
 		const those = entries.filter((e) => e.eaten_on === date);
 		return { date, logged: those.length > 0, totals: totalsOf(those) };
 	});
-	return { date: day, entries: todays, totals: totalsOf(todays), days, favorites: starred };
+	const recent = await recentFoods(profileId, starred);
+	return { date: day, entries: todays, totals: totalsOf(todays), days, favorites: starred, recent };
 }
 
 /**
@@ -459,7 +484,7 @@ async function buildContext(profileId, { message, audience, force = false, today
 module.exports = {
 	KINDS, KIND_SPORTS, program, saveProgram, endProgram, markSession,
 	targets, saveTargets, nutrition, addEntry, updateEntry, removeEntry, overview,
-	favorites, saveFavorite, removeFavorite, logFavorite, ENTRY,
+	favorites, recentFoods, saveFavorite, removeFavorite, logFavorite, ENTRY,
 	matches, buildContext,
 	_test: { weekdayOf, mondayOf, addDays, totalsOf },
 };

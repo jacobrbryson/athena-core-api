@@ -287,17 +287,21 @@ block, reminder, workout, family event, travel — each starts a message to me,
 and I ask before anything goes on your calendar), and your calendars with a
 switch that hides one from this page.
 
-The Family page opens with my take on the family's week — how much is on the
-calendar and what it is (soccer, softball, school), anyone reported unwell, a
-birthday coming up, and any family events that overlap — written from what the
-page shows, not guessed. Then: people remembered, today's chores, the next
-family event and family health; today's chores and the family's day; your
-closest people as cards (spouse, children, pets) with what's on for them today,
-and everyone else as smaller tiles; the family's upcoming events; and Kids
-(age, grade, and the sports their events mention), Pets, and Birthdays (from
-what I remember and from birthdays on your calendar). Tapping a member opens
-their editor. The small Memories link at the bottom of Family Members opens a
-side drawer with the full memory list, contact links, and health watches.
+The Family page (reworked 2026-11-18) has tabs across the top — Family,
+Provisions, Finance, Trading — then a compact head with today's three numbers:
+family events today (with what's on now or next), chores done of the total,
+and health alerts. Then Family Today, a timeline of today's family events with
+place and length and the current or next one framed, beside Chores (done of
+total with a bar, each open chore with an icon and its due date, tick to
+finish); your closest people as cards (spouse, children, pets) with relation,
+age and grade and what's on for them today, everyone else as smaller tiles,
+beside the family's upcoming events; and along the bottom a Provisions card
+(what you're out of on the grocery list, Open Provisions), Pets, and Birthdays
+as date tiles (from what I remember and from birthdays on your calendar).
+Work events are left out of the Family page. Tapping a member opens their
+editor; "View all" on Family Members opens a side drawer with the full memory
+list, contact links, and health watches. Family → Provisions holds the
+grocery list itself.
 
 There is no refresh button, because there is nothing to refresh by hand: the
 dashboard updates itself when the server tells it something moved.
@@ -398,7 +402,8 @@ in memory and are cleared on sign-in, sign-out, access errors, and updates.
 
 - Data endpoint: `../../src/controllers/dashboard.js` and `../../src/services/dashboard.js`.
 - Family page: `../../../companion/src/components/FamilyPage.tsx` + `family.css`; people come
-  from `familyRoster.ts` (rows now carry `birthday`), the take is built in code.
+  from `familyRoster.ts` (rows now carry `birthday`). Family → Provisions:
+  `../../../companion/src/components/FamilyProvisions.tsx`.
 - Calendar page: `../../../companion/src/components/CalendarPage.tsx` + `calendar.css`
   (reuses the Health page's panels, `Icon` and `Ring`); Quick Add only pre-fills chat,
   so writes still go through `create_calendar_event` and an approval.

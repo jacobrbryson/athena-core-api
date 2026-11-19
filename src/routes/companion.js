@@ -28,6 +28,17 @@ router.get('/dreams/questions', requireAuth, require('../controllers/dreams').qu
 router.post('/dreams/questions/:uuid/dismiss', requireAuth, require('../controllers/dreams').dismissQuestion);
 router.get('/dreams/:uuid', requireAuth, require('../controllers/dreams').night);
 router.get('/dreams/:uuid/image', requireAuth, require('../controllers/dreams').picture);
+// Family → Provisions: the Keep list read as stock, restock estimates, and
+// meal ideas with a painted picture per dish (services/provisions). Read-only
+// toward Keep; list changes stay on the update_grocery_list approval card.
+router.get('/provisions', requireAuth, require('../controllers/provisions').summary);
+router.post('/provisions/ideas/refresh', requireAuth, require('../controllers/provisions').refreshIdeas);
+router.put('/provisions/ideas/:uuid/saved', requireAuth, express.json({ limit: '1kb' }), require('../controllers/provisions').saveIdea);
+router.get('/provisions/ideas/:uuid/image', requireAuth, require('../controllers/provisions').ideaImage);
+// Photo inventory: up to six downscaled photos of one place, read by the
+// vision model and never stored (services/provisions/scan.js).
+router.post('/provisions/scan', requireAuth, express.json({ limit: '12mb' }), require('../controllers/provisions').scan);
+router.delete('/provisions/seen/:uuid', requireAuth, require('../controllers/provisions').removeSeen);
 // News: the watch list is the person's, the interval is Athena's. There is no
 // route for setting an interval by hand, by design — see services/news.
 router.get('/dashboard/news', requireAuth, require('../controllers/dashboard').newsFeed);

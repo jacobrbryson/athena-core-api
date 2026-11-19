@@ -90,7 +90,8 @@ test('nutrition totals sum the day and fill the week with empty days', async () 
     { uuid: 'a', eaten_on: '2026-10-13', label: 'Eggs', calories: 300, protein_g: '24.0', carbs_g: '2.0', fat_g: '20.0', water_oz: null, created_at: new Date() },
     { uuid: 'b', eaten_on: '2026-10-13', label: 'Shake', calories: 200, protein_g: '40.5', carbs_g: null, fat_g: null, water_oz: '12.0', created_at: new Date() },
     { uuid: 'c', eaten_on: '2026-10-10', label: 'Pasta', calories: 800, protein_g: null, carbs_g: null, fat_g: null, water_oz: null, created_at: new Date() },
-  ]]).mockResolvedValueOnce([[{ uuid: 'fav-1', label: 'shake', calories: 200, protein_g: '40.5', carbs_g: null, fat_g: null, water_oz: null, serving: null, barcode: null }]]);
+  ]]).mockResolvedValueOnce([[{ uuid: 'fav-1', label: 'shake', calories: 200, protein_g: '40.5', carbs_g: null, fat_g: null, water_oz: null, serving: null, barcode: null }]])
+    .mockResolvedValueOnce([[]]);
   const n = await healthPlan.nutrition(42, { today: '2026-10-13' });
   expect(n.totals).toEqual({ calories: 500, protein_g: 64.5, carbs_g: 2, fat_g: 20, water_oz: 12 });
   expect(n.entries).toHaveLength(2);
@@ -101,6 +102,18 @@ test('nutrition totals sum the day and fill the week with empty days', async () 
   // A favorite with the same name (any case) stars the entry; an entry without one isn't.
   expect(n.entries.map(e => [e.label, e.favorite, e.source])).toEqual([['Eggs', null, 'manual'], ['Shake', 'fav-1', 'manual']]);
   expect(n.favorites.map(f => f.uuid)).toEqual(['fav-1']);
+});
+
+test('recent foods are the caller\'s own, distinct by name, newest first, and skip favorites', async () => {
+  const row = (uuid, label) => ({ uuid, label, calories: 100, protein_g: null, carbs_g: null, fat_g: null, water_oz: null, serving: null, barcode: null });
+  const rows = [row('e1', 'Toast'), row('e2', 'Shake'), row('e3', 'toast '), row('e4', 'Eggs')];
+  for (let i = 0; i < 40; i++) rows.push(row(`x${i}`, `Food ${i}`));
+  db.query.mockResolvedValueOnce([rows]);
+  const recent = await healthPlan.recentFoods(42, [{ uuid: 'fav-1', label: 'shake' }]);
+  expect(db.query.mock.calls[0][1]).toEqual([42]);
+  expect(db.query.mock.calls[0][0]).toContain('deleted_at IS NULL');
+  expect(recent).toHaveLength(25);
+  expect(recent.slice(0, 3).map(f => [f.uuid, f.label])).toEqual([['e1', 'Toast'], ['e4', 'Eggs'], ['x0', 'Food 0']]);
 });
 
 test('the manual form\'s favorite box stars the food as it logs it', async () => {

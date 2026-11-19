@@ -2,7 +2,7 @@
 id: google-keep
 title: Grocery list (Google Keep)
 summary: I can read your shared Google Keep grocery list, propose adding up to ten items at once or ticking off one item with your approval, and use it for dinner ideas.
-where: Family page → Grocery list (also a line on the dashboard's Family card); share the list with my address in Keep
+where: Family → Provisions → Grocery list (a summary card on the Family page, and a line on the dashboard's Family card); share the list with my address in Keep
 status: live
 surfaces: [companion]
 audiences: [adult]
@@ -31,8 +31,10 @@ If one is already open, I tell you it's already on the list.
 
 ## Where to find it
 
-Once it's linked, the Family page has a Grocery list panel under the
-calendar. It shows what you're out of, how many regulars are on the list, an
+Once it's linked, Family → Provisions (its own tab) is built on it: the
+list, your usual stock, restock estimates and meal ideas (see the Provisions
+capability). The Family page has a small Provisions card with what you're out
+of and an Open Provisions button. The Grocery List panel shows what you're out of, how many regulars are on the list, an
 "Open in Keep" link, and a "What can we make tonight?" button that asks me.
 The Family card on the dashboard also shows the first few things you're out
 of. The panel still shows the list; ask me in chat to change items, or open
@@ -87,7 +89,8 @@ Connect button for it in the app.
 - Tests: `src/services/connectors/googleKeep.test.js`, `src/services/dashboard.test.js`.
 - Page: `groceries` source in `src/services/dashboard.js` (food lists only:
   toBuy plus a count of regulars; other shared lists never reach the page).
-  Rendered by `GroceriesPanel` in `../../../companion/src/components/FamilyPage.tsx`
+  The Provisions tab reads it through `src/services/provisions/index.js`
+  (see `provisions.md`); the summary card is in `../../../companion/src/components/FamilyPage.tsx`
   and the Family card line in `../../../companion/src/components/Dashboard.tsx`.
 - Writes: `update_grocery_list` in `src/services/actions/registry.js` is
   available only with the linked Keep credential and action consent. It is
