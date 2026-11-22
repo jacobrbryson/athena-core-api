@@ -3,7 +3,7 @@ process.env.INTEGRATION_REDIRECT_ALLOWLIST = 'https://app.example.com';
 jest.mock('../../helpers/db', () => ({ query: jest.fn() }));
 jest.mock('../secrets', () => ({ getSecret: jest.fn(async () => 'test-secret') }));
 jest.mock('../consent', () => ({ hasConsent: jest.fn(async () => true) }));
-jest.mock('../credentials', () => ({ put: jest.fn(), get: jest.fn(), updateTokens: jest.fn(), markNeedsReauth: jest.fn(), status: jest.fn(), STATUS_NEEDS_REAUTH: 'needs_reauth' }));
+jest.mock('../credentials', () => ({ put: jest.fn(), get: jest.fn(), updateTokens: jest.fn(), markNeedsReauth: jest.fn(), status: jest.fn(), STATUS_NEEDS_REAUTH: 'needs_reauth', withRefreshLock: (uuid, fn) => fn() }));
 const pool = require('../../helpers/db');
 const credentials = require('../credentials');
 const oauth = require('./oauth');

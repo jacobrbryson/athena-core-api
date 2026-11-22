@@ -41,3 +41,10 @@ jobs:
         env:
           CI: "true"
         run: npx -y jest@30.2.0 --ci --runInBand --forceExit --testTimeout=20000
+
+      # work-runner/ is its own package on Node's test runner (ES modules,
+      # node:test), so Jest skips it (jest.config.js) and it runs here.
+      # Built-in modules only: nothing to install.
+      - name: Work runner tests
+        working-directory: work-runner
+        run: node --test tests/*.test.mjs
