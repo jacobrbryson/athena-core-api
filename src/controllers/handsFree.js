@@ -38,7 +38,9 @@ const STAGES = [
   "done", // playback finished
 ];
 const PATHS = new Set(["wake", "oneBreath", "followUp", "conversation", "conversationPickup"]);
-const OUTCOMES = new Set(["answered", "nothing", "echo", "error", "notYou"]);
+// "instant": a music button pressed on the phone (YouTube Music phase 1);
+// "nowPlaying": "what song is this?" answered on the phone. Neither reached chat.
+const OUTCOMES = new Set(["answered", "nothing", "echo", "error", "notYou", "instant", "nowPlaying"]);
 const FILTER_REASONS = new Set([
   "your voice",
   "your voice in the car",

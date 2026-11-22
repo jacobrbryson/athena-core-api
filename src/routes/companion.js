@@ -170,9 +170,19 @@ router.post('/dashboard/email/:uuid/reply/propose', requireAuth, express.json({ 
 router.post('/dashboard/email/:uuid/dismiss', requireAuth, express.json({ limit: '1kb' }), require('../controllers/email').dismiss);
 
 // Family health watch: who's under the weather right now. Read lives on the
-// dashboard summary's `familyHealth` source; these two are the only writes.
-router.post('/dashboard/health/family', requireAuth, express.json({ limit: '4kb' }), require('../controllers/familyHealth').report);
-router.patch('/dashboard/health/family/:uuid/resolve', requireAuth, express.json({ limit: '1kb' }), require('../controllers/familyHealth').resolve);
+// dashboard summary's `familyHealth` source; each watch also has a page of
+// its own (dates, history, recurring checks) read and written below.
+const familyHealthCtl = require('../controllers/familyHealth');
+router.post('/dashboard/health/family', requireAuth, express.json({ limit: '4kb' }), familyHealthCtl.report);
+router.patch('/dashboard/health/family/:uuid/resolve', requireAuth, express.json({ limit: '1kb' }), familyHealthCtl.resolve);
+router.get('/dashboard/health/family/:uuid', requireAuth, familyHealthCtl.detail);
+router.patch('/dashboard/health/family/:uuid', requireAuth, express.json({ limit: '2kb' }), familyHealthCtl.edit);
+router.post('/dashboard/health/family/:uuid/entries', requireAuth, express.json({ limit: '2kb' }), familyHealthCtl.addUpdate);
+router.delete('/dashboard/health/family/:uuid/entries/:entry', requireAuth, familyHealthCtl.removeEntry);
+router.post('/dashboard/health/family/:uuid/checks', requireAuth, express.json({ limit: '2kb' }), familyHealthCtl.addCheck);
+router.patch('/dashboard/health/family/:uuid/checks/:check', requireAuth, express.json({ limit: '2kb' }), familyHealthCtl.updateCheck);
+router.delete('/dashboard/health/family/:uuid/checks/:check', requireAuth, familyHealthCtl.removeCheck);
+router.post('/dashboard/health/family/:uuid/checks/:check/mark', requireAuth, express.json({ limit: '1kb' }), familyHealthCtl.markCheck);
 
 // Body calibration: lab references (DEXA, InBody, a measured height) that
 // correct the scale. Read on the dashboard summary's `body` source.
@@ -213,6 +223,16 @@ router.delete('/dashboard/family/people/:factUuid/contact', requireAuth, require
 router.delete('/dashboard/family/people/:factUuid', requireAuth, require('../controllers/familyPeople').remove);
 router.post('/dashboard/family/people/:factUuid/merge', requireAuth, express.json({ limit: '1kb' }), require('../controllers/familyPeople').merge);
 router.put('/dashboard/family/people/:factUuid/portrait', requireAuth, express.json({ limit: '200kb' }), require('../controllers/familyPeople').portrait);
+// A person's own page (/family/people/<key>): what it adds of its own (a
+// write-up, interests, related people) plus memories, health and sightings.
+// :key is a memory uuid or child:<child profile uuid>.
+const personPageCtl = require('../controllers/personPage');
+router.get('/dashboard/family/person/:key', requireAuth, personPageCtl.read);
+router.patch('/dashboard/family/person/:key', requireAuth, express.json({ limit: '2kb' }), personPageCtl.saveAbout);
+router.post('/dashboard/family/person/:key/interests', requireAuth, express.json({ limit: '1kb' }), personPageCtl.addInterest);
+router.delete('/dashboard/family/person/:key/interests/:uuid', requireAuth, personPageCtl.removeInterest);
+router.post('/dashboard/family/person/:key/related', requireAuth, express.json({ limit: '1kb' }), personPageCtl.addRelated);
+router.delete('/dashboard/family/person/:key/related/:uuid', requireAuth, personPageCtl.removeRelated);
 
 // Public: the on-device model manifest carries no secrets, and devices poll it
 // before (and after) pairing.

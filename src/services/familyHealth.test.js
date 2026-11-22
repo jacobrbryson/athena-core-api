@@ -64,6 +64,7 @@ describe("report", () => {
 		pool.query
 			.mockResolvedValueOnce([[]]) // no active row
 			.mockResolvedValueOnce([{ insertId: 5 }])
+			.mockResolvedValueOnce([{}]) // history line
 			.mockResolvedValueOnce([[row({ check_in_hours: 4 })]]);
 		const w = await familyHealth.report(1, { personName: "Thomas", symptom: "a fever", checkInHours: 4 });
 		expect(pool.query.mock.calls[1][1]).toContain(4);
@@ -74,6 +75,7 @@ describe("report", () => {
 		pool.query
 			.mockResolvedValueOnce([[{ id: 5 }]])
 			.mockResolvedValueOnce([{}])
+			.mockResolvedValueOnce([{}]) // history line
 			.mockResolvedValueOnce([[row({ check_in_hours: 6 })]]);
 		await familyHealth.report(1, { personName: "Thomas", symptom: "a fever" });
 		const [sql, params] = pool.query.mock.calls[1];
@@ -85,9 +87,48 @@ describe("report", () => {
 		pool.query
 			.mockResolvedValueOnce([[{ id: 5 }]])
 			.mockResolvedValueOnce([{}])
+			.mockResolvedValueOnce([{}]) // history line
 			.mockResolvedValueOnce([[row()]]);
 		await familyHealth.report(1, { personName: "Thomas", symptom: "a fever", checkInHours: null });
 		expect(pool.query.mock.calls[1][1].slice(4, 6)).toEqual([false, null]);
+	});
+});
+
+describe("two watches on one person", () => {
+	it("the app's Start always makes a new watch, even when they're already watched", async () => {
+		pool.query
+			.mockResolvedValueOnce([{ insertId: 8 }])
+			.mockResolvedValueOnce([{}]) // history line
+			.mockResolvedValueOnce([[row({ uuid: "new", person_name: "Ross", symptom: "a rash" })]]);
+		const w = await familyHealth.report(1, { personName: "Ross", symptom: "a rash", newWatch: true });
+		expect(pool.query.mock.calls[0][0]).toMatch(/INSERT INTO family_health_status/);
+		expect(w.uuid).toBe("new");
+	});
+
+	it("an update without newWatch goes to the one whose symptom it names", async () => {
+		pool.query
+			.mockResolvedValueOnce([[{ id: 5, symptom: "a cough" }, { id: 7, symptom: "a rash" }]])
+			.mockResolvedValueOnce([{}])
+			.mockResolvedValueOnce([{}])
+			.mockResolvedValueOnce([[row({ symptom: "a rash" })]]);
+		await familyHealth.report(1, { personName: "Ross", symptom: "A rash", notes: "spreading" });
+		const [sql, params] = pool.query.mock.calls[1];
+		expect(sql).toMatch(/UPDATE family_health_status/);
+		expect(params.at(-1)).toBe(7);
+	});
+
+	it("refuses rather than guess when it names neither", async () => {
+		pool.query.mockResolvedValueOnce([[{ id: 5, symptom: "a cough" }, { id: 7, symptom: "a rash" }]]);
+		await expect(familyHealth.report(1, { personName: "Ross", symptom: "a headache" })).rejects.toMatchObject({ status: 409 });
+		expect(pool.query).toHaveBeenCalledTimes(1);
+	});
+
+	it("chat can't pick one of two by name alone, and Athena is told why", async () => {
+		const two = [[row({ uuid: "a", person_name: "Ross", symptom: "a cough" }), row({ uuid: "b", person_name: "Ross", symptom: "a rash" })]];
+		pool.query.mockResolvedValueOnce(two);
+		expect(await familyHealth.findActive(1, "Ross")).toBeNull();
+		pool.query.mockResolvedValueOnce(two);
+		expect(await familyHealth.promptBlock(1)).toMatch(/Ross has more than one health watch/);
 	});
 });
 
@@ -146,9 +187,9 @@ describe("log_health_update action (from chat)", () => {
 		expect(p).toEqual({ person_name: "Thomas Bryson", symptom: "a fever", severity: "moderate", watch_uuid: "w1", reading: "101.2 at 3pm, gave Tylenol" });
 		expect(action.summarize(p)).toBe('Log an update on Thomas Bryson (a fever, moderate): "101.2 at 3pm, gave Tylenol".');
 
-		pool.query.mockResolvedValueOnce([[{ id: 5 }]]).mockResolvedValueOnce([{}]).mockResolvedValueOnce(active());
+		pool.query.mockResolvedValueOnce([[{ id: 5 }]]).mockResolvedValueOnce([{}]).mockResolvedValueOnce([{}]).mockResolvedValueOnce(active());
 		await action.execute(1, p);
-		const [, params] = pool.query.mock.calls.at(-2);
+		const [, params] = pool.query.mock.calls.at(-3);
 		// notes written, cadence kept
 		expect(params.slice(1, 6)).toEqual(["moderate", false, "101.2 at 3pm, gave Tylenol", true, null]);
 	});

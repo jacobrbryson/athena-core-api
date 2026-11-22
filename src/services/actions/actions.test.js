@@ -29,8 +29,14 @@ jest.mock("../memory", () => ({
 	upsertMemoryForProfile: jest.fn(),
 }));
 
+jest.mock("../push", () => ({
+	sendMediaControl: jest.fn(async () => ({ asked: 1 })),
+	hasReachablePhone: jest.fn(async () => true),
+}));
+
 const pool = require("../../helpers/db");
 const access = require("../../security/access");
+const push = require("../push");
 const consent = require("../consent");
 const credentials = require("../credentials");
 const family = require("../family");
@@ -1053,5 +1059,119 @@ describe("the reply schema's params (2026-10-04)", () => {
 	test("closes the sets a model would otherwise invent values for", () => {
 		expect(schema.properties.repo.enum).toEqual(Object.keys(codeAgents.REPOS));
 		expect(schema.properties.agent.enum).toEqual(["claude", "codex"]);
+	});
+});
+
+describe("media_control (YouTube Music on the phone)", () => {
+	const action = registry.get("media_control");
+
+	test("accepts exactly the six buttons and nothing else", async () => {
+		for (const control of ["play", "pause", "next", "previous", "volume_up", "volume_down"]) {
+			expect(action.normalize({ control })).toEqual({ control });
+		}
+		for (const control of ["stop", "play_playlist", "seek", "", null, "next; rm -rf"]) {
+			await expect(Promise.resolve().then(() => action.normalize({ control }))).rejects.toMatchObject({
+				code: "invalid_action_params",
+			});
+		}
+		// A field it doesn't declare never reaches execute().
+		expect(action.normalize({ control: "NEXT", package: "com.evil", query: "x" })).toEqual({ control: "next" });
+	});
+
+	test("is standing-eligible, reversible, and marked for the phone's instant path", () => {
+		expect(action.standing).toBe(true);
+		expect(action.reversible).toBe(true);
+		expect(action.deviceInstant).toBe(true);
+		expect(actions.DEVICE_INSTANT.has("media_control")).toBe(true);
+	});
+
+	test("the phone's instant path is media_control and nothing else", () => {
+		expect([...actions.DEVICE_INSTANT]).toEqual(["media_control"]);
+		const marked = registry.ACTIONS.filter((a) => a.deviceInstant).map((a) => a.id);
+		expect(marked).toEqual(["media_control"]);
+	});
+
+	test("execute pushes the one control to the phone, and fails honestly when no phone answers", async () => {
+		await expect(action.execute(PROFILE, { control: "pause" })).resolves.toEqual({ ref: "pause", detail: null });
+		expect(push.sendMediaControl).toHaveBeenCalledWith(PROFILE, "pause");
+		push.sendMediaControl.mockResolvedValueOnce({ asked: 0 });
+		await expect(action.execute(PROFILE, { control: "next" })).rejects.toThrow(/couldn't be reached/);
+	});
+
+	test("is only offered to someone with a reachable phone", async () => {
+		push.hasReachablePhone.mockResolvedValueOnce(false);
+		const offered = (await actions.availableFor(PROFILE)).map((a) => a.id);
+		expect(offered).not.toContain("media_control");
+	});
+});
+
+describe("reportDeviceExecution (done on the phone, recorded after)", () => {
+	const inserted = () => pool.query.mock.calls.find((c) => c[0].includes("INSERT INTO athena_action"));
+	const audited = () =>
+		pool.query.mock.calls.filter((c) => c[0].includes("athena_access_audit")).map((c) => c[1][1]);
+
+	test("with a live standing approval: recorded done, standing, naming the authority", async () => {
+		pool.query.mockImplementation(async (sql) => {
+			if (sql.includes("FROM athena_action_authority")) return [[{ id: 9, expires_at: null }]];
+			if (sql.includes("FROM athena_action WHERE uuid"))
+				return [[actionRow({ action_id: "media_control", status: "done", approval: "standing" })]];
+			return [{ affectedRows: 1 }];
+		});
+		const { approved } = await actions.reportDeviceExecution(PROFILE, "media_control", { control: "next" });
+		expect(approved).toBe(true);
+		const args = inserted()[1];
+		expect(args).toContain("standing");
+		expect(args).toContain(9);
+		expect(args).toContain(JSON.stringify({ control: "next" }));
+		expect(audited()).toEqual(["action_device_executed"]);
+	});
+
+	test("without one: still recorded (it happened), but as unapproved, with its own audit line", async () => {
+		pool.query.mockImplementation(async (sql) => {
+			if (sql.includes("FROM athena_action_authority")) return [[]];
+			return [{ affectedRows: 1 }];
+		});
+		const { approved } = await actions.reportDeviceExecution(PROFILE, "media_control", { control: "pause" });
+		expect(approved).toBe(false);
+		const args = inserted()[1];
+		expect(args).toContain("unapproved");
+		expect(args).not.toContain("standing");
+		expect(args).toContain("Done on the phone without a live standing approval");
+		expect(audited()).toEqual(["action_device_unapproved"]);
+	});
+
+	test("refuses every other action, even standing-eligible ones, and writes nothing", async () => {
+		for (const id of ["create_calendar_event", "set_porch_light", "fix_code", "nope"]) {
+			await expect(actions.reportDeviceExecution(PROFILE, id, {})).rejects.toMatchObject({
+				status: 403,
+				code: "not_device_instant",
+			});
+		}
+		expect(inserted()).toBeUndefined();
+	});
+
+	test("refuses params normalize() won't vouch for, and writes nothing", async () => {
+		await expect(
+			actions.reportDeviceExecution(PROFILE, "media_control", { control: "delete_library" })
+		).rejects.toMatchObject({ status: 400 });
+		expect(inserted()).toBeUndefined();
+	});
+
+	test("a stale or future timestamp is recorded as now, not as claimed", async () => {
+		pool.query.mockImplementation(async (sql) => {
+			if (sql.includes("FROM athena_action_authority")) return [[{ id: 9 }]];
+			return [{ affectedRows: 1 }];
+		});
+		const before = Date.now();
+		await actions.reportDeviceExecution(PROFILE, "media_control", { control: "play" }, { at: "2020-01-01T00:00:00Z" });
+		const stamps = inserted()[1].filter((v) => v instanceof Date);
+		expect(stamps.length).toBeGreaterThan(0);
+		for (const d of stamps) expect(d.getTime()).toBeGreaterThanOrEqual(before - 5);
+
+		pool.query.mockClear();
+		await actions.reportDeviceExecution(PROFILE, "media_control", { control: "play" }, {
+			at: new Date(Date.now() + 3600_000).toISOString(),
+		});
+		for (const d of inserted()[1].filter((v) => v instanceof Date)) expect(d.getTime()).toBeLessThanOrEqual(Date.now() + 5);
 	});
 });

@@ -562,6 +562,39 @@ async function requestHeartLive(profileId, untilMs) {
 }
 
 /**
+ * Press a YouTube Music button on their Android phone (the media_control
+ * action, after its approval). Silent, never drawn. The phone accepts only its
+ * own fixed list of controls (MediaControl.java), so `control` is a name from
+ * that list, not anything to run. Same shape as requestLocation.
+ *
+ * Returns how many phones were asked. Never throws.
+ */
+async function sendMediaControl(profileId, control) {
+	try {
+		const phones = (await reachableDevices(profileId)).filter((d) => d.platform === "android");
+		let asked = 0;
+		for (const phone of phones) {
+			const result = await fcm.send(phone.token, { silent: true, data: { kind: "media_control", control: String(control) } });
+			if (result.ok) asked += 1;
+			else if (result.dead) await dropDeadToken(phone.id, result.reason);
+		}
+		return { asked };
+	} catch (err) {
+		console.warn("[push] media control failed:", err.message);
+		return { asked: 0, skipped: err.message };
+	}
+}
+
+/** Does this person have an Android phone Athena can reach? Fails closed. */
+async function hasReachablePhone(profileId) {
+	try {
+		return (await reachableDevices(profileId)).some((d) => d.platform === "android");
+	} catch {
+		return false;
+	}
+}
+
+/**
  * Push one nudge, and record that we tried.
  *
  * `pushed_at` is set when a transport ACCEPTED the message, which is not the
@@ -607,7 +640,14 @@ async function deliverNudge(profileId, nudge) {
 		result = await sendToProfile(profileId, {
 			title: extra?.title || "Athena",
 			body: nudge.text,
-			data: { kind: "nudge", uuid: nudge.uuid, trigger: nudge.trigger_id || "", ...(extra?.data || {}) },
+			// `url`: where tapping it should open (a health check opens that watch's page).
+			data: {
+				kind: "nudge",
+				uuid: nudge.uuid,
+				trigger: nudge.trigger_id || "",
+				...(typeof nudge.url === "string" && nudge.url.startsWith("/") && !nudge.url.startsWith("//") ? { url: nudge.url } : {}),
+				...(extra?.data || {}),
+			},
 			// Per nudge, not per app: a redelivery of this one replaces it, two
 			// different ones stack. See the note above.
 			collapseKey: `nudge-${nudge.uuid}`,
@@ -716,6 +756,8 @@ module.exports = {
 	deliverNudge,
 	requestLocation,
 	requestHeartLive,
+	sendMediaControl,
+	hasReachablePhone,
 	sendTest,
 	statusFor,
 };

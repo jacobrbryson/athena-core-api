@@ -784,6 +784,88 @@ async function grantAuthority(profileId, actionId, { expiresAt = null } = {}) {
 	return listAuthorities(profileId);
 }
 
+// ---------------------------------------------------------------------------
+// Done on the phone, reported straight after (owner, 2026-11-21: option A)
+// ---------------------------------------------------------------------------
+
+/**
+ * The only actions a paired phone may carry out by itself and report
+ * afterwards. Both this list AND the descriptor's `deviceInstant` must name an
+ * action; neither alone is enough, so a registry edit cannot widen it.
+ *
+ * Why this exists: "skip" in the car has to happen in a fraction of a second,
+ * which a server round trip can't do. The owner chose (2026-11-21,
+ * docs/architecture/youtube-music.md, option A) to let the phone press the
+ * music buttons the moment it hears them, under a standing approval it was
+ * told about, and record the row here straight after. Everything else still
+ * goes propose → approve → execute. Self-improvement must never add to this
+ * list or loosen what it accepts.
+ */
+const DEVICE_INSTANT = new Set(["media_control"]);
+
+/** How old a phone's report may be. Older (a phone offline all day) is recorded at receipt time. */
+const DEVICE_REPORT_MAX_AGE_MS = 10 * 60 * 1000;
+
+/**
+ * Record what a paired phone already did by itself (DEVICE_INSTANT only).
+ *
+ * The phone acted on its cached copy of a standing approval. This checks it
+ * against the live one and records honestly either way: it already happened,
+ * so the row says `done`, and when no standing approval was live at that
+ * moment the row says so (approval `unapproved`, an error, an audit line of
+ * its own) instead of pretending it was approved. A report for anything
+ * outside DEVICE_INSTANT, or with params normalize() won't vouch for, is
+ * refused and nothing is written.
+ */
+async function reportDeviceExecution(profileId, actionId, rawParams, { at = null, deviceId = null } = {}) {
+	const action = registry.get(actionId);
+	if (!profileId || !action || !DEVICE_INSTANT.has(action.id) || action.deviceInstant !== true || !action.standing) {
+		throw failure("That can't be done from the phone by itself", 403, "not_device_instant");
+	}
+	let params;
+	try {
+		params = await action.normalize(rawParams && typeof rawParams === "object" ? rawParams : {}, { profileId });
+	} catch (err) {
+		throw failure(err.message, 400, "invalid_action_params");
+	}
+
+	const reported = typeof at === "string" ? Date.parse(at) : NaN;
+	const when = Number.isFinite(reported) && reported <= Date.now() + 60_000 && Date.now() - reported <= DEVICE_REPORT_MAX_AGE_MS
+		? new Date(Math.min(reported, Date.now()))
+		: new Date();
+
+	const authority = await liveAuthority(profileId, action.id);
+	const approved = Boolean(authority);
+	const uuid = randomUUID();
+	await pool.query(
+		`INSERT INTO athena_action
+			(uuid, profile_id, session_id, action_id, params, rationale, summary, status,
+			 approval, authority_id, expires_at, error, created_at, decided_at, executed_at)
+		 VALUES (?, ?, NULL, ?, ?, ?, ?, 'done', ?, ?, ?, ?, ?, ?, ?)`,
+		[
+			uuid,
+			profileId,
+			action.id,
+			JSON.stringify(params),
+			// Fixed text: where it came from. Nothing from the request.
+			"Done on the phone the moment it was asked, under a standing approval",
+			action.summarize(params).slice(0, 500),
+			approved ? "standing" : "unapproved",
+			approved ? authority.id : null,
+			when,
+			approved ? null : "Done on the phone without a live standing approval",
+			when,
+			when,
+			when,
+		]
+	);
+	await audit(profileId, approved ? "action_device_executed" : "action_device_unapproved", action.id);
+	if (!approved) {
+		console.warn(`[actions] phone did ${action.id} for profile ${profileId} without a live standing approval (device ${deviceId})`);
+	}
+	return { approved, action: await get(profileId, uuid) };
+}
+
 /** Revoke. Leaves every athena_action row it ever authorized findable. */
 async function revokeAuthority(profileId, actionId) {
 	const [result] = await pool.query(
@@ -815,4 +897,6 @@ module.exports = {
 	grantAuthority,
 	revokeAuthority,
 	liveAuthority,
+	reportDeviceExecution,
+	DEVICE_INSTANT,
 };

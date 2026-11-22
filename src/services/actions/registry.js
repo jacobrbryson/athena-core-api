@@ -2985,7 +2985,71 @@ const ACTIONS = [
 			return { ref: "nightly_sweep", detail: null };
 		},
 	},
+
+	{
+		id: "media_control",
+		label: "Control the music on your phone",
+		// Added on the owner's instruction (2026-11-22, YouTube Music phase 1,
+		// docs/architecture/youtube-music.md): YouTube Music's own buttons on
+		// their Android phone. Each one is undone with the opposite one, so a
+		// standing approval may cover it — and the owner chose (2026-11-21,
+		// option A) that under that standing approval the phone may press
+		// these SAME buttons itself, the moment it hears them, and report the
+		// row straight after (index.js reportDeviceExecution). That path is
+		// limited in code to this action and these controls.
+		provider: null,
+		consentType: "action_authority",
+		reversible: true,
+		standing: true,
+		// Instant on the phone, reported afterwards. Read only together with
+		// index.js DEVICE_INSTANT, which must also name this action.
+		deviceInstant: true,
+		describe:
+			"Press a button on the YouTube Music app playing on their phone: play, pause, next song, previous song, " +
+			"or turn the volume up or down a step. Propose it when they ask (\"skip this\", \"pause the music\", " +
+			"\"turn it up\"). It cannot pick a song, playlist or album, and it only controls YouTube Music on their " +
+			"Android phone.",
+		params: { control: "One of: play, pause, next, previous, volume_up, volume_down. Required." },
+		// "Skip" twice in a row is two songs, not a repeat.
+		sameAs: false,
+
+		async availableTo(profileId) {
+			return require("../push").hasReachablePhone(profileId);
+		},
+
+		normalize(raw = {}) {
+			const control = str(raw.control, 16)?.toLowerCase();
+			if (!MEDIA_CONTROLS.includes(control)) {
+				throw invalid(`control must be one of ${MEDIA_CONTROLS.join(", ")}`);
+			}
+			return { control };
+		},
+
+		summarize(p) {
+			return MEDIA_CONTROL_SUMMARY[p.control] || "Control the music";
+		},
+
+		async execute(profileId, params) {
+			const { asked } = await require("../push").sendMediaControl(profileId, params.control);
+			if (!asked) throw Object.assign(new Error("Your phone couldn't be reached"), { status: 503 });
+			return { ref: params.control, detail: null };
+		},
+	},
 ];
+
+/**
+ * The music buttons, and nothing else. The phone has its own copy of this
+ * list (MediaControl.java) and refuses anything not on it, whatever arrives.
+ */
+const MEDIA_CONTROLS = ["play", "pause", "next", "previous", "volume_up", "volume_down"];
+const MEDIA_CONTROL_SUMMARY = {
+	play: "Play the music",
+	pause: "Pause the music",
+	next: "Skip to the next song",
+	previous: "Go back a song",
+	volume_up: "Turn the music up",
+	volume_down: "Turn the music down",
+};
 
 // ---------------------------------------------------------------------------
 // Direct actions — a person's own click in the app, never a proposal
@@ -3427,6 +3491,7 @@ const PARAM_TYPES = {
 	mode: { type: "string", enum: ["HEAT", "COOL", "HEATCOOL", "OFF"] },
 	unit: { type: "string", enum: ["F", "C"] },
 	eco: { type: "string", enum: ["on", "off"] },
+	control: { type: "string", enum: ["play", "pause", "next", "previous", "volume_up", "volume_down"] },
 	check_in_hours: { type: "number" },
 	project_priority: { type: "number" },
 	project_budget: { type: "number" },
@@ -3531,4 +3596,4 @@ function get(id) {
 	return (typeof id === "string" && BY_ID.get(id)) || null;
 }
 
-module.exports = { ACTIONS, DIRECT_ACTIONS, get, invalid, paramsSchema };
+module.exports = { ACTIONS, DIRECT_ACTIONS, MEDIA_CONTROLS, get, invalid, paramsSchema };

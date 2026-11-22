@@ -8,6 +8,7 @@ const {
 	grantAuthority,
 	revokeAuthority,
 	perform,
+	reportDevice,
 } = require("../controllers/actions");
 const { requireAuthOrDevice } = require("../middleware/auth");
 
@@ -36,6 +37,11 @@ router.delete("/authority/:actionId", revokeAuthority);
 // Undo). Only registry actions marked `direct` are accepted. Declared before
 // the /:uuid/* routes for the same reason as /authority.
 router.post("/direct/:actionId", express.json(), perform);
+
+// A paired phone recording a music button it pressed by itself under a
+// standing approval (owner, 2026-11-21). Only the actions in
+// services/actions DEVICE_INSTANT; device tokens only.
+router.post("/device/:actionId", express.json(), reportDevice);
 
 // The two buttons on a proposal card.
 router.post("/:uuid/confirm", express.json(), confirm);

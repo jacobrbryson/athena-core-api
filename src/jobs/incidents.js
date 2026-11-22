@@ -27,6 +27,7 @@ require("dotenv").config();
 const pool = require("../helpers/db");
 const watch = require("../services/pulsepoint/watch");
 const timeReminders = require("../services/timeReminders");
+const healthChecks = require("../services/familyHealthSchedules");
 const placeReminders = require("../services/placeReminders");
 const weatherAlerts = require("../services/weatherAlerts");
 
@@ -64,9 +65,13 @@ async function reminderBackstop() {
 	if (args.dryRun || args.status) return;
 	try {
 		const now = new Date();
-		const [times, expired] = await Promise.all([timeReminders.fireDue({ now }), placeReminders.expireDue({ now })]);
-		if (times.fired || times.retried || expired.asked) {
-			log(`reminders backstop: sent ${times.fired}, retrying ${times.retried}, asked about ${expired.asked} expired`);
+		const [times, expired, checks] = await Promise.all([
+			timeReminders.fireDue({ now }),
+			placeReminders.expireDue({ now }),
+			healthChecks.fireDue({ now }),
+		]);
+		if (times.fired || times.retried || expired.asked || checks.fired || checks.retried) {
+			log(`reminders backstop: sent ${times.fired}, retrying ${times.retried}, asked about ${expired.asked} expired, health checks ${checks.fired} sent / ${checks.retried} retrying`);
 		}
 	} catch (error) {
 		log("reminders backstop failed:", error.message);

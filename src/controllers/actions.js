@@ -219,7 +219,34 @@ async function revokeAuthority(req, res) {
 	}
 }
 
+/**
+ * A paired phone reporting a music button it already pressed by itself under
+ * a standing approval (services/actions reportDeviceExecution; DEVICE_INSTANT
+ * only). Device tokens only: a browser has no reason to claim something
+ * happened on a phone. Answers whether a live standing approval covered it,
+ * so the phone can drop its cached copy when the answer is no.
+ */
+async function reportDevice(req, res) {
+	if (req.user?.kind !== "device") {
+		return res.status(403).json({ success: false, message: "Only a paired phone can report this" });
+	}
+	const caller = await callerProfile(req, res);
+	if (!caller) return undefined;
+	try {
+		const { approved, action } = await actions.reportDeviceExecution(
+			caller.profileId,
+			req.params.actionId,
+			req.body?.params,
+			{ at: req.body?.at, deviceId: req.user?.deviceId ?? null }
+		);
+		return res.json({ success: true, approved, action });
+	} catch (err) {
+		return fail(res, err, "Failed to record that");
+	}
+}
+
 module.exports = {
+	reportDevice,
 	perform,
 	getStatus,
 	listPending,

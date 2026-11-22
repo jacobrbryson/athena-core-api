@@ -203,4 +203,4 @@ async function mergePeople(profileId, fromUuid, intoUuid) {
 	return overview(profileId);
 }
 
-module.exports = { overview, linkContact, unlinkContact, removePerson, mergePeople, setPortrait, isoDay };
+module.exports = { overview, linkContact, unlinkContact, removePerson, mergePeople, setPortrait, isoDay, ownFact };

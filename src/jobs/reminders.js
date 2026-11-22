@@ -25,6 +25,7 @@ require("dotenv").config();
 const pool = require("../helpers/db");
 const timeReminders = require("../services/timeReminders");
 const placeReminders = require("../services/placeReminders");
+const healthChecks = require("../services/familyHealthSchedules");
 
 const args = { loop: 0 };
 for (let i = 2; i < process.argv.length; i++) {
@@ -35,12 +36,13 @@ const log = (...m) => console.log(`[reminders ${new Date().toISOString().slice(1
 
 async function pass() {
 	const now = new Date();
-	const [times, expired] = await Promise.all([
+	const [times, expired, checks] = await Promise.all([
 		timeReminders.fireDue({ now }),
 		placeReminders.expireDue({ now }),
+		healthChecks.fireDue({ now }),
 	]);
-	if (times.fired || times.retried || expired.asked) {
-		log(`sent ${times.fired}, will retry ${times.retried}, asked about ${expired.asked} expired`);
+	if (times.fired || times.retried || expired.asked || checks.fired || checks.retried) {
+		log(`sent ${times.fired}, will retry ${times.retried}, asked about ${expired.asked} expired, health checks ${checks.fired} sent / ${checks.retried} retrying`);
 	}
 }
 
