@@ -96,3 +96,42 @@ test("reopens one of many checked copies, but never duplicates an open item", as
 	] });
 	await expect(action.normalize({ operation: "bought", item: "apples" }, { profileId: 42 })).rejects.toThrow(/more than one open/);
 });
+
+describe("add_grocery_item (Provisions' Add item, a direct action)", () => {
+	const add = registry.get("add_grocery_item");
+
+	test("is direct only, never standing, and never offered to the model", () => {
+		expect(add).toMatchObject({ direct: true, standing: false, provider: "google_keep", consentType: "action_authority" });
+		expect(registry.ACTIONS).not.toContain(add);
+	});
+
+	test("adds one item (reopening a ticked regular) and refuses one already open", async () => {
+		await expect(add.normalize({ item: " eggs ", operation: "bought" }, { profileId: 42 }))
+			.resolves.toEqual({ list_id: "shared-list", list_title: "Groceries", item: "Eggs", operation: "add" });
+		await expect(add.normalize({ item: "Milk" }, { profileId: 42 })).rejects.toThrow(/already on the grocery list/);
+		await expect(add.normalize({ item: "a, b" }, { profileId: 42 })).rejects.toThrow(/Name each/);
+		keep.updateGroceryItem.mockResolvedValue({ ref: "item-9", detail: null });
+		const params = { list_id: "shared-list", list_title: "Groceries", item: "Eggs", operation: "add" };
+		await expect(add.execute(42, params)).resolves.toEqual({ ref: "item-9", detail: null });
+		expect(keep.updateGroceryItem).toHaveBeenCalledWith(42, params);
+	});
+});
+
+describe("mark_grocery_bought (Provisions' checkbox, a direct action)", () => {
+	const bought = registry.get("mark_grocery_bought");
+
+	test("is direct only and never standing", () => {
+		expect(bought).toMatchObject({ direct: true, standing: false, provider: "google_keep", consentType: "action_authority" });
+		expect(registry.ACTIONS).not.toContain(bought);
+	});
+
+	test("ticks one open item and refuses one that isn't waiting to be bought", async () => {
+		await expect(bought.normalize({ item: "MILK", operation: "add" }, { profileId: 42 }))
+			.resolves.toEqual({ list_id: "shared-list", list_title: "Groceries", item: "milk", operation: "bought" });
+		await expect(bought.normalize({ item: "Eggs" }, { profileId: 42 })).rejects.toThrow(/not waiting to be bought/);
+		keep.updateGroceryItem.mockResolvedValue({ ref: "item-1", detail: null });
+		const params = { list_id: "shared-list", list_title: "Groceries", item: "milk", operation: "bought" };
+		await bought.execute(42, params);
+		expect(keep.updateGroceryItem).toHaveBeenCalledWith(42, params);
+	});
+});

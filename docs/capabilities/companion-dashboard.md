@@ -171,9 +171,11 @@ team's first names — amber for anyone behind or at risk; tap it for the full
 Sprint Progress card), then **Active Work**: the Red team's open epics, soonest
 due first, each with its key, a bar and % complete, its status and how that's
 counted (story points done of total, or child issues done of total when they
-aren't pointed), and a due-date chip (amber when overdue). Tap an epic to open
-it in Jira. With no epics to show, it says why and lists your In Progress and
-Ready to Start issues instead. Projects' header counts active, on-hold
+aren't pointed), and a due-date chip (amber when overdue). Tap an epic to read
+it here in the app — status, project, priority, assignee, due date, the
+description, subtasks and comments — read-only, never a link out to Jira. With
+no epics to show, it says why and lists your In Progress and Ready to Start
+issues instead, which open the same way. Projects' header counts active, on-hold
 (waiting or blocked) and ready projects; area chips filter it; each of the top
 five non-work projects shows its cover photo (or an area icon), area and
 state, and a step bar with done / total, a check when every step is done, or

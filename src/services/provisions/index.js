@@ -324,7 +324,7 @@ async function summary(profileId, now = Date.now()) {
 	return {
 		status: "ready",
 		grocery: {
-			lists: food.map((l) => ({ title: l.title, toBuy: l.toBuy, usualCount: (l.usuallyBuys || []).length, recentlyBought: (l.recentlyBought || []).slice(0, 12) })),
+			lists: food.map((l) => ({ title: l.title, toBuy: l.toBuy, usualCount: (l.usuallyBuys || []).length, usuallyBuys: (l.usuallyBuys || []).slice(0, 500), recentlyBought: (l.recentlyBought || []).slice(0, 12) })),
 			appUrl: "https://keep.google.com/",
 		},
 		stock: { total: stock.total, household: stock.household, seen: stock.seen, kinds: Object.fromEntries(KINDS.map((k) => [k, stock.kinds[k].length])), items: Object.fromEntries(KINDS.map((k) => [k, stock.kinds[k].slice(0, 40)])) },

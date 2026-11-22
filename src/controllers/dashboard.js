@@ -97,4 +97,31 @@ async function priority(req, res) {
   if (!actor) return;
   return res.json(await priorityService.getPriority(actor.profileId, req.user));
 }
-module.exports = { summary, newsFeed, newsSources, patchNewsSource, deleteNewsSource, checkNews, priority };
+/**
+ * Where the Tasks card's Add task drawer can put a task (owner, 2026-11-20):
+ * the person's Google Tasks lists and the Jira projects they can create in.
+ * Reads only; each side fails on its own. Creating goes through the direct
+ * actions create_google_task / create_jira_issue.
+ */
+async function taskTargets(req, res) {
+  res.set('Cache-Control', 'no-store');
+  const actor = await requireAdultActor(req, res);
+  if (!actor) return;
+  const googleTasks = require('../services/connectors/googleTasks');
+  const jiraApiToken = require('../services/connectors/jiraApiToken');
+  const credentials = require('../services/credentials');
+  const google = googleTasks.listTaskLists(actor.profileId)
+    .then(lists => ({ lists }), err => ({ error: googleTasks.isNotConnected?.(err) || err?.code === 'not_connected' ? 'not_connected' : 'unavailable' }));
+  const jira = (async () => {
+    const access = await jiraApiToken.forProfile(actor.profileId);
+    if (!access) {
+      const linked = (await credentials.list(actor.profileId).catch(() => [])).some(c => c.provider === 'jira' && c.status === 'active');
+      return { error: linked ? 'read_only' : 'not_connected' };
+    }
+    return { projects: await jiraApiToken.listProjects(access), site: access.baseUrl.replace('https://', '') };
+  })().catch(() => ({ error: 'unavailable' }));
+  const [g, j] = await Promise.all([google, jira]);
+  return res.json({ google: g, jira: j });
+}
+
+module.exports = { taskTargets, summary, newsFeed, newsSources, patchNewsSource, deleteNewsSource, checkNews, priority };

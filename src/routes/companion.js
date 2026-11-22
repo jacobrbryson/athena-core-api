@@ -15,6 +15,7 @@ router.get('/dashboard', requireAuth, require('../controllers/dashboard').summar
 // stored, and never the person's words (controllers/handsFree.js).
 router.post('/handsfree/turn', requireAuth, express.json({ limit: '4kb' }), require('../controllers/handsFree').recordTurn);
 router.get('/dashboard/priority', requireAuth, require('../controllers/dashboard').priority);
+router.get('/dashboard/task-targets', requireAuth, require('../controllers/dashboard').taskTargets);
 router.get('/system/twilio-billing', requireAuth, require('../controllers/system').twilioBillingStatus);
 router.get('/system/openai-billing', requireAuth, require('../controllers/system').openaiBillingStatus);
 router.get('/system/gcp-billing', requireAuth, require('../controllers/system').gcpBillingStatus);

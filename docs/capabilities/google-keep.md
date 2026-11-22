@@ -26,6 +26,11 @@ marking one item bought. The card names the items and list; Keep changes only
 after you tap **Approve**. Items already open are shown as already on the list
 and left alone. If an item is a regular already ticked off, adding it unticks
 that item instead of making a duplicate.
+
+On Family → Provisions, **Add item** (with suggestions as you type) and Smart
+Restock's **+** add one item to the list right away, and an item's checkbox
+marks it bought right away (with **Undo**) — pressing it is your approval, so
+there's no card.
 If Keep has several checked copies of the same regular, I reopen one copy.
 If one is already open, I tell you it's already on the list.
 

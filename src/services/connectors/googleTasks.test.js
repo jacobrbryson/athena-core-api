@@ -167,3 +167,19 @@ describe("Tasks card checkbox (direct actions)", () => {
 		await expect(tick.normalize({ task_id: "zzz" }, ctx)).rejects.toThrow(/isn't on/);
 	});
 });
+
+describe("Tasks card Add task drawer (direct action)", () => {
+	const create = actions.get("create_google_task");
+
+	test("is direct only, never standing, and vouches like add_google_task", async () => {
+		expect(create).toMatchObject({ direct: true, standing: false, provider: "google_tasks" });
+		expect(actions.ACTIONS.some((a) => a.id === "create_google_task")).toBe(false);
+		const p = await create.normalize({ title: "Buy salt", task_list: "L2" }, ctx);
+		expect(p).toEqual({ title: "Buy salt", list_id: "L2", list_title: "House" });
+		await expect(create.normalize({ title: "Clean gutters", task_list: "L2" }, ctx)).rejects.toThrow(/already on/);
+		await expect(create.normalize({ title: "x", task_list: "nope" }, ctx)).rejects.toThrow(/no task list/);
+		http.providerRequest.mockResolvedValueOnce({ id: "new1" });
+		await expect(create.execute(7, p)).resolves.toMatchObject({ ref: "new1" });
+		expect(http.providerRequest).toHaveBeenLastCalledWith(7, "google_tasks", "/lists/L2/tasks", { method: "POST", body: { title: "Buy salt" } });
+	});
+});

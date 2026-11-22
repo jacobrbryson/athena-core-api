@@ -1,5 +1,17 @@
 # Capability ledger
 
+- 2026-11-20 — Family → Provisions' grocery checkbox now marks an item bought in Keep right away (the tick is the approval; new direct action mark_grocery_bought), shows it struck through as bought, and Undo puts it back on the list. Not deployed yet — `provisions.md`, `google-keep.md` (status: partial)
+
+- 2026-11-20 — Family → Provisions' Add item now adds straight to the Keep grocery list (pressing Add is the approval; new direct action add_grocery_item), suggests as you type from your regulars, recent buys, running-low items, the pantry and photos (marking what's already on the list), and has proper padding. Smart Restock's + adds directly too. Ticking an item bought still uses an approval card. Not deployed yet — `provisions.md`, `google-keep.md` (status: partial)
+
+- 2026-11-20 — Home's Work card no longer links out to Jira: tapping an epic (or one of your In Progress / Ready to Start issues) opens it read-only in the app, in the same panel as the Tasks card's Jira issues. Not deployed yet — `companion-dashboard.md` (status: partial)
+
+- 2026-11-20 — Tapping a Jira issue on Home's Tasks card now opens it in the app, read-only (status, project, priority, assignee, due, parent, description, acceptance criteria, subtasks, attachments, comments) instead of linking out to Jira. Not deployed yet — `google-tasks.md` (status: partial)
+
+- 2026-11-20 — The Tasks card no longer links out to Google Tasks: its header action is Add task, the folded card's action is Add task too, and "+N more" became Show N more / Show fewer on the card itself. Jira issues still open in Jira. Not deployed yet — `google-tasks.md` (status: partial)
+
+- 2026-11-20 — Home's Tasks card has ＋ Add task: a side panel with a Google Tasks / Jira toggle. Google Tasks: the task, the list, an optional due date and notes. Jira (API-token link only): a summary, the project, an optional due date and description, created as a Task assigned to you and put in the current sprint unless you untick it. Pressing Add is the approval (new direct actions create_google_task and create_jira_issue). Not deployed yet — `google-tasks.md`, `jira.md` (status: partial)
+
 - 2026-11-18 — Provisions photo inventory: Scan on the Pantry panel takes up to six photos of the fridge, pantry, freezer or counter; I list what's there (photos never kept), replacing that place's earlier list, and what I've seen counts as had for pantry totals, meal ideas and coverage, running low, and a use-soon insight. Metric tiles are now the compact Home tiles. Migration 0120 applied 2026-11-19. Not deployed yet — `provisions.md` (status: partial)
 
 - 2026-11-18 — Family → Provisions rebuilt: stat tiles; the grocery list with tick and Add item (both go to an approval card); Pantry (regulars minus what's out, by kind); Meal Coverage; meal ideas with a painted picture per dish, filters, a heart that keeps one, and New ideas; Family Food Preferences saved as memories; Smart Restock from how often items get bought; Inventory Insights. Migration 0119 applied 11-18. Not deployed yet — `provisions.md`, `google-keep.md` (status: partial)
@@ -812,3 +824,5 @@ See [`README.md`](README.md) for the full contract.
 - 2026-11-14 — Backup models and outages: Gemini out of quota or down → she keeps answering on the desktop's Ollama (over Tailscale, behind a token gate) or OpenAI, with an outage banner for everyone, a BACKUP mark on the brain pill and on replies; the "smart" policy lets the desktop answer first only where its evals match Gemini's; owner-only System → Models tab with routing stats, eval scorecard, outages, drills (one request or the whole server, max 30 min), decision preview, side-by-side and desktop ping — `model-fallback.md` (status: partial)
 - 2026-11-16 — OpenAI (gpt-5.4-mini) is now a backup for chat in production, behind Gemini and ahead of the desktop until the desktop's evals match; it shows in the Models tab's side-by-side — `model-fallback.md` (status: partial)
 - 2026-11-18 — Log Food is now a window (mockup redesign) with Favorites and Recent tabs — Recent is the last 25 different non-starred foods, tap to log again — above Tell Athena, Take a picture and Manual entry tiles — `training-and-nutrition.md` (status: partial)
+- 2026-11-21 — Ticking a Google Task on Home or a grocery item on Provisions now draws a line through it in place over 1.5 s and the row leaves once the save lands (Undo after); a grocery add shows at once with a Saving… → Saved pill — `google-tasks.md`, `provisions.md`
+- 2026-11-21 — Home's Tasks card now lists only Google Tasks due tomorrow or sooner and Jira issues In Progress or Ready to Start, In Progress first — `google-tasks.md`

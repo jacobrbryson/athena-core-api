@@ -19,6 +19,13 @@ An account can also have Jira added by the owner with a personal API token for
 its work site instead of the authorization screen. Such an account is already
 connected, needs no steps, and reads that one site directly.
 
+With an API-token link you can also create an issue from Home: the Tasks
+card's **＋ Add task** → **Jira**. You choose the project and give a summary,
+plus an optional due date and description; it's created as a Task assigned to
+you and, unless you untick it, put in the project's current sprint. Pressing
+Create issue is your approval. An Atlassian sign-in link is read-only and
+can't create issues.
+
 ## Where to find it
 
 Open Connected apps from your Companion menu and choose Jira Cloud. Complete
@@ -48,4 +55,5 @@ provider authorization has succeeded.
 - Dashboard: `../../src/services/dashboard.js`
 - Chat context: `../../src/services/connectors/context.js`
 - Frontend: `../../../companion/src/components/Dashboard.tsx`
-- Tests: `../../src/services/connectors/jiraApiToken.test.js`, `../../src/services/connectors/work.test.js`, `../../src/services/connectors/oauth.work.test.js`
+- Create (Tasks card Add task, direct action `create_jira_issue`): `listProjects` / `taskType` / `activeSprint` / `createIssue` in `jiraApiToken.js`
+- Tests: `../../src/services/connectors/jiraCreate.test.js`, `../../src/services/connectors/jiraApiToken.test.js`, `../../src/services/connectors/work.test.js`, `../../src/services/connectors/oauth.work.test.js`

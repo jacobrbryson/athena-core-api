@@ -52,6 +52,7 @@ const projectEntries = require("../projects/entries");
 const familyChores = require("../familyChores");
 const googleKeep = require("../connectors/googleKeep");
 const googleTasks = require("../connectors/googleTasks");
+const jiraApiToken = require("../connectors/jiraApiToken");
 
 /** A rejection that is the model's fault, not the person's or the server's. */
 function invalid(message) {
@@ -3161,6 +3162,136 @@ const DIRECT_ACTIONS = [
 		},
 		async execute(profileId, params) {
 			return googleTasks.updateTask(profileId, { task_id: params.task_id, list_id: params.list_id, done: false });
+		},
+	},
+	// Family → Provisions' Add item (owner, 2026-11-20: "can Add Item actually
+	// add the item to the keep list"). Pressing Add is the decision, like the
+	// Tasks card checkbox. One item, "add" only, vouched for exactly as the
+	// proposable update_grocery_list does (already on the list is refused).
+	{
+		id: "add_grocery_item",
+		label: "Add to the grocery list",
+		provider: "google_keep",
+		consentType: "action_authority",
+		reversible: true,
+		standing: false,
+		direct: true,
+		describe: "Add one item to the family's Google Keep grocery list (Family → Provisions' Add item).",
+		params: { item: "The grocery item." },
+		sameAs: false,
+		normalize(raw = {}, ctx = {}) {
+			const list = ACTIONS.find((a) => a.id === "update_grocery_list");
+			return list.normalize.call(list, { operation: "add", item: raw.item }, ctx);
+		},
+		summarize(p) {
+			return ACTIONS.find((a) => a.id === "update_grocery_list").summarize(p);
+		},
+		async execute(profileId, params) {
+			return googleKeep.updateGroceryItem(profileId, params);
+		},
+	},
+	// Its checkbox (owner, 2026-11-20: "tick directly"): one open item marked
+	// bought, vouched for exactly as update_grocery_list's "bought" is (it must
+	// be open, and only one open copy). Undo is add_grocery_item, which unticks it.
+	{
+		id: "mark_grocery_bought",
+		label: "Tick off a grocery item",
+		provider: "google_keep",
+		consentType: "action_authority",
+		reversible: true,
+		standing: false,
+		direct: true,
+		describe: "Mark one open item on the family's Google Keep grocery list bought (Family → Provisions' checkbox).",
+		params: { item: "The grocery item." },
+		sameAs: false,
+		normalize(raw = {}, ctx = {}) {
+			const list = ACTIONS.find((a) => a.id === "update_grocery_list");
+			return list.normalize.call(list, { operation: "bought", item: raw.item }, ctx);
+		},
+		summarize(p) {
+			return ACTIONS.find((a) => a.id === "update_grocery_list").summarize(p);
+		},
+		async execute(profileId, params) {
+			return googleKeep.updateGroceryItem(profileId, params);
+		},
+	},
+	// The Tasks card's Add task drawer (owner, 2026-11-20): "add tasks from
+	// within that card ... toggle between Google Tasks and Jira". Pressing Add
+	// is the decision, like the checkbox above. The Google one vouches for its
+	// params exactly as the proposable add_google_task does; neither is standing
+	// and neither is offered to the model (direct actions never are).
+	{
+		id: "create_google_task",
+		label: "Add a Google Task",
+		provider: "google_tasks",
+		consentType: "action_authority",
+		reversible: true,
+		standing: false,
+		direct: true,
+		describe: "Add one task to their own Google Tasks (the Tasks card's Add task drawer).",
+		params: { title: "The task.", task_due: "YYYY-MM-DD, optional.", task_notes: "Optional notes.", task_list: "The list id." },
+		sameAs: false,
+		normalize(raw = {}, ctx = {}) {
+			return ACTIONS.find((a) => a.id === "add_google_task").normalize(raw, ctx);
+		},
+		summarize(p) {
+			return ACTIONS.find((a) => a.id === "add_google_task").summarize(p);
+		},
+		async execute(profileId, params) {
+			const { ref, link } = await googleTasks.createTask(profileId, params);
+			return { ref, detail: { link } };
+		},
+	},
+	{
+		id: "create_jira_issue",
+		label: "Create a Jira issue",
+		provider: "jira",
+		consentType: "action_authority",
+		// They can delete or close it in Jira; there is no undo here.
+		reversible: true,
+		standing: false,
+		direct: true,
+		describe: "Create one Jira issue assigned to themselves (the Tasks card's Add task drawer).",
+		params: { summary: "The issue's summary.", project_key: "A project they can create in.", task_due: "YYYY-MM-DD, optional.", description: "Optional.", in_sprint: "true to add it to the project's active sprint." },
+		sameAs: false,
+		async availableTo(profileId) {
+			return Boolean(await jiraApiToken.forProfile(profileId));
+		},
+		async normalize(raw = {}, ctx = {}) {
+			const access = ctx.profileId ? await jiraApiToken.forProfile(ctx.profileId) : null;
+			if (!access) throw invalid("Jira needs an API-token link to create issues");
+			const summary = str(raw.summary, 255);
+			if (!summary) throw invalid("An issue needs a summary");
+			const key = str(raw.project_key, 20);
+			if (!jiraApiToken.PROJECT_KEY.test(key || "")) throw invalid("Choose a Jira project");
+			const project = (await jiraApiToken.listProjects(access)).find((p) => p.key === key);
+			if (!project) throw invalid("You can't create issues in that Jira project");
+			const type = await jiraApiToken.taskType(access, project.key);
+			if (!type) throw invalid(`${project.name} has no issue type for a task`);
+			const out = { summary, project_key: project.key, project_name: project.name, issue_type_id: type.id, issue_type: type.name };
+			if (raw.task_due) {
+				const due = str(raw.task_due, 10);
+				if (!googleTasks.DATE_ONLY.test(due || "") || Number.isNaN(Date.parse(`${due}T00:00:00Z`))) throw invalid("A due date is YYYY-MM-DD");
+				const days = (Date.parse(`${due}T00:00:00Z`) - Date.now()) / 86400000;
+				if (days > 3 * 366) throw invalid("That due date is too far in the future");
+				if (days < -2) throw invalid("That due date is already past");
+				out.due = due;
+			}
+			const description = str(raw.description, 4000);
+			if (description) out.description = description;
+			if (raw.in_sprint === true || raw.in_sprint === "true") {
+				const sprint = await jiraApiToken.activeSprint(access, project.key).catch(() => null);
+				if (sprint) Object.assign(out, { sprint_id: sprint.id, sprint_name: sprint.name });
+			}
+			return out;
+		},
+		summarize(p) {
+			return `Create the ${p.issue_type} "${p.summary}" in ${p.project_name}${p.sprint_name ? ` (${p.sprint_name})` : ""}${p.due ? `, due ${p.due}` : ""}`.slice(0, 500);
+		},
+		async execute(profileId, params) {
+			const access = await jiraApiToken.forProfile(profileId);
+			if (!access) throw invalid("Jira needs an API-token link to create issues");
+			return jiraApiToken.createIssue(access, params);
 		},
 	},
 	{

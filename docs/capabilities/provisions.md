@@ -14,9 +14,14 @@ triggers: [provisions, pantry, fridge, freezer, inventory, scan my pantry, photo
 Family → Provisions works from the one food record your family keeps: the
 shared Google Keep grocery list. It shows:
 
-- **Grocery list** — what you're out of. Tick an item or type one into
-  **Add item** and I'll propose the change on an approval card; Keep only
-  changes after you approve.
+- **Grocery list** — what you're out of. Type into **Add item** and it
+  suggests from your own items (what's running low, your regulars, recent buys,
+  the pantry and what photos showed — anything already on the list is marked
+  "on the list"); press **Add** or Enter, or pick a suggestion, and it goes
+  straight onto the Keep list — pressing Add is your approval. A regular
+  that's ticked off is unticked rather than duplicated. Tick an item's box and
+  it's marked bought in Keep right away: a line draws through it, it leaves
+  the list once Keep has it, and **Undo** puts it back on the list.
 - **Pantry** — your regulars (the ticked items on the list) minus what's on
   it now, sorted into proteins, grains, canned, produce, dairy and frozen. Tap
   a kind to see its items. Household things like soap and medicine are counted
@@ -32,7 +37,7 @@ shared Google Keep grocery list. It shows:
   after that, take a new one.
 - **Running low and Smart Restock** — items I've seen bought at least twice,
   with how often you usually buy them and roughly when you'll run out. The
-  **+** asks me to add one to the list.
+  **+** adds it to the Keep list right away (a ✓ once it's on the list).
 - **Meal ideas** — dinners, lunches, breakfasts and snacks I suggest from your
   regulars, each with a picture of the dish, how long it takes, and whether
   you have everything ("From Pantry"), most of it ("Have Most") or need a few
@@ -73,14 +78,25 @@ capability).
   on the list, not what's on the shelves today, and "running low" is an
   estimate from how often you've bought it.
 - Meal coverage counts ideas, not days or servings. I don't know quantities.
-- Ticking, adding and restocking all go through an approval card; nothing on
-  this page changes Keep by itself.
+- Add item, the checkbox and Smart Restock's **+** change Keep when you press
+  them — your press is the approval. Nothing on this page changes Keep by
+  itself.
 - Meal ideas are suggestions. Whether you have an ingredient is a match on
   its name, so "chicken" counts for any chicken on your list.
 - A dish only shows as someone's favourite if their saved preferences match
   it. I don't guess favourites.
 
 ## Under the hood
+
+- Add item (owner, 2026-11-20): `../../../companion/src/components/GroceryAddField.tsx`
+  (combobox; suggestions from `restock`, `recentlyBought`, `usuallyBuys`,
+  `stock.items` and photo items — `usuallyBuys` added to the grocery lists in
+  `src/services/provisions/index.js`, capped at 500). Add and Smart Restock's
+  **+** run the direct action `add_grocery_item` (DIRECT_ACTIONS in
+  `src/services/actions/registry.js`; reuses `update_grocery_list`'s normalize
+  with operation "add"; tests in `src/services/actions/groceryAction.test.js`).
+  The checkbox runs `mark_grocery_bought` (operation "bought": one open copy
+  only); its Undo runs `add_grocery_item`, which unticks the same item.
 
 **Never sent to a model**, except the meal-idea step and the dish pictures
 noted below.
