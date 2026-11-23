@@ -288,6 +288,25 @@ describe("weather alerts", () => {
 		expect(a).toMatchObject({ event: "Tornado Warning", serious: true, place: "Home", instruction: "Take shelter now." });
 	});
 
+	test("keeps what the alert is about, not just its name", () => {
+		const fog =
+			"...PATCHY AND LOCALLY DENSE FOG THIS MORNING...\n\nPatchy fog will continue through mid-morning in the\nNorth Carolina Piedmont. Fog is expected to improve by 930 AM this morning.";
+		const a = nws.alert(feature({ event: "Special Weather Statement", severity: "Moderate", urgency: "Expected", description: fog, instruction: null }), place);
+		expect(a.about).toBe("Patchy and locally dense fog this morning");
+		expect(a.description).toMatch(/^\.\.\.PATCHY.*Piedmont\. Fog is expected to improve by 930 AM/);
+		expect(nws.about("* WHAT...Visibility one quarter mile or less in dense fog.\n\n* WHERE...Iredell.")).toBe(
+			"Visibility one quarter mile or less in dense fog"
+		);
+		expect(nws.about("Strong winds are expected tonight. More text.")).toBe("Strong winds are expected tonight");
+		expect(nws.about("")).toBeNull();
+	});
+
+	test("the fallback push says what a vague alert is about", async () => {
+		const alerts = [{ id: "w2", event: "Special Weather Statement", severity: "Moderate", urgency: "Expected", area: "Iredell", about: "Patchy and locally dense fog this morning", instruction: null, place: "Home", serious: false }];
+		const s = await watch.assess([], { weather: alerts, generate: async () => { throw new Error("no model"); } });
+		expect(s.body).toBe("Special Weather Statement: Patchy and locally dense fog this morning.");
+	});
+
 	test("a watch is kept but is not 'serious' — it has not started", () => {
 		expect(nws.alert(feature({ event: "Tornado Watch", severity: "Severe", urgency: "Future" }), place).serious).toBe(false);
 	});

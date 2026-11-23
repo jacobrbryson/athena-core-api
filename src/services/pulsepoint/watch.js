@@ -364,6 +364,8 @@ function sheet(hits, countyActive, weather = []) {
 			urgency: w.urgency,
 			covers: w.area,
 			forWatchedPlace: w.place,
+			whatItIsAbout: w.about || null,
+			whatItSays: w.description || null,
 			officialAdvice: w.instruction,
 		})),
 	};
@@ -382,8 +384,11 @@ const PROMPT = (facts, floor) =>
 	"- headline: at most 8 words. Plain, specific, no exclamation marks.\n" +
 	"- body: at most 45 words, spoken to them directly. Say what is happening and how close. " +
 	"With three calls or fewer, mention every one by what and street; with more, give the count " +
-	"and the nearest. Cover the weather alerts too, briefly, in the weather service's own terms; " +
-	"its advice line may be quoted. If several calls share a cause you can see in the list " +
+	"and the nearest. Cover the weather alerts too, briefly, in the weather service's own terms. " +
+	"For each, say what it is actually about and until when, from whatItIsAbout and whatItSays " +
+	'(e.g. "patchy, locally dense fog until about 9:30 AM, worst around Statesville") — never ' +
+	"just the alert's name, which can be as empty as \"Special Weather Statement\". Do not recite " +
+	"the whole statement; its advice line may be quoted. If several calls share a cause you can see in the list " +
 	"(e.g. many trees down during a storm warning), say so plainly. " +
 	"You may add one practical suggestion only if it follows directly " +
 	"from the list (e.g. avoid a named street with a call on it). Do not invent anything that is " +
@@ -405,7 +410,9 @@ function fallbackAssessment(hits = [], weather = []) {
 			: `${weather.length} weather alerts near ${place}`;
 	const lines = [];
 	if (calls.length) lines.push(wording(calls));
-	for (const w of weather.slice(0, 3)) lines.push(`${w.event}${w.instruction ? `. ${w.instruction}` : ""}`);
+	for (const w of weather.slice(0, 3)) {
+		lines.push(`${w.event}${w.about ? `: ${w.about}` : ""}${w.instruction ? `. ${w.instruction}` : "."}`);
+	}
 	return { level, headline, body: lines.join(" ").slice(0, 1000), assessedBy: "rules" };
 }
 
@@ -1571,6 +1578,7 @@ async function promptBlock(profileId) {
 	const weatherLines = alerts.map(
 		(a) =>
 			`- ${a.event} (${a.severity}${a.urgency ? `, ${a.urgency.toLowerCase()}` : ""}) over ${a.area}` +
+			`${a.about ? ` — about: ${a.about}` : ""}` +
 			`${a.instruction ? ` — official advice: ${a.instruction}` : ""}`
 	);
 

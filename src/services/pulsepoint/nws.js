@@ -75,6 +75,28 @@ function get(path) {
 	});
 }
 
+/** NWS text is hard-wrapped at ~70 columns; one line reads better. */
+function clean(text) {
+	return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * What an alert is about, in one short line, from its description. NWS
+ * writes it one of two ways: a "...PATCHY AND LOCALLY DENSE FOG THIS
+ * MORNING..." banner, or "* WHAT...Visibility one quarter mile or less".
+ * Failing both, the first sentence.
+ */
+function about(description) {
+	const text = String(description || "");
+	const banner = text.match(/^\s*\.\.\.([^.][\s\S]*?)\.\.\.\s*$/m);
+	const what = text.match(/\*\s*WHAT\.\.\.([\s\S]*?)(?:\n\s*\n|\n\s*\*|$)/);
+	let line = banner ? clean(banner[1]) : what ? clean(what[1]) : clean(text).split(/(?<=\.)\s/)[0] || "";
+	line = line.replace(/[.\s]+$/, "");
+	if (!line) return null;
+	if (line === line.toUpperCase()) line = line.charAt(0) + line.slice(1).toLowerCase();
+	return line.slice(0, 160);
+}
+
 /** Their alert -> ours, or null when it is not worth anyone's attention. */
 function alert(feature, place) {
 	const p = feature?.properties;
@@ -92,6 +114,10 @@ function alert(feature, place) {
 		// better in one line and the full headline is there if wanted.
 		headline: (p.headline || p.event || "").slice(0, 300),
 		instruction: (p.instruction || "").trim().slice(0, 300) || null,
+		// The event name alone can say nothing ("Special Weather Statement"):
+		// what it is actually about lives in the description.
+		about: about(p.description),
+		description: clean(p.description).slice(0, 700) || null,
 		area: (p.areaDesc || "").slice(0, 200),
 		onset: p.onset || p.effective || null,
 		expires: p.expires || null,
@@ -127,4 +153,4 @@ async function alertsForPlaces(places = []) {
 	return [...byId.values()].sort((a, b) => Number(b.serious) - Number(a.serious));
 }
 
-module.exports = { alertsForPlace, alertsForPlaces, alert };
+module.exports = { alertsForPlace, alertsForPlaces, alert, about };

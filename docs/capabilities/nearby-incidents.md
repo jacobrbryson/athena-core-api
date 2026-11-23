@@ -39,7 +39,9 @@ sources feed this:
   if you ask what's going on.
 - **National Weather Service alerts** for each watched place, checked every 15
   minutes (every 5 for an hour after something comes up). A warning that is
-  happening now is urgent; a watch is not.
+  happening now is urgent; a watch is not. I tell you what each alert is
+  actually about and until when (say, dense fog until 9:30 this morning), not
+  just its name, without reading out the whole statement.
 
 Two or more calls at once, or any serious one, is urgent: it breaks quiet
 hours, goes to every device you've set up, and I'll lead our conversation with
