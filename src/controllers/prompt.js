@@ -991,6 +991,8 @@ You cannot fetch, check or look anything up while answering. Everything you can 
 
 module.exports = {
   generatePrompt,
+  ADVENTURE_LABELS,
+  ADVENTURE_KITS,
   buildAdultCompanionPrompt,
   RESPONSE_SCHEMA,
 };

@@ -389,4 +389,12 @@ async function storeProofPhoto(step, buf, contentType) {
 	return { uuid, path: `gs://${BUCKET()}/${name}` };
 }
 
-module.exports = { storeProofPhoto, requestScout, savePhoto, analyzeSet, verify, deliverer, instructionFor, landmarkBearings, labelKey, DIRECTIONS };
+/** A kept proof photo's bytes, by its gs:// path. Only this module's bucket. */
+async function readProofPhoto(path) {
+	const m = /^gs:\/\/([^/]+)\/(.+)$/.exec(String(path || ""));
+	if (!m || m[1] !== BUCKET()) throw Object.assign(new Error("That photo isn't here."), { status: 404 });
+	const [buf] = await storage().bucket(m[1]).file(m[2]).download();
+	return buf;
+}
+
+module.exports = { storeProofPhoto, readProofPhoto, requestScout, savePhoto, analyzeSet, verify, deliverer, instructionFor, landmarkBearings, labelKey, DIRECTIONS };

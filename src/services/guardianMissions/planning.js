@@ -59,7 +59,7 @@ const STEP_SCHEMA = {
 		instruction: { type: "string" },
 		quest: { type: "string" },
 		place: { type: "string" },
-		proof: { type: "string", enum: ["none", "photo", "photo_set", "camera_check", "kid_confirm", "parent_confirm", "code"] },
+		proof: { type: "string", enum: ["none", "photo", "photo_set", "camera_check", "kid_confirm", "parent_confirm", "code", "game"] },
 		subject: { type: "string" },
 		camera: { type: "string" },
 		gesture: { type: "string" },
@@ -135,6 +135,14 @@ function validateSafety(plan, actorKinds = {}) {
  * ignored. `allowGuest` is for a plan a person wrote: a model can never point a
  * camera check at someone outside the family.
  */
+/** A game a plan is played through (I Spy, 11-23): its kind, rounds to finish, and who takes turns. */
+function normalizeGame(raw) {
+	if (raw?.kind !== "ispy") return null;
+	const rounds = Math.min(50, Math.max(1, Math.round(Number(raw.rounds) || 12)));
+	const players = (Array.isArray(raw.players) ? raw.players : []).map((k) => String(k)).filter((k) => /^[a-z0-9_-]{1,40}$/.test(k)).slice(0, 6);
+	return players.length >= 2 ? { kind: "ispy", rounds, players } : null;
+}
+
 function normalize(raw, capabilityKeys, { allowGuest = false } = {}) {
 	const steps = Array.isArray(raw?.steps) ? raw.steps : [];
 	// Every ask travels by push, and the gate checks that too, so a plan with steps lists it.
@@ -165,6 +173,7 @@ function normalize(raw, capabilityKeys, { allowGuest = false } = {}) {
 			})),
 			story: story.normalizeStory(raw?.story),
 			zone: raw?.zone ? text(raw.zone, 36) : null,
+			game: normalizeGame(raw?.game),
 			safety: { where: text(raw?.safety?.where, 300), supervision: text(raw?.safety?.supervision, 300), offLimits: text(raw?.safety?.offLimits, 300) },
 		},
 		passCriteria: Array.isArray(raw?.passCriteria) ? raw.passCriteria : [],

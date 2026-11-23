@@ -159,7 +159,7 @@ describe("scout helpers", () => {
 
 describe("team progress", () => {
 	test("a Guardian with nothing recorded is a level 1 Recruit", () => {
-		expect(team.standing({})).toEqual({ level: 1, role: "Recruit", levelProgress: 0 });
+		expect(team.standing({})).toEqual({ level: 1, role: "Recruit", levelProgress: 0, xp: 0, xpPerLevel: 25 });
 	});
 
 	test("level comes from what they did, role from where most of it is", () => {

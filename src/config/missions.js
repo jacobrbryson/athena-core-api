@@ -273,16 +273,9 @@ const MISSIONS = {
 							"Ollie brought the dog to the swearing-in. Marcus said dogs can't be Guardians. Ollie said Biscuit found the box in the first place so Biscuit's already done more than Marcus ever has. We voted. Biscuit's in.\n\nThen we all went and got a cold one off the freezer on Sam's back porch, because that's what you do when somebody gets sworn in, and that's what you do when you finish a thing. Sam's daddy never once charged us and never once let on that he knew what we were up to.",
 						note: "Note for the record that the Guardian Network has historically included a dog and that you intend to honour that precedent. Then, quieter, note the second paragraph and say you're filing it under 'procedure'. You are not joking.",
 					},
-					{
-						id: "F-17",
-						code: "EDJO",
-						act: 2,
-						type: "mirrored",
-						title: "The mirrored page",
-						record:
-							"IF YOU ARE READING THIS THE WATER IS ALREADY UP. GOOD. THAT MEANS IT WORKED.",
-						note: "SCRIPTED FAILURE: your first response must be a garbled literal transcription of reversed characters — nonsense. Then say that's what the file gives you, that you don't believe it, and ask a Guardian to look at the physical card and tell you what they actually see. When they correct you, be delighted and say so by name.",
-					},
+					// F-17 "The mirrored page" (the waterline card) was removed by the owner
+					// on 2026-11-23: only the test account ever recorded it, so every real
+					// Guardian's First Watch stood at 27/28 forever. 27 cards is the set.
 
 					/* ---------------- Act III — What They Left ---------------- */
 					{
@@ -432,7 +425,6 @@ const MISSIONS = {
 					"F-14": "CHECK THE GLOVEBOX OF THE SMALL VEHICLE THAT ISN'T A CAR.",
 					"F-15": "IN THE DINING ROOM, LOOK ON TOP OF A CHAIR — NOT UNDERNEATH.",
 					"F-16": "OPEN THE COLD BOX NEAR THE POOL.",
-					"F-17": "WALK THE WATERLINE SLOWLY. THE LAKE MAY HAVE MOVED THIS ONE.",
 					"F-18": "IN THE GARAGE, SEARCH THE WORKSHOP SIDE WHERE THINGS ARE BUILT.",
 					"F-19": "DOWNSTAIRS, SEARCH A SHELF IN THE PANTRY CLOSET.",
 					"F-20": "IN THE CABANA BY THE WATER, OPEN A CABINET.",

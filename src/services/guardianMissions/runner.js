@@ -33,7 +33,8 @@ const MAX_STEPS = 40;
 const MIN_DEADLINE_MINUTES = 5;
 const PHASES = new Set(["prep", "live"]);
 // The proof a plan may ask for: the kinds something can actually complete.
-const PROOFS = new Set(["none", "photo", "photo_set", "camera_check", "kid_confirm", "parent_confirm", "code"]);
+// "game" (11-23): the step is finished by the game the plan names (I Spy), never by a tap.
+const PROOFS = new Set(["none", "photo", "photo_set", "camera_check", "kid_confirm", "parent_confirm", "code", "game"]);
 // What Companion and the phone can finish for an adult. The Guardians app's card is for kids.
 const ADULT_PROOFS = new Set(["none", "parent_confirm", "photo_set", "camera_check"]);
 // The tools a camera_check tests.
@@ -98,6 +99,7 @@ function validatePlan(plan, { capabilityKeys = [], actors = {} } = {}) {
 		if (!Number.isInteger(s?.dueMinutes) || s.dueMinutes < 1) problems.push(`${name}: it needs a deadline in minutes.`);
 		if (s?.predictMinutes != null && !(Number(s.predictMinutes) > 0)) problems.push(`${name}: its prediction needs a number of minutes.`);
 		if (s?.proof === "code" && s?.phase !== "live") problems.push(`${name}: a code proves a live step.`);
+		if (s?.proof === "game" && (!plan?.game || s?.phase !== "live" || (person && person.kind !== "kid"))) problems.push(`${name}: a game proves a kid's live step in a plan that names its game.`);
 		if (s?.proof === "camera_check") {
 			if (s?.phase !== "live") problems.push(`${name}: a camera check proves a live step.`);
 			if (person && person.kind !== "parent") problems.push(`${name}: an adult sends someone to the camera.`);

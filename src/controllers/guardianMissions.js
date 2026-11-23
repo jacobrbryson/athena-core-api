@@ -233,44 +233,231 @@ const kidSteps = async (actor) => {
 
 const mySteps = asGuardian(async (req, res, { actor }) => res.json(await kidSteps(actor)));
 
+/**
+ * The same kid-side handlers, reached from a kid's own Companion sign-in
+ * instead of the Guardians app. Only a child profile gets through, and only to
+ * its own kid actor: an adult or a parent actor is refused, and the body never
+ * names whose steps these are.
+ */
+const asKid = (fn) => async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  let who;
+  try {
+    who = await resolveActor(req);
+  } catch {
+    return res.status(401).json({ success: false, message: 'Unauthorized' });
+  }
+  if (who.audience === 'adult') return res.status(403).json({ success: false, message: 'This is the kids\' side.' });
+  try {
+    const [rows] = await require('../helpers/db').query("SELECT * FROM athena_gm_actor WHERE profile_id = ? AND kind = 'kid' ORDER BY id LIMIT 1", [who.profileId]);
+    return await fn(req, res, { actor: rows[0] || null, profileId: who.profileId });
+  } catch (err) {
+    return answerError(res, err);
+  }
+};
+
 /** The step is on their screen, which starts its clock if nothing reached a phone. */
-const mySeen = asGuardian(async (req, res, { actor }) => {
+const seenStep = async (req, res, { actor }) => {
   if (!actor) return res.status(409).json({ success: false, message: 'Your family has not joined yet.' });
   await runner.stepSeen(await partners.stepFamilyFor(actor, req.params.uuid), req.params.uuid, actor);
   return res.json(await kidSteps(actor));
-});
+};
+const mySeen = asGuardian(seenStep);
 
-const myCode = asGuardian(async (req, res, { actor }) => {
+const codeStep = async (req, res, { actor }) => {
   if (!actor) return res.status(409).json({ success: false, message: 'Your family has not joined yet.' });
   const out = await proof.submitCode(await partners.stepFamilyFor(actor, req.params.uuid), req.params.uuid, req.body?.code, actor);
   return res.json({ ...out, ...(await kidSteps(actor)) });
-});
+};
+const myCode = asGuardian(codeStep);
 
-const myDone = asGuardian(async (req, res, { actor }) => {
+const doneStep = async (req, res, { actor }) => {
   if (!actor) return res.status(409).json({ success: false, message: 'Your family has not joined yet.' });
   const familyId = await partners.stepFamilyFor(actor, req.params.uuid);
   const step = await missions.stepByUuid(familyId, req.params.uuid);
   if (Number(step.assigned_actor_id) !== Number(actor.id)) return res.status(403).json({ success: false, message: 'That step is for someone else.' });
   await missions.replyToStep(familyId, req.params.uuid, { actorId: actor.id, reply: 'done', via: 'app' });
   return res.json(await kidSteps(actor));
-});
+};
+const myDone = asGuardian(doneStep);
 
-const myPhoto = asGuardian(async (req, res, { actor }) => {
+const photoStep = async (req, res, { actor }) => {
   if (!actor) return res.status(409).json({ success: false, message: 'Your family has not joined yet.' });
   const familyId = await partners.stepFamilyFor(actor, req.params.uuid);
   const out = await proof.submitPhoto(familyId, req.params.uuid, { imageBase64: req.body?.image, contentType: req.body?.contentType }, actor, llm);
   return res.json({ ...out, ...(await kidSteps(actor)) });
-});
+};
+const myPhoto = asGuardian(photoStep);
 
 /** A kid presses Go, where a template allows it. Their parents hear about it at once. */
-const myGo = asGuardian(async (req, res, { actor }) => {
+const goMission = async (req, res, { actor }) => {
   if (!actor) return res.status(409).json({ success: false, message: 'Your family has not joined yet.' });
   await runner.kidGo(actor, req.params.uuid, {
     deliver: scout.deliverer(push),
     tellAdults: (adults, body) => Promise.all(adults.filter((a) => a.profile_id).map((a) => push.sendToProfile(a.profile_id, { title: 'Athena', body }).catch(() => null))),
   });
   return res.json(await kidSteps(actor));
+};
+const myGo = asGuardian(goMission);
+
+const kidSeen = asKid(seenStep);
+const kidCode = asKid(codeStep);
+const kidDone = asKid(doneStep);
+const kidGo = asKid(goMission);
+const kidPhoto = asKid(photoStep);
+
+// I Spy (11-23): a kid's own game, from their Companion sign-in.
+const ispy = require('../services/guardianMissions/ispy');
+const noGame = (res) => res.status(409).json({ success: false, message: "There's no I Spy game going right now." });
+const ispyState = asKid(async (req, res, { actor }) => res.json({ game: await ispy.state(actor) }));
+const ispySpy = asKid(async (req, res, { actor }) => {
+  if (!actor) return noGame(res);
+  return res.json({ game: await ispy.kidSpies(actor, { imageBase64: req.body?.image, contentType: req.body?.contentType, clue: req.body?.clue, answer: req.body?.answer }, llm) });
 });
+const ispyAthena = asKid(async (req, res, { actor }) => {
+  if (!actor) return noGame(res);
+  return res.json({ game: await ispy.athenaSpies(actor, { imageBase64: req.body?.image, contentType: req.body?.contentType }, llm) });
+});
+const ispyJudge = asKid(async (req, res, { actor }) => {
+  if (!actor) return noGame(res);
+  if (typeof req.body?.right !== 'boolean') return res.status(400).json({ success: false, message: 'right must be true or false.' });
+  return res.json({ game: await ispy.judge(actor, req.params.uuid, { right: req.body.right, hint: req.body?.hint }, llm) });
+});
+const ispyGuess = asKid(async (req, res, { actor }) => {
+  if (!actor) return noGame(res);
+  const { right, ...game } = await ispy.guess(actor, req.params.uuid, req.body?.guess);
+  return res.json({ right, game });
+});
+const ispyReveal = asKid(async (req, res, { actor }) => {
+  if (!actor) return noGame(res);
+  return res.json({ game: await ispy.reveal(actor, req.params.uuid) });
+});
+const ispyPhoto = asKid(async (req, res, { actor }) => {
+  if (!actor) return noGame(res);
+  const { buf, type } = await ispy.roundPhoto(actor, req.params.uuid);
+  res.set('Content-Type', type);
+  return res.send(buf);
+});
+
+/**
+ * Where each of this kid's quests stands, as a trail of stops: done, the one
+ * they're on, and the ones still hidden. Never a step's adult wording, and
+ * never what a later stop asks.
+ */
+const kidTrails = async (actor) => {
+  const [rows] = await require('../helpers/db').query(
+    `SELECT m.uuid, m.title, m.plan, m.started_at, s.status, s.sent_at
+     FROM athena_gm_mission m JOIN athena_gm_mission_step s ON s.mission_id = m.id
+     WHERE s.assigned_actor_id = ? AND m.status IN ('approved','running','paused')
+     ORDER BY m.started_at DESC, m.id DESC, s.seq`,
+    [actor.id]
+  );
+  const byMission = new Map();
+  for (const r of rows) {
+    if (!byMission.has(r.uuid)) {
+      const plan = typeof r.plan === 'string' ? JSON.parse(r.plan) : r.plan;
+      byMission.set(r.uuid, { uuid: r.uuid, title: story.forKid(plan, { title: r.title }).mission, stops: [] });
+    }
+    const done = ['done', 'declined'].includes(r.status);
+    byMission.get(r.uuid).stops.push(done ? 'done' : r.sent_at ? 'current' : 'locked');
+  }
+  return [...byMission.values()];
+};
+
+/**
+ * A kid's Base screen in Companion: their open step, their quest trail, their
+ * Guardian card, their squad and what Athena has learned. First names only,
+ * the same as the parents' Guardians page; no codes, no controls, no cameras.
+ * A child with no Guardians actor still gets an answer, so the page can greet
+ * them instead of failing.
+ */
+const kidHome = asKid(async (req, res, { actor }) => {
+  const db = require('../helpers/db');
+  const firstName = (n) => String(n || '').trim().split(/\s+/)[0] || null;
+  const surname = (n) => { const parts = String(n || '').trim().split(/\s+/); return parts.length > 1 ? parts[parts.length - 1] : null; };
+  if (!actor) return res.json({ guardian: false, name: null, steps: [], ready: [], reveals: [], trails: [], history: [], me: null, squad: [], squadName: null, squads: [], others: [], feed: [], weekFinds: 0, athena: [], clues: null, skills: [], specialists: [], kit: [], adventure: null, stopWord: null });
+  const [own, trails, view, history, [credRows]] = await Promise.all([
+    kidSteps(actor),
+    kidTrails(actor),
+    missions.overview(Number(actor.family_id)),
+    kidHistory(actor),
+    actor.guardian_credential_id ? db.query('SELECT adventure_key FROM guardian_credential WHERE id = ?', [actor.guardian_credential_id]) : Promise.resolve([[]]),
+  ]);
+  const adventureKey = credRows[0]?.adventure_key || null;
+  // Squads are the families on the adventure, by surname, the way the Guardians
+  // app's own map already names them. First names inside, nothing else.
+  const [[team], [[week]]] = adventureKey
+    ? await Promise.all([
+        db.query("SELECT display_name FROM guardian_credential WHERE adventure_key = ? AND participant_type = 'guardian' AND is_active = 1", [adventureKey]),
+        db.query('SELECT COUNT(*) AS n FROM guardian_index_find WHERE adventure_key = ? AND found_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)', [adventureKey]),
+      ])
+    : [[[]], [[{ n: 0 }]]];
+  const surnameOf = new Map(team.map((t) => [String(firstName(t.display_name)).toLowerCase(), surname(t.display_name)]));
+  const name = firstName(actor.display_name);
+  const roster = view.team?.roster || [];
+  const mine = roster.find((g) => g.name.toLowerCase() === String(name).toLowerCase());
+  const kids = view.guardians || [];
+  const badges = kids.find((g) => g.uuid === actor.uuid)?.badges || [];
+  const levelOf = (list, skillName) => list.find((b) => b.name === skillName)?.level || 'untested';
+  const topSkill = badges.find((b) => b.level === 'reliable') || badges.find((b) => b.level === 'learning') || null;
+  const card = (g) => ({ name: g.name, level: g.level, role: g.role });
+  const others = roster.filter((g) => !g.ours);
+  const squads = new Map();
+  for (const g of others) {
+    const key = surnameOf.get(g.name.toLowerCase()) || 'Other';
+    if (!squads.has(key)) squads.set(key, []);
+    squads.get(key).push(card(g));
+  }
+  const { ADVENTURE_LABELS, ADVENTURE_KITS } = require('./prompt');
+  const skills = view.skills || [];
+  return res.json({
+    guardian: true,
+    name,
+    ...own,
+    trails,
+    history,
+    me: {
+      level: mine?.level || 1, role: mine?.role || 'Recruit', levelProgress: mine?.levelProgress || 0,
+      xp: mine?.xp || 0, xpPerLevel: mine?.xpPerLevel || 25,
+      finds: mine?.finds || 0, trailKeys: mine?.trailKeys || 0, mapPieces: mine?.contributions || 0, missionsStarted: mine?.missionsStarted || 0,
+      badges: badges.filter((b) => b.level !== 'untested').length, checkedIn: Boolean(mine?.checkedIn),
+      topSkill: topSkill ? { name: topSkill.name, badge: topSkill.badge, level: topSkill.level } : null,
+    },
+    squad: roster.filter((g) => g.ours).map(card),
+    squadName: surname(actor.display_name) || surnameOf.get(String(name).toLowerCase()) || null,
+    squads: [...squads.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([family, members]) => ({ name: family, members: members.sort((a, b) => a.name.localeCompare(b.name)) })),
+    others: others.map(card),
+    feed: (view.team?.activity || []).slice(0, 6).map((a) => ({ who: a.who, text: a.text, at: a.at })),
+    weekFinds: Number(week?.n) || 0,
+    athena: (view.abilities || []).map((a) => ({ key: a.key, name: a.name, percent: a.percent })),
+    clues: view.team?.clues ? { found: view.team.clues.found, total: view.team.clues.total } : null,
+    // Every skill the household tracks, and how far this kid is with each.
+    skills: skills.map((s) => ({ name: s.name, badge: s.badge, level: levelOf(badges, s.name) })),
+    // Who in this household can do what. Own family only.
+    specialists: skills
+      .map((s) => ({ skill: s.name, badge: s.badge, who: kids.map((k) => ({ name: firstName(k.name), level: levelOf(k.badges || [], s.name) })).filter((w) => w.level !== 'untested') }))
+      .filter((s) => s.who.length),
+    adventure: adventureKey ? { key: adventureKey, label: ADVENTURE_LABELS[adventureKey] || null } : null,
+    kit: (adventureKey && ADVENTURE_KITS[adventureKey]) || [],
+    stopWord: view.control?.stopWord || null,
+  });
+});
+
+/** Every quest this kid was really part of that has ended, newest first, with what it was for. */
+const kidHistory = async (actor) => {
+  const [rows] = await require('../helpers/db').query(
+    `SELECT m.uuid, m.title, m.plan, m.status, m.ended_at
+     FROM athena_gm_mission m
+     WHERE m.status IN ('completed','stopped')
+       AND EXISTS (SELECT 1 FROM athena_gm_mission_step s WHERE s.mission_id = m.id AND s.assigned_actor_id = ? AND s.sent_at IS NOT NULL)
+     ORDER BY m.ended_at DESC LIMIT 24`,
+    [actor.id]
+  );
+  return rows.map((m) => {
+    const plan = typeof m.plan === 'string' ? JSON.parse(m.plan) : m.plan;
+    return { uuid: m.uuid, title: story.forKid(plan, { title: m.title }).mission, reveal: plan?.story?.reveal || null, finished: m.status === 'completed', endedAt: m.ended_at };
+  });
+};
 
 /** A person's own voiceprint, computed on their device. Needs their agreement. */
 const saveVoice = asMember(async (req, res, { familyId, actor }) => {
@@ -501,4 +688,4 @@ const testCapability = asParent(async (req, res, { familyId, actor }) => {
   return res.json({ result: { ok: result.ok, error: result.error || null, latencyMs: result.latencyMs }, overview: await missions.overview(familyId) });
 });
 
-module.exports = { myPhoto, myGo, saveVoice, whoSpoke, invite, invitations, answerInvite, leaveMission, setSwitch, handoff, addZone, retireZone, addTemplate, retireTemplate, startTemplated, planningOverview, draft, revise, decideWish, go, tick, setCode, look, finish, submitCode, mySteps, mySeen, myCode, myDone, consentOverview, agree, withdraw, myConsent, myAgree, myWithdraw, cameras, testCapability, overview, saveControl, saveCapability, saveRecipient, saveSkill, approve, decline, stop, stopEverything, pause, requestScout, reply, photo, verify, send };
+module.exports = { ispyState, ispySpy, ispyAthena, ispyJudge, ispyGuess, ispyReveal, ispyPhoto, kidHome, kidPhoto, kidSeen, kidCode, kidDone, kidGo, myPhoto, myGo, saveVoice, whoSpoke, invite, invitations, answerInvite, leaveMission, setSwitch, handoff, addZone, retireZone, addTemplate, retireTemplate, startTemplated, planningOverview, draft, revise, decideWish, go, tick, setCode, look, finish, submitCode, mySteps, mySeen, myCode, myDone, consentOverview, agree, withdraw, myConsent, myAgree, myWithdraw, cameras, testCapability, overview, saveControl, saveCapability, saveRecipient, saveSkill, approve, decline, stop, stopEverything, pause, requestScout, reply, photo, verify, send };

@@ -60,6 +60,8 @@ function standing({ checkedIn = false, trailKeys = 0, finds = 0, contributions =
 		level: 1 + Math.floor(points / POINTS_PER_LEVEL),
 		role: top.role,
 		levelProgress: Math.round(((points % POINTS_PER_LEVEL) / POINTS_PER_LEVEL) * 100),
+		xp: points % POINTS_PER_LEVEL,
+		xpPerLevel: POINTS_PER_LEVEL,
 	};
 }
 
