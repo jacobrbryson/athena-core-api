@@ -385,7 +385,7 @@ const kidHome = asKid(async (req, res, { actor }) => {
   const db = require('../helpers/db');
   const firstName = (n) => String(n || '').trim().split(/\s+/)[0] || null;
   const surname = (n) => { const parts = String(n || '').trim().split(/\s+/); return parts.length > 1 ? parts[parts.length - 1] : null; };
-  if (!actor) return res.json({ guardian: false, name: null, steps: [], ready: [], reveals: [], trails: [], history: [], upcoming: [], mysteries: 0, record: null, me: null, squad: [], squadName: null, squads: [], others: [], feed: [], weekFinds: 0, athena: [], clues: null, skills: [], specialists: [], kit: [], adventure: null, stopWord: null });
+  if (!actor) return res.json({ guardian: false, name: null, steps: [], ready: [], reveals: [], trails: [], history: [], upcoming: [], mysteries: 0, record: null, badges: null, athenaCard: null, me: null, squad: [], squadName: null, squads: [], others: [], feed: [], weekFinds: 0, athena: [], clues: null, skills: [], specialists: [], kit: [], adventure: null, stopWord: null });
   const [own, trails, view, history, plans, [credRows]] = await Promise.all([
     kidSteps(actor),
     kidTrails(actor),
@@ -398,6 +398,15 @@ const kidHome = asKid(async (req, res, { actor }) => {
   // The rows behind their four counters, so each one can open its list.
   const detail = await require('../services/guardianMissions/team').memberDetail(adventureKey, credRows[0]?.guardian_id);
   const legacy = await legacyPast(actor, detail);
+  // Mission badges (owner, 11-24): theirs, the ones their approved missions will give, and Athena's card.
+  const badgeSvc = require('../services/guardianMissions/badges');
+  const [[liveRows], mine_] = await Promise.all([
+    db.query("SELECT DISTINCT s.mission_id AS id FROM athena_gm_mission_step s JOIN athena_gm_mission m ON m.id = s.mission_id WHERE s.assigned_actor_id = ? AND m.status IN ('running','paused')", [actor.id]),
+    badgeSvc.earned(actor.id),
+  ]);
+  const ahead = (await badgeSvc.waiting([...plans.approvedIds, ...liveRows.map((r) => r.id)])).filter((b) => !mine_.some((e) => e.key === b.key));
+  const athenaCard = await badgeSvc.athenaCard(Number(actor.family_id));
+  const badgeFor = new Map(ahead.map((b) => [b.mission, b]));
   const [legacyTitles] = await db.query("SELECT mission_key, title, status FROM athena_gm_mission WHERE family_id = ? AND source = 'legacy'", [actor.family_id]);
   const titleOf = new Map(legacyTitles.map((m) => [m.mission_key, m.title]));
   // The mission's own state wins over a kid's start row, which can stay 'active' after it ended.
@@ -437,7 +446,9 @@ const kidHome = asKid(async (req, res, { actor }) => {
     // Past quests, newest first: Athena's missions and the Guardians-app ones they were part of.
     history: [...history, ...legacy.filter((m) => !m.running && !history.some((h) => h.title === m.title))]
       .sort((a, b) => new Date(b.endedAt || 0) - new Date(a.endedAt || 0)),
-    upcoming: plans.upcoming,
+    upcoming: plans.upcoming.map(({ id, ...u }) => ({ ...u, badge: badgeFor.get(u.uuid) ? { name: badgeFor.get(u.uuid).name, art: badgeFor.get(u.uuid).art } : null })),
+    badges: { earned: mine_, ahead },
+    athenaCard,
     mysteries: plans.mysteries,
     // What each Base counter counts, theirs only.
     record: {
@@ -491,8 +502,9 @@ const kidPlans = async (actor) => {
   const upcoming = mine
     .filter((m) => m.status === 'running' && m.approval_state === 'approved' && m.planned_for)
     .sort((a, b) => new Date(a.planned_for) - new Date(b.planned_for))
-    .map((m) => ({ uuid: m.uuid, title: story.forKid(planOf(m), { title: m.title }).mission, plannedFor: m.planned_for, ready: m.phase === 'ready', game: planOf(m).game?.kind || null }));
-  return { upcoming, mysteries: mine.length - upcoming.length };
+    .map((m) => ({ uuid: m.uuid, id: m.id, title: story.forKid(planOf(m), { title: m.title }).mission, premise: planOf(m).story?.premise || null, plannedFor: m.planned_for, ready: m.phase === 'ready', game: planOf(m).game?.kind || null }));
+  const approvedIds = mine.filter((m) => m.status === 'running' && m.approval_state === 'approved').map((m) => m.id);
+  return { upcoming, mysteries: mine.length - upcoming.length, approvedIds };
 };
 
 /** The Guardians-app missions (First Watch and the rest) this kid took part in, from their own record. */

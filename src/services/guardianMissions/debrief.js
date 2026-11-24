@@ -170,6 +170,12 @@ async function run(familyId, missionId) {
 		await pool.query("INSERT INTO athena_gm_weakness (family_id, mission_id, cap_key, summary) VALUES (?, ?, ?, ?)", [familyId, mission.id, w.capKey, w.summary]);
 	}
 	await missions.log(familyId, "mission_debriefed", { missionId: mission.id, detail: { passed, total: results.length } });
+	// The mission's badge, to each kid who did their part (and Athena, when she played). Owner, 11-24.
+	const awarded = await require("./badges").awardMission(mission).catch((err) => {
+		console.warn("[guardian missions] badge award failed:", err.message);
+		return [];
+	});
+	if (awarded.length) await missions.log(familyId, "mission_badges", { missionId: mission.id, detail: { actors: awarded } });
 	return { results, weaknesses };
 }
 

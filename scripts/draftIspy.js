@@ -29,8 +29,10 @@ const kidStep = (key, actor) => ({
 	key, phase: "live", actor, proof: "game", capability: "ispy", dueMinutes: 7 * 24 * 60, predictMinutes: 90,
 	place: "Inside the house",
 	instruction: `Play I Spy with Athena on ${actor === "thomas" ? "Thomas" : "Skylar"}'s tablet: Base → Play I Spy. Turns go Thomas, Skylar, Athena; the step finishes itself after ${ROUNDS} rounds.`,
-	quest: "Athena has never played I Spy, and she wants you to teach her. Take turns: snap a photo, say what you spy, and tell her if she gets it. When it's her turn, she spies and you guess!",
+	quest: QUEST,
 });
+
+const { QUEST, STORY } = require("./ispyWords");
 
 const PLAN = {
 	title: "Teach Athena I Spy",
@@ -40,11 +42,7 @@ const PLAN = {
 	capabilities: ["ispy"],
 	game: { kind: "ispy", rounds: ROUNDS, players: ["thomas", "skylar", "athena"] },
 	steps: [kidStep("thomas_plays", "thomas"), kidStep("skylar_plays", "skylar")],
-	story: {
-		title: "Teach Athena I Spy",
-		premise: "Athena can see through cameras, but she has never played I Spy. She needs two Guardians to teach her how.",
-		reveal: `Every round helped Athena learn to find things in real photos of your house. You taught her that, ${ROUNDS} times over.`,
-	},
+	story: STORY,
 	passCriteria: [
 		{ key: "rounds", kind: "all_steps_done", text: `${ROUNDS} rounds of I Spy were played`, capability: "ispy" },
 		{ key: "thomas_badge", kind: "person_steps_done", text: "Thomas taught Athena I Spy", actor: "thomas", skill: "teaches_ispy" },
