@@ -128,6 +128,12 @@ const approve = asParent(async (req, res, { familyId, profileId }) => {
   return res.json(await missions.overview(familyId));
 });
 
+/** When the grown-ups plan to press Go, for the kids' countdown. Starts nothing. */
+const schedule = asParent(async (req, res, { familyId, actor }) => {
+  await missions.setPlannedFor(familyId, req.params.uuid, req.body?.plannedFor ?? null, actor?.id || null);
+  return res.json(await missions.overview(familyId));
+});
+
 /** Any adult in the family: "we're ready, start now". Preflight runs here, not in the browser. */
 const go = asParent(async (req, res, { familyId, actor }) => {
   await runner.go(familyId, req.params.uuid, { by: actor, supervisorUuid: req.body?.supervisor, deliver: scout.deliverer(push) });
@@ -318,6 +324,10 @@ const ispyAthena = asKid(async (req, res, { actor }) => {
   if (!actor) return noGame(res);
   return res.json({ game: await ispy.athenaSpies(actor, { imageBase64: req.body?.image, contentType: req.body?.contentType }, llm) });
 });
+/** A parent's practice I Spy from Companion → Guardians: the live model, nothing stored. */
+const ispyDemoGuess = asParent(async (req, res) => res.json(await ispy.demoGuess({ imageBase64: req.body?.image, contentType: req.body?.contentType, clue: req.body?.clue, hints: req.body?.hints, wrong: req.body?.wrong }, llm)));
+const ispyDemoPick = asParent(async (req, res) => res.json(await ispy.demoPick({ imageBase64: req.body?.image, contentType: req.body?.contentType }, llm)));
+const ispyDemoCheck = asParent(async (req, res) => res.json(ispy.demoCheck(req.body || {})));
 const ispyJudge = asKid(async (req, res, { actor }) => {
   if (!actor) return noGame(res);
   if (typeof req.body?.right !== 'boolean') return res.status(400).json({ success: false, message: 'right must be true or false.' });
@@ -375,15 +385,24 @@ const kidHome = asKid(async (req, res, { actor }) => {
   const db = require('../helpers/db');
   const firstName = (n) => String(n || '').trim().split(/\s+/)[0] || null;
   const surname = (n) => { const parts = String(n || '').trim().split(/\s+/); return parts.length > 1 ? parts[parts.length - 1] : null; };
-  if (!actor) return res.json({ guardian: false, name: null, steps: [], ready: [], reveals: [], trails: [], history: [], me: null, squad: [], squadName: null, squads: [], others: [], feed: [], weekFinds: 0, athena: [], clues: null, skills: [], specialists: [], kit: [], adventure: null, stopWord: null });
-  const [own, trails, view, history, [credRows]] = await Promise.all([
+  if (!actor) return res.json({ guardian: false, name: null, steps: [], ready: [], reveals: [], trails: [], history: [], upcoming: [], mysteries: 0, record: null, me: null, squad: [], squadName: null, squads: [], others: [], feed: [], weekFinds: 0, athena: [], clues: null, skills: [], specialists: [], kit: [], adventure: null, stopWord: null });
+  const [own, trails, view, history, plans, [credRows]] = await Promise.all([
     kidSteps(actor),
     kidTrails(actor),
     missions.overview(Number(actor.family_id)),
     kidHistory(actor),
-    actor.guardian_credential_id ? db.query('SELECT adventure_key FROM guardian_credential WHERE id = ?', [actor.guardian_credential_id]) : Promise.resolve([[]]),
+    kidPlans(actor),
+    actor.guardian_credential_id ? db.query('SELECT adventure_key, guardian_id FROM guardian_credential WHERE id = ?', [actor.guardian_credential_id]) : Promise.resolve([[]]),
   ]);
   const adventureKey = credRows[0]?.adventure_key || null;
+  // The rows behind their four counters, so each one can open its list.
+  const detail = await require('../services/guardianMissions/team').memberDetail(adventureKey, credRows[0]?.guardian_id);
+  const legacy = await legacyPast(actor, detail);
+  const [legacyTitles] = await db.query("SELECT mission_key, title, status FROM athena_gm_mission WHERE family_id = ? AND source = 'legacy'", [actor.family_id]);
+  const titleOf = new Map(legacyTitles.map((m) => [m.mission_key, m.title]));
+  // The mission's own state wins over a kid's start row, which can stay 'active' after it ended.
+  const statusOf = new Map(legacyTitles.map((m) => [m.mission_key, m.status]));
+  const missionTitle = (key) => titleOf.get(key) || String(key || '').replace(/^mission-\d+-/, '').split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
   // Squads are the families on the adventure, by surname, the way the Guardians
   // app's own map already names them. First names inside, nothing else.
   const [[team], [[week]]] = adventureKey
@@ -415,7 +434,18 @@ const kidHome = asKid(async (req, res, { actor }) => {
     name,
     ...own,
     trails,
-    history,
+    // Past quests, newest first: Athena's missions and the Guardians-app ones they were part of.
+    history: [...history, ...legacy.filter((m) => !m.running && !history.some((h) => h.title === m.title))]
+      .sort((a, b) => new Date(b.endedAt || 0) - new Date(a.endedAt || 0)),
+    upcoming: plans.upcoming,
+    mysteries: plans.mysteries,
+    // What each Base counter counts, theirs only.
+    record: {
+      finds: detail.finds.map((f) => ({ title: f.title, mission: missionTitle(f.mission), at: f.at })),
+      keys: detail.keys.map((k) => ({ clue: k.clue, code: k.code, mission: missionTitle(k.mission), at: k.at })),
+      pieces: detail.pieces.map((p) => ({ family: p.family, fragment: p.fragment, mission: missionTitle(p.mission), at: p.at })),
+      missions: detail.missions.map((m) => ({ title: missionTitle(m.mission), status: statusOf.get(m.mission) || m.status, at: m.at })),
+    },
     me: {
       level: mine?.level || 1, role: mine?.role || 'Recruit', levelProgress: mine?.levelProgress || 0,
       xp: mine?.xp || 0, xpPerLevel: mine?.xpPerLevel || 25,
@@ -444,6 +474,48 @@ const kidHome = asKid(async (req, res, { actor }) => {
 });
 
 /** Every quest this kid was really part of that has ended, newest first, with what it was for. */
+/**
+ * What's coming for this kid (owner, 11-24). Upcoming: approved, not live yet,
+ * with a planned start a parent set, for the countdown. Everything else they're
+ * in that hasn't started (approved with no date, or still a parent's proposal)
+ * is only counted, so it shows as a locked mystery: no title, nothing promised.
+ */
+const kidPlans = async (actor) => {
+  const [rows] = await require('../helpers/db').query(
+    `SELECT * FROM athena_gm_mission WHERE family_id = ? AND source <> 'legacy'
+       AND ((status = 'running' AND (phase IS NULL OR phase IN ('prep','ready'))) OR status = 'proposed')`,
+    [actor.family_id]
+  );
+  const planOf = (m) => (typeof m.plan === 'string' ? JSON.parse(m.plan) : m.plan) || {};
+  const mine = rows.filter((m) => (planOf(m).steps || []).some((s) => s.actor === actor.actor_key));
+  const upcoming = mine
+    .filter((m) => m.status === 'running' && m.approval_state === 'approved' && m.planned_for)
+    .sort((a, b) => new Date(a.planned_for) - new Date(b.planned_for))
+    .map((m) => ({ uuid: m.uuid, title: story.forKid(planOf(m), { title: m.title }).mission, plannedFor: m.planned_for, ready: m.phase === 'ready', game: planOf(m).game?.kind || null }));
+  return { upcoming, mysteries: mine.length - upcoming.length };
+};
+
+/** The Guardians-app missions (First Watch and the rest) this kid took part in, from their own record. */
+const legacyPast = async (actor, detail) => {
+  const keys = new Set([...detail.finds, ...detail.keys, ...detail.pieces, ...detail.missions].map((r) => r.mission));
+  if (!keys.size) return [];
+  const [rows] = await require('../helpers/db').query(
+    "SELECT uuid, mission_key, title, status, ended_at, started_at FROM athena_gm_mission WHERE family_id = ? AND source = 'legacy'",
+    [actor.family_id]
+  );
+  return rows
+    .filter((m) => keys.has(m.mission_key))
+    .map((m) => ({
+      uuid: m.uuid, title: m.title, reveal: null, legacy: true,
+      finished: m.status === 'completed', running: m.status === 'running', endedAt: m.ended_at || null,
+      did: {
+        finds: detail.finds.filter((f) => f.mission === m.mission_key).length,
+        keys: detail.keys.filter((k) => k.mission === m.mission_key).length,
+        pieces: detail.pieces.filter((p) => p.mission === m.mission_key).length,
+      },
+    }));
+};
+
 const kidHistory = async (actor) => {
   const [rows] = await require('../helpers/db').query(
     `SELECT m.uuid, m.title, m.plan, m.status, m.ended_at
@@ -688,4 +760,4 @@ const testCapability = asParent(async (req, res, { familyId, actor }) => {
   return res.json({ result: { ok: result.ok, error: result.error || null, latencyMs: result.latencyMs }, overview: await missions.overview(familyId) });
 });
 
-module.exports = { ispyState, ispySpy, ispyAthena, ispyJudge, ispyGuess, ispyReveal, ispyPhoto, kidHome, kidPhoto, kidSeen, kidCode, kidDone, kidGo, myPhoto, myGo, saveVoice, whoSpoke, invite, invitations, answerInvite, leaveMission, setSwitch, handoff, addZone, retireZone, addTemplate, retireTemplate, startTemplated, planningOverview, draft, revise, decideWish, go, tick, setCode, look, finish, submitCode, mySteps, mySeen, myCode, myDone, consentOverview, agree, withdraw, myConsent, myAgree, myWithdraw, cameras, testCapability, overview, saveControl, saveCapability, saveRecipient, saveSkill, approve, decline, stop, stopEverything, pause, requestScout, reply, photo, verify, send };
+module.exports = { schedule, ispyDemoGuess, ispyDemoPick, ispyDemoCheck, ispyState, ispySpy, ispyAthena, ispyJudge, ispyGuess, ispyReveal, ispyPhoto, kidHome, kidPhoto, kidSeen, kidCode, kidDone, kidGo, myPhoto, myGo, saveVoice, whoSpoke, invite, invitations, answerInvite, leaveMission, setSwitch, handoff, addZone, retireZone, addTemplate, retireTemplate, startTemplated, planningOverview, draft, revise, decideWish, go, tick, setCode, look, finish, submitCode, mySteps, mySeen, myCode, myDone, consentOverview, agree, withdraw, myConsent, myAgree, myWithdraw, cameras, testCapability, overview, saveControl, saveCapability, saveRecipient, saveSkill, approve, decline, stop, stopEverything, pause, requestScout, reply, photo, verify, send };

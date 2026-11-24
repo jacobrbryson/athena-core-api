@@ -329,6 +329,26 @@ async function stopMission(familyId, missionUuid, { actorId = null, reason = "st
 }
 
 /**
+ * When the grown-ups plan to press Go, for the kids' countdown (owner, 11-24).
+ * It starts nothing: Go is still a person's click. Null clears it.
+ */
+async function setPlannedFor(familyId, missionUuid, when, actorId = null) {
+	const mission = await missionByUuid(familyId, missionUuid);
+	if (mission.source === "legacy") throw failure("That mission runs in the Guardians app.", 409);
+	if (!["proposed", "running", "paused"].includes(mission.status) || mission.phase === "live") throw failure("Only a mission that hasn't started can have a start time.", 409);
+	let at = null;
+	if (when != null && when !== "") {
+		at = new Date(when);
+		if (Number.isNaN(at.getTime())) throw failure("That isn't a date and time.");
+		const days = (at.getTime() - Date.now()) / 86400000;
+		if (days < -1 || days > 90) throw failure("Pick a time in the next 90 days.");
+	}
+	await pool.query("UPDATE athena_gm_mission SET planned_for = ? WHERE id = ?", [at, mission.id]);
+	await log(familyId, "mission_planned_for", { actorId, missionId: mission.id, detail: { at: at ? at.toISOString() : null } });
+	return missionByUuid(familyId, missionUuid);
+}
+
+/**
  * A Guardian or parent said their family's stop word in chat. Exact match only:
  * a sentence that happens to contain the word isn't a stop.
  */
@@ -668,10 +688,13 @@ async function overview(familyId) {
 			phase: m.phase || null,
 			purpose: m.purpose || null,
 			goAt: m.go_at || null,
+			plannedFor: m.planned_for || null,
 			debrief: debriefs.get(Number(m.id)) || null,
 			approval: m.approval_state,
 			source: m.source,
 			adventure: m.adventure_key,
+			// The plan's game, if it is one (I Spy), so the page can offer a practice round.
+			game: parse(m.plan)?.game?.kind || null,
 			notes: m.notes,
 			startedAt: m.started_at,
 			endedAt: m.ended_at,
@@ -761,6 +784,7 @@ async function overview(familyId) {
 }
 
 module.exports = {
+	setPlannedFor,
 	parentActor,
 	actorByKey,
 	actorByUuid,

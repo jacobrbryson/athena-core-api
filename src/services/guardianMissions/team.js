@@ -184,4 +184,26 @@ async function teamProgress(adventureKey, { kids = [], missions, skillCount = 0 
 	};
 }
 
-module.exports = { teamProgress, standing, teamSkills, activityFrom, firstName };
+/**
+ * One Guardian's own record behind the four counters on their Base (owner,
+ * 11-24): the same rows and filters teamProgress counts, listed. Their own
+ * finds, keys and map piece only; nobody else's.
+ */
+async function memberDetail(adventureKey, guardianId) {
+	if (!adventureKey || !guardianId) return { finds: [], keys: [], pieces: [], missions: [] };
+	const [[finds], [keys], [pieces], [starts]] = await Promise.all([
+		pool.query("SELECT mission_key, entry_id, found_at FROM guardian_index_find WHERE adventure_key = ? AND found_by_guardian_id = ? ORDER BY found_at DESC", [adventureKey, guardianId]),
+		pool.query("SELECT key_code, clue_index, reported_at, used_at FROM guardian_trail_key WHERE mission_key = ? AND guardian_id = ? AND status = 'used' ORDER BY clue_index", [TRAIL_MISSION, guardianId]),
+		pool.query("SELECT family_key, fragment, created_at FROM mission_contribution WHERE adventure_key = ? AND mission_key = ? AND guardian_id = ? ORDER BY created_at DESC", [adventureKey, CONVERGENCE_MISSION, guardianId]),
+		pool.query("SELECT mission_key, status, started_at FROM guardian_mission_state WHERE adventure_key = ? AND started_by_guardian_id = ? ORDER BY started_at DESC", [adventureKey, guardianId]),
+	]);
+	const families = getMissionDef(CONVERGENCE_MISSION, adventureKey)?.families || [];
+	return {
+		finds: finds.map((f) => ({ mission: f.mission_key, title: getIndexDef(f.mission_key, adventureKey)?.entries?.find((e) => e.id === f.entry_id)?.title || "A clue card", at: f.found_at })),
+		keys: keys.map((k) => ({ mission: TRAIL_MISSION, clue: Number(k.clue_index), code: k.key_code, at: k.used_at || k.reported_at })),
+		pieces: pieces.map((p) => ({ mission: CONVERGENCE_MISSION, family: families.find((f) => f.key === p.family_key)?.name || p.family_key, fragment: p.fragment, at: p.created_at })),
+		missions: starts.map((m) => ({ mission: m.mission_key, status: m.status, at: m.started_at })),
+	};
+}
+
+module.exports = { teamProgress, memberDetail, standing, teamSkills, activityFrom, firstName };
