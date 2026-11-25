@@ -40,7 +40,7 @@ the staff and they tap its key on the piano at the bottom of the screen.
 ## Where to find it
 
 Signed in to Companion as a kid, Base has a **🎮 Bored?** button at the top.
-It opens a menu: **Signal Relay**, **Piano Quest** and **Secret messages**. In the game, 🏠 goes back to its
+It opens a menu: **Signal Relay**, **Comet Catchers**, **Piano Quest** and **Secret messages**. In the game, 🏠 goes back to its
 menu, 🔤/🙈 shows or hides the letters on the keys, 🔊 is the sound, and ✕ goes
 back to Base. A real keyboard's A–G keys work too.
 

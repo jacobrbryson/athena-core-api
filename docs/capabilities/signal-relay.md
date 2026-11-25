@@ -60,7 +60,7 @@ find my way back by tapping messages to me in real Morse code.
 ## Where to find it
 
 Signed in to Companion as a kid, Base has a **🎮 Bored?** button at the top
-beside their Guardian name. It opens a menu: **Signal Relay**, **Piano Quest**,
+beside their Guardian name. It opens a menu: **Signal Relay**, **Comet Catchers**, **Piano Quest**,
 and **Secret messages** (straight to the mailbox, with a count of new ones). It also opens on its own when the tablet goes
 offline, or when Base can't be reached twice in a row. If they close it, it
 won't pop up again until the connection has come back and dropped again. When
