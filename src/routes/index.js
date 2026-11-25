@@ -139,6 +139,8 @@ module.exports = (clients) => {
 	router.use("/work-items", require("./workItems"));
 	// Companion → Guardians: capabilities, missions and their controls (migration 0103).
 	router.use("/guardian-missions", require("./guardianMissions"));
+	// Secret Morse messages between people with access (Signal Relay, 11-25).
+	router.use("/relay-messages", require("./relayMessages"));
 	router.use("/integrations", integrationRouter);
 	router.use("/", companionRouter);
 
