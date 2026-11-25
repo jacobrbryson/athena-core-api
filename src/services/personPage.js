@@ -37,6 +37,45 @@ function trim(value, max) {
 
 const iso = (v) => (v ? new Date(v).toISOString() : null);
 
+/**
+ * Grades in order. A grade is stored with the school year it was set in and
+ * shown advanced by every school year begun since, so "4th" set in November
+ * 2026 reads "5th" from August 1st 2027 with nothing scheduled to move it.
+ */
+const GRADES = ["pre-k", "kindergarten", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"];
+const GRADE_ROLLOVER_MONTH = 7; // August, 0-based: the school year turns over on August 1st
+
+/** The school year `at` falls in, by the year it began: Aug 2026 – Jul 2027 is 2026. */
+function schoolYear(at = new Date()) {
+	const d = new Date(at);
+	return d.getMonth() >= GRADE_ROLLOVER_MONTH ? d.getFullYear() : d.getFullYear() - 1;
+}
+
+function normalizeGrade(value) {
+	const v = String(value ?? "").trim().toLowerCase().replace(/(st|nd|rd|th)$/, "");
+	if (v === "k" || v === "kinder") return "kindergarten";
+	if (v === "prek" || v === "pre k" || v === "preschool") return "pre-k";
+	return GRADES.includes(v) ? v : null;
+}
+
+/** The grade as of `at`, from what was set and when: "5", "kindergarten", or "graduated" past 12th. */
+function currentGrade(grade, gradeYear, at = new Date()) {
+	const i = GRADES.indexOf(normalizeGrade(grade));
+	if (i < 0) return null;
+	const moved = Number.isFinite(Number(gradeYear)) && gradeYear !== null ? Math.max(0, schoolYear(at) - Number(gradeYear)) : 0;
+	return i + moved < GRADES.length ? GRADES[i + moved] : "graduated";
+}
+
+function gradeLabel(grade) {
+	if (!grade) return null;
+	if (grade === "pre-k") return "Pre-K";
+	if (grade === "kindergarten") return "Kindergarten";
+	if (grade === "graduated") return "Graduated";
+	const n = Number(grade);
+	const suffix = n % 100 >= 11 && n % 100 <= 13 ? "th" : { 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th";
+	return `${n}${suffix} grade`;
+}
+
 /** Up to four lower-case name words of 3+ letters — anything else is dropped, not trusted. */
 function nameTokens(raw) {
 	const list = Array.isArray(raw) ? raw : String(raw || "").split(",");
@@ -65,7 +104,7 @@ async function assertOther(profileId, key) {
 }
 
 async function ownRow(profileId, key) {
-	const [[row]] = await pool.query("SELECT about, relation, updated_at FROM athena_person WHERE profile_id = ? AND person_key = ?", [profileId, key]);
+	const [[row]] = await pool.query("SELECT about, relation, grade, grade_year, updated_at FROM athena_person WHERE profile_id = ? AND person_key = ?", [profileId, key]);
 	return row || null;
 }
 
@@ -178,6 +217,8 @@ async function read(profileId, key, { names } = {}) {
 		key: person.key,
 		about: own?.about || null,
 		relation: own?.relation || null,
+		grade: own?.grade ? currentGrade(own.grade, own.grade_year) : null,
+		gradeLabel: own?.grade ? gradeLabel(currentGrade(own.grade, own.grade_year)) : null,
 		interests,
 		related,
 		memories,
@@ -186,17 +227,28 @@ async function read(profileId, key, { names } = {}) {
 	};
 }
 
-/** Save the write-up and/or relation. Omitted fields stay; null or "" clears. */
+/**
+ * Save the write-up, relation and/or grade. Omitted fields stay; null or ""
+ * clears. A grade is stored with this school year, so it moves up by itself.
+ */
 async function saveAbout(profileId, key, payload = {}) {
 	const person = await personFor(profileId, key);
 	const has = (k) => Object.prototype.hasOwnProperty.call(payload, k);
 	const own = await ownRow(profileId, person.key);
 	const about = has("about") ? trim(payload.about, 600) : own?.about ?? null;
 	const relation = has("relation") ? trim(payload.relation, 60) : own?.relation ?? null;
+	let grade = own?.grade ?? null;
+	let gradeYear = own?.grade_year ?? null;
+	if (has("grade")) {
+		const blank = payload.grade === null || String(payload.grade).trim() === "";
+		grade = blank ? null : normalizeGrade(payload.grade);
+		if (!blank && !grade) throw bad("Pick a grade from Pre-K to 12th.");
+		gradeYear = grade ? schoolYear() : null;
+	}
 	await pool.query(
-		`INSERT INTO athena_person (profile_id, person_key, about, relation) VALUES (?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE about = VALUES(about), relation = VALUES(relation)`,
-		[profileId, person.key, about, relation]
+		`INSERT INTO athena_person (profile_id, person_key, about, relation, grade, grade_year) VALUES (?, ?, ?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE about = VALUES(about), relation = VALUES(relation), grade = VALUES(grade), grade_year = VALUES(grade_year)`,
+		[profileId, person.key, about, relation, grade, gradeYear]
 	);
 	return read(profileId, person.key, payload);
 }
@@ -255,4 +307,4 @@ async function removeRelated(profileId, key, uuid, payload = {}) {
 	return read(profileId, person.key, payload);
 }
 
-module.exports = { read, saveAbout, addInterest, removeInterest, addRelated, removeRelated, nameTokens, ICONS: [...ICONS] };
+module.exports = { read, saveAbout, currentGrade, gradeLabel, schoolYear, GRADES, addInterest, removeInterest, addRelated, removeRelated, nameTokens, ICONS: [...ICONS] };

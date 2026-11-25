@@ -25,6 +25,7 @@ const consent = require("./consent");
 const identity = require("./identity");
 const trackRecord = require("./trackRecord");
 const { teamProgress } = require("./team");
+const relay = require("./relay");
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ACTIVE = ["approved", "running", "paused"];
@@ -709,6 +710,8 @@ async function overview(familyId) {
 	const proposed = missions.filter((m) => m.status === "proposed");
 	const history = missions.filter((m) => ["completed", "stopped", "declined", "archived"].includes(m.status));
 
+	// Signal Relay runs (11-24) that count toward each kid's points.
+	const relayRuns = await relay.countedRuns(actors.filter((a) => a.kind === "kid").map((a) => a.id));
 	const guardians = actors
 		.filter((a) => a.kind === "kid")
 		.map((a) => {
@@ -726,7 +729,7 @@ async function overview(familyId) {
 					source: s.source,
 					retest: trackRecord.isStale(s.last_tested_at),
 				})),
-				progress: { reliable: mine.filter((s) => s.level === "reliable").length, learning: mine.filter((s) => s.level === "learning").length },
+				progress: { reliable: mine.filter((s) => s.level === "reliable").length, learning: mine.filter((s) => s.level === "learning").length, relays: relayRuns.get(Number(a.id)) || 0 },
 				abilities: abilities.personRollup(mine, abilityRefs[1], abilityRefs[0]),
 			};
 		});

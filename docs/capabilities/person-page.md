@@ -23,8 +23,10 @@ The Overview gathers:
   and their birthday.
 - **Health** — their active health watches (tap one to open it), with a
   button to start a new one; the Health tab also lists past watches.
-- **About** — a short write-up you can edit, their grade, age, birthday,
-  relation (which you can correct), and how much I remember about them.
+- **About** — a short write-up you can edit, their grade (which you can
+  set under Edit, and which moves up by itself every August 1st), age,
+  birthday, relation (which you can correct), and how much I remember about
+  them.
 - **Memories** — conversations, photos and notes that mention them, and the
   details filed under their memory.
 - **Photos** — photo memories that mention them.
@@ -64,6 +66,10 @@ opens the same editor the Family page used to open.
   other's events or memories. The family's shared surname is never used to
   match.
 - Messages aren't shown per person yet.
+- The grade moves up one each school year (August 1st) — a kid held back or
+  skipped ahead needs it set again. A grade on an Athena child profile that
+  was never set on this page doesn't move up, and the Family list still
+  shows the child profile's own grade.
 - It's per account: what you write about someone is yours, not shared with
   the rest of the family.
 
@@ -83,7 +89,8 @@ opens the same editor the Family page used to open.
   caller's (family/person/pet category) or `child:<child_profiles.uuid>` in
   their family — checked on every call.
 - Data: migration `0122_person_page` — `athena_person` (write-up, relation
-  override), `athena_person_interest`, `athena_person_relation`, keyed by
+  override; `grade` + `grade_year` from `0123_person_grade`, advanced on read
+  by `currentGrade()`), `athena_person_interest`, `athena_person_relation`, keyed by
   `(profile_id, person_key)`. Everything else is read where it lives:
   `user_memory`, `memory_event` (name match, whole-word filter),
   `family_health_status`, `athena_sighting_person_link` + `athena_sighting`,

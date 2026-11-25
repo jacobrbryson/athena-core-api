@@ -49,7 +49,7 @@ const BADGES = [
 		withAthena: true,
 		name: "First Sight",
 		story: "Twelve rounds of I Spy with the tablet cameras: the first time Athena saw the world through a Guardian's eyes, and the first badge she ever earned.",
-		emblem: "a wide open eye whose pupil is a glowing cyan camera lens, set over a golden sunrise horizon above a lake with a distant castle, with twelve small gold stars evenly spaced around the badge rim",
+		emblem: "a wide open eye whose pupil is a glowing cyan camera lens, set over a golden sunrise horizon above a lake with a distant castle. The rim band carries twelve gold stars exactly where the twelve numbers of a clock would be, and nothing else. The badge is a clock face of 12 stars",
 	},
 ];
 

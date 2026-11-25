@@ -20,7 +20,9 @@ away if you've given me a standing "yes" for it.
 "back", "louder", "quieter", "resume") and, as long as you've ticked **"Do this
 without asking me each time"** for music, the phone presses the button the
 moment it hears you — no waiting on the internet, so it works on a run or in
-the car in a fraction of a second. You'll hear a short tone and the song
+the car in a fraction of a second. After my chime the music pauses for the
+second or two I'm listening, so I hear you and not the song, then picks up
+again (on the next song, for a skip). You'll hear a short tone and the song
 changes; volume shows the phone's own slider. Then for a few seconds you can
 say "skip" again without my name. I record every press, the same as anything
 else I do, even one made with no signal — it's sent once you're back online.
@@ -47,6 +49,10 @@ you listen to.
   it check.
 - **Nothing happens.** YouTube Music has to be open and playing (or paused) on
   the phone, and Athena needs one of her notification access switches on.
+- **With "only my voice" on.** One word like "skip" is too short for the
+  voice filter to tell whose voice it is. When it can't tell and the words are
+  exactly a music command, I do it anyway; a voice it judges isn't yours is
+  still ignored.
 - **I said the wrong thing back.** Only exact short phrases are instant
   ("skip", "next song", "pause the music", "turn it up"). Anything longer goes
   to me as a normal request.

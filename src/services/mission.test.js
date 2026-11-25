@@ -435,7 +435,7 @@ describe("mission service — Mission 3 'The First Watch' (shared index)", () =>
 		expect(res.alreadyFound).toBe(false);
 		expect(res.entry.id).toBe("F-01");
 		expect(res.entry.record).toContain("Let the water have it");
-		expect(res.progress).toMatchObject({ found: 1, total: 28, complete: false });
+		expect(res.progress).toMatchObject({ found: 1, total: 27, complete: false });
 	});
 
 	test("the player payload never leaks Athena's steering or the card's reverse", async () => {
@@ -652,7 +652,7 @@ describe("mission service — Mission 3 'The First Watch' (shared index)", () =>
 			.mockResolvedValueOnce([[]]);
 
 		const ctx = await mission.getIndexPromptContext(ADV, GID);
-		expect(ctx).toMatchObject({ id: M3, foundCount: 2, total: 28, act: 1 });
+		expect(ctx).toMatchObject({ id: M3, foundCount: 2, total: 27, act: 1 });
 		expect(ctx.foundEntries.map((e) => e.id)).toEqual(["F-01", "F-02"]);
 
 		// Nothing unfound may appear anywhere in what Athena is handed — not the

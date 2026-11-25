@@ -123,6 +123,47 @@ describe("writes", () => {
 		db({ "FROM athena_person WHERE": [{ about: "old", relation: "Daughter" }] });
 		await page.saveAbout(1, FACT, { about: "Our creative 4th grader" });
 		const upsert = pool.query.mock.calls.find(([sql]) => sql.includes("INSERT INTO athena_person "));
-		expect(upsert[1].slice(2)).toEqual(["Our creative 4th grader", "Daughter"]);
+		expect(upsert[1].slice(2)).toEqual(["Our creative 4th grader", "Daughter", null, null]);
+	});
+
+	it("stores a grade with this school year, and keeps it when only the write-up changes", async () => {
+		db();
+		await page.saveAbout(1, FACT, { grade: "4th" });
+		let upsert = pool.query.mock.calls.find(([sql]) => sql.includes("INSERT INTO athena_person "));
+		expect(upsert[1].slice(4)).toEqual(["4", page.schoolYear()]);
+
+		pool.query.mockReset();
+		db({ "FROM athena_person WHERE": [{ about: null, relation: null, grade: "4", grade_year: 2025 }] });
+		await page.saveAbout(1, FACT, { about: "Hi" });
+		upsert = pool.query.mock.calls.find(([sql]) => sql.includes("INSERT INTO athena_person "));
+		expect(upsert[1].slice(4)).toEqual(["4", 2025]);
+	});
+
+	it("refuses a grade it doesn't know, and clears one on blank", async () => {
+		db();
+		await expect(page.saveAbout(1, FACT, { grade: "13" })).rejects.toMatchObject({ status: 400 });
+		await page.saveAbout(1, FACT, { grade: "" });
+		const upsert = pool.query.mock.calls.find(([sql]) => sql.includes("INSERT INTO athena_person "));
+		expect(upsert[1].slice(4)).toEqual([null, null]);
+	});
+});
+
+describe("grades move up by themselves", () => {
+	it("turns over on August 1st", () => {
+		expect(page.schoolYear(new Date(2027, 6, 31))).toBe(2026);
+		expect(page.schoolYear(new Date(2027, 7, 1))).toBe(2027);
+	});
+
+	it("advances one grade per school year begun since it was set", () => {
+		expect(page.currentGrade("4", 2026, new Date(2027, 5, 1))).toBe("4");
+		expect(page.currentGrade("4", 2026, new Date(2027, 8, 1))).toBe("5");
+		expect(page.currentGrade("pre-k", 2026, new Date(2028, 8, 1))).toBe("1");
+		expect(page.currentGrade("12", 2026, new Date(2027, 8, 1))).toBe("graduated");
+		expect(page.currentGrade("4", 2030, new Date(2027, 8, 1))).toBe("4");
+	});
+
+	it("reads it the way a person says it", () => {
+		expect(["1", "2", "3", "4", "11", "kindergarten", "pre-k", "graduated"].map(page.gradeLabel))
+			.toEqual(["1st grade", "2nd grade", "3rd grade", "4th grade", "11th grade", "Kindergarten", "Pre-K", "Graduated"]);
 	});
 });

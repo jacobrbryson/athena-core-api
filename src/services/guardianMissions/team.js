@@ -18,7 +18,8 @@ const TRAIL_MISSION = "mission-1-ratatouille-trail";
 const TRAIL_ADVENTURE = "rescue_ratatouille";
 const CONVERGENCE_MISSION = "mission-2-convergence";
 
-const POINTS = { checkIn: 10, trailKey: 5, find: 5, contribution: 20, missionStarted: 10, learning: 10, reliable: 25 };
+// relay: a finished Signal Relay run (11-24), at most relay.RELAY_RUNS_PER_DAY a day.
+const POINTS = { checkIn: 10, trailKey: 5, find: 5, contribution: 20, missionStarted: 10, learning: 10, reliable: 25, relay: 5 };
 const POINTS_PER_LEVEL = 25;
 const ACTIVITY_LIMIT = 8;
 const MEMBER_ACTIVITY_LIMIT = 6;
@@ -38,7 +39,7 @@ const firstName = (displayName) => String(displayName || "").trim().split(/\s+/)
 const share = (done, total) => (total > 0 ? Math.min(100, Math.round((done / total) * 100)) : null);
 
 /** One Guardian's level and role from their own counts. */
-function standing({ checkedIn = false, trailKeys = 0, finds = 0, contributions = 0, missionsStarted = 0, learning = 0, reliable = 0 }) {
+function standing({ checkedIn = false, trailKeys = 0, finds = 0, contributions = 0, missionsStarted = 0, learning = 0, reliable = 0, relays = 0 }) {
 	const points =
 		(checkedIn ? POINTS.checkIn : 0) +
 		trailKeys * POINTS.trailKey +
@@ -46,14 +47,15 @@ function standing({ checkedIn = false, trailKeys = 0, finds = 0, contributions =
 		contributions * POINTS.contribution +
 		missionsStarted * POINTS.missionStarted +
 		learning * POINTS.learning +
-		reliable * POINTS.reliable;
+		reliable * POINTS.reliable +
+		relays * POINTS.relay;
 	const evidence = {
 		planning: missionsStarted,
 		observation: finds,
 		problemSolving: trailKeys,
 		realWorldTools: learning + reliable,
 		teamwork: contributions,
-		communication: checkedIn ? 1 : 0,
+		communication: (checkedIn ? 1 : 0) + relays,
 	};
 	const top = ROLES.reduce((best, [key, role]) => (evidence[key] > best.count ? { count: evidence[key], role } : best), { count: 0, role: "Recruit" });
 	return {
@@ -93,7 +95,7 @@ function activityFrom({ finds, keys, contributions, nameOf, titleOf, limit = ACT
 
 /**
  * @param adventureKey the family's own adventure, read from its own missions
- * @param kids this family's kid actors with their skill badges: [{ name, learning, reliable }]
+ * @param kids this family's kid actors with their skill badges and counted relay runs: [{ name, learning, reliable, relays }]
  * @param missions { finished, started } across the family's missions
  * @param skillCount how many tool skills there are to be reliable at
  */
@@ -136,6 +138,7 @@ async function teamProgress(adventureKey, { kids = [], missions, skillCount = 0 
 				contributions: reported,
 				missionsStarted,
 				badges: (kid?.learning || 0) + (kid?.reliable || 0),
+				relays: kid?.relays || 0,
 				recent: activityOf({
 					finds: teamFinds.filter((f) => f.found_by_guardian_id === c.guardian_id),
 					keys: decoded.filter((k) => k.guardian_id === c.guardian_id),
@@ -150,6 +153,7 @@ async function teamProgress(adventureKey, { kids = [], missions, skillCount = 0 
 					missionsStarted,
 					learning: kid?.learning || 0,
 					reliable: kid?.reliable || 0,
+					relays: kid?.relays || 0,
 				}),
 			};
 		})

@@ -315,7 +315,20 @@ const kidPhoto = asKid(photoStep);
 // I Spy (11-23): a kid's own game, from their Companion sign-in.
 const ispy = require('../services/guardianMissions/ispy');
 const noGame = (res) => res.status(409).json({ success: false, message: "There's no I Spy game going right now." });
+/**
+ * Signal Relay runs a kid finished on their tablet, often offline, sent once
+ * Base answers again (11-24). Their own kid actor only; a run sent twice is
+ * recorded once.
+ */
+const kidRelay = asKid(async (req, res, { actor }) => {
+  if (!actor) return res.status(409).json({ success: false, message: 'Your family has not joined yet.' });
+  return res.json(await require('../services/guardianMissions/relay').record(actor, req.body?.runs));
+});
 const ispyState = asKid(async (req, res, { actor }) => res.json({ game: await ispy.state(actor) }));
+const ispyRetry = asKid(async (req, res, { actor }) => {
+  if (!actor) return noGame(res);
+  return res.json({ game: await ispy.retryGuess(actor, req.params.uuid, llm) });
+});
 const ispySpy = asKid(async (req, res, { actor }) => {
   if (!actor) return noGame(res);
   return res.json({ game: await ispy.kidSpies(actor, { imageBase64: req.body?.image, contentType: req.body?.contentType, clue: req.body?.clue, answer: req.body?.answer }, llm) });
@@ -325,7 +338,18 @@ const ispyAthena = asKid(async (req, res, { actor }) => {
   return res.json({ game: await ispy.athenaSpies(actor, { imageBase64: req.body?.image, contentType: req.body?.contentType }, llm) });
 });
 /** A parent's practice I Spy from Companion → Guardians: the live model, nothing stored. */
-const ispyDemoGuess = asParent(async (req, res) => res.json(await ispy.demoGuess({ imageBase64: req.body?.image, contentType: req.body?.contentType, clue: req.body?.clue, hints: req.body?.hints, wrong: req.body?.wrong }, llm)));
+const ispyDemoGuess = asParent(async (req, res) => res.json(await ispy.demoGuess({ imageBase64: req.body?.image, contentType: req.body?.contentType, clue: req.body?.clue, hints: req.body?.hints, clues: req.body?.clues, wrong: req.body?.wrong }, llm)));
+const ispyDemoClue = asParent(async (req, res) => res.json(await ispy.demoClue({ imageBase64: req.body?.image, contentType: req.body?.contentType, answer: req.body?.answer, given: req.body?.given }, llm)));
+// Clue cards (11-24): the spy answers Athena's ask; a kid asks Athena on her round.
+const ispyGiveClue = asKid(async (req, res, { actor }) => {
+  if (!actor) return noGame(res);
+  if (typeof req.body?.key !== 'string') return res.status(400).json({ success: false, message: 'Pick a clue.' });
+  return res.json({ game: await ispy.giveClue(actor, req.params.uuid, req.body.key, llm) });
+});
+const ispyAskClue = asKid(async (req, res, { actor }) => {
+  if (!actor) return noGame(res);
+  return res.json({ game: await ispy.requestClue(actor, req.params.uuid, llm) });
+});
 const ispyDemoPick = asParent(async (req, res) => res.json(await ispy.demoPick({ imageBase64: req.body?.image, contentType: req.body?.contentType }, llm)));
 const ispyDemoCheck = asParent(async (req, res) => res.json(ispy.demoCheck(req.body || {})));
 const ispyJudge = asKid(async (req, res, { actor }) => {
@@ -335,7 +359,7 @@ const ispyJudge = asKid(async (req, res, { actor }) => {
 });
 const ispyGuess = asKid(async (req, res, { actor }) => {
   if (!actor) return noGame(res);
-  const { right, ...game } = await ispy.guess(actor, req.params.uuid, req.body?.guess);
+  const { right, ...game } = await ispy.guess(actor, req.params.uuid, req.body?.guess, llm);
   return res.json({ right, game });
 });
 const ispyReveal = asKid(async (req, res, { actor }) => {
@@ -772,4 +796,4 @@ const testCapability = asParent(async (req, res, { familyId, actor }) => {
   return res.json({ result: { ok: result.ok, error: result.error || null, latencyMs: result.latencyMs }, overview: await missions.overview(familyId) });
 });
 
-module.exports = { schedule, ispyDemoGuess, ispyDemoPick, ispyDemoCheck, ispyState, ispySpy, ispyAthena, ispyJudge, ispyGuess, ispyReveal, ispyPhoto, kidHome, kidPhoto, kidSeen, kidCode, kidDone, kidGo, myPhoto, myGo, saveVoice, whoSpoke, invite, invitations, answerInvite, leaveMission, setSwitch, handoff, addZone, retireZone, addTemplate, retireTemplate, startTemplated, planningOverview, draft, revise, decideWish, go, tick, setCode, look, finish, submitCode, mySteps, mySeen, myCode, myDone, consentOverview, agree, withdraw, myConsent, myAgree, myWithdraw, cameras, testCapability, overview, saveControl, saveCapability, saveRecipient, saveSkill, approve, decline, stop, stopEverything, pause, requestScout, reply, photo, verify, send };
+module.exports = { schedule, kidRelay, ispyDemoGuess, ispyDemoClue, ispyGiveClue, ispyAskClue, ispyDemoPick, ispyDemoCheck, ispyState, ispyRetry, ispySpy, ispyAthena, ispyJudge, ispyGuess, ispyReveal, ispyPhoto, kidHome, kidPhoto, kidSeen, kidCode, kidDone, kidGo, myPhoto, myGo, saveVoice, whoSpoke, invite, invitations, answerInvite, leaveMission, setSwitch, handoff, addZone, retireZone, addTemplate, retireTemplate, startTemplated, planningOverview, draft, revise, decideWish, go, tick, setCode, look, finish, submitCode, mySteps, mySeen, myCode, myDone, consentOverview, agree, withdraw, myConsent, myAgree, myWithdraw, cameras, testCapability, overview, saveControl, saveCapability, saveRecipient, saveSkill, approve, decline, stop, stopEverything, pause, requestScout, reply, photo, verify, send };
