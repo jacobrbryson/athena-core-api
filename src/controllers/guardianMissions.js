@@ -473,6 +473,8 @@ const kidHome = asKid(async (req, res, { actor }) => {
     upcoming: plans.upcoming.map(({ id, ...u }) => ({ ...u, badge: badgeFor.get(u.uuid) ? { name: badgeFor.get(u.uuid).name, art: badgeFor.get(u.uuid).art } : null })),
     badges: { earned: mine_, ahead },
     athenaCard,
+    // A finished I Spy they can play again, just for fun (owner, 11-25).
+    ispyAgain: await ispy.canReplay(actor),
     mysteries: plans.mysteries,
     // What each Base counter counts, theirs only.
     record: {

@@ -21,6 +21,13 @@
  * on the round (migration 0127) and goes into her later prompts for it. A clue
  * Athena gives is checked against the list by code; she can't invent one.
  *
+ * Play again (owner, 11-25): after the twelfth round the kids can keep going,
+ * just for fun. A replay is the next twelve rounds on the same mission (13-24
+ * is game 2, and so on), so nothing new is stored and the turn order carries
+ * on. The mission was already finished by the first twelve, so a replay never
+ * completes a step, runs a debrief or gives a badge; the finale is always the
+ * first game's. Each round Athena plays still counts as an I Spy test for her.
+ *
  * Photos are kept for the debrief (owner's choice) as athena_gm_photo rows on
  * the starting kid's game step. Athena's own answer never leaves the server
  * while her round is open. Whether a guess is right is decided by code for
@@ -161,6 +168,10 @@ async function rounds(missionId) {
 	return rows;
 }
 
+/** Which game a round belongs to (1 = the mission's own twelve), and its number within it. */
+const gameOf = (roundNo, goal) => Math.ceil(roundNo / goal);
+const inGame = (roundNo, goal) => ((roundNo - 1) % goal) + 1;
+
 const firstName = (a) => String(a?.display_name || "").trim().split(/\s+/)[0] || "Athena";
 
 /** A round as one kid may see it: Athena's answer stays hidden while it's open. */
@@ -177,11 +188,11 @@ function shapeRound(r, game, viewer) {
 	const guesser = open ? guesserFor(game.players, r) : null;
 	return {
 		uuid: r.uuid,
-		roundNo: r.round_no,
+		roundNo: inGame(r.round_no, game.goal),
 		spy: { name: firstName(spy), athena: athenaSpies, me: Number(r.spy_actor_id) === Number(viewer.id) },
 		guesser: guesser ? { name: firstName(guesser), athena: guesser.kind === "assistant", me: Number(guesser.id) === Number(viewer.id) } : null,
 		clue: r.clue,
-		banter: roundBanter(r.round_no),
+		banter: roundBanter(inGame(r.round_no, game.goal)),
 		photo: Boolean(r.photo_id),
 		guesses: guesses.map((g) => ({ by: nameOf(g.by), athena: Number(g.by) === Number(game.players.find((p) => p.kind === "assistant")?.id), text: g.text, aside: g.aside || null, right: g.right ?? null })),
 		hints: athenaSpies ? hints.slice(0, Math.floor(misses / HINT_EVERY)) : hints,
@@ -209,7 +220,7 @@ async function finale(game, all, viewer) {
 	const [awards] = badge ? await pool.query("SELECT actor_id FROM athena_gm_badge_award WHERE badge_id = ?", [badge.id]).catch(() => [[]]) : [[]];
 	const got = new Set((awards || []).map((a) => Number(a.actor_id)));
 	const athenaId = Number(game.players.find((p) => p.kind === "assistant")?.id);
-	const finished = all.filter((r) => r.outcome);
+	const finished = all.filter((r) => r.outcome && r.round_no <= game.goal);
 	const nameOf = (id) => firstName(game.players.find((p) => Number(p.id) === Number(id)));
 	return {
 		badge: badge ? { key: badge.badge_key, name: badge.name, story: badge.story, art: badge.art || null } : null,
@@ -228,21 +239,27 @@ async function state(actor) {
 	const game = await liveGame(actor, true);
 	if (!game) return null;
 	const all = await rounds(game.mission.id);
-	const done = all.filter((r) => r.outcome).length;
 	const open = all.find((r) => !r.outcome) || null;
 	const next = spyFor(game.players, open ? open.round_no : all.length + 1);
 	const photographer = photographerFor(game.players, open ? open.round_no : all.length + 1);
+	// The game on screen: the open round's, or the last one while it's just ended
+	// (until someone presses Play again and spies round 1 of the next).
+	const gameNo = open ? gameOf(open.round_no, game.goal) : Math.max(1, gameOf(all.length, game.goal) || 1);
+	const done = all.filter((r) => r.outcome && gameOf(r.round_no, game.goal) === gameNo).length;
+	const firstDone = all.filter((r) => r.outcome && r.round_no <= game.goal).length;
 	return {
 		mission: { uuid: game.mission.uuid, title: story.forKid(game.plan, { title: game.mission.title }).mission },
 		goal: game.goal,
 		done,
+		// 1 is the mission's own twelve; 2 and up are replays, just for fun.
+		gameNo,
 		clueList: CLUES,
 		players: game.players.map((p) => ({ name: firstName(p), athena: p.kind === "assistant", me: Number(p.id) === Number(actor.id) })),
 		turn: { name: firstName(next), athena: next.kind === "assistant", me: Number(next.id) === Number(actor.id) },
 		photoBy: photographer ? { name: firstName(photographer), me: Number(photographer.id) === Number(actor.id) } : null,
 		round: open ? shapeRound(open, game, actor) : null,
-		recent: all.filter((r) => r.outcome).slice(-4).reverse().map((r) => shapeRound(r, game, actor)),
-		finale: done >= game.goal ? await finale(game, all, actor) : null,
+		recent: all.filter((r) => r.outcome && gameOf(r.round_no, game.goal) === gameNo).slice(-4).reverse().map((r) => shapeRound(r, game, actor)),
+		finale: firstDone >= game.goal ? await finale(game, all, actor) : null,
 	};
 }
 
@@ -342,8 +359,9 @@ async function save(round) {
 
 /** When the last round needed is done, every open game step is done; the runner and the debrief take it from there. */
 async function maybeFinish(game) {
+	if (game.mission.status === "completed") return; // a replay: the mission is already done
 	const all = await rounds(game.mission.id);
-	const done = all.filter((r) => r.outcome).length;
+	const done = all.filter((r) => r.outcome && r.round_no <= game.goal).length;
 	if (done < game.goal) return;
 	const [open] = await pool.query("SELECT * FROM athena_gm_mission_step WHERE mission_id = ? AND proof_required = 'game' AND status NOT IN ('done','declined')", [game.mission.id]);
 	for (const step of open) {
@@ -382,11 +400,10 @@ async function insertRound(game, { roundNo, spy, starter, photoId, clue, answer,
 
 /** A kid's turn: their photo, clue and secret answer; Athena guesses straight away. */
 async function kidSpies(actor, { imageBase64, contentType, clue, answer }, llm) {
-	const game = await liveGame(actor);
+	const game = await liveGame(actor, true);
 	if (!game) throw failure("There's no I Spy game going right now.", 409);
 	const { all, open, done } = await openRound(game);
 	if (open) throw failure("Finish this round first.", 409);
-	if (done >= game.goal) throw failure("You already finished every round!", 409);
 	const roundNo = all.length + 1;
 	const spy = spyFor(game.players, roundNo);
 	if (Number(spy.id) !== Number(actor.id)) throw failure(`It's ${firstName(spy)}'s turn to spy.`, 409);
@@ -428,7 +445,7 @@ async function takeAthenaTurn(game, round, llm) {
 
 /** Resume the first look after an outage without creating another round or photo. */
 async function retryGuess(actor, roundUuid, llm) {
-	const game = await liveGame(actor);
+	const game = await liveGame(actor, true);
 	if (!game) throw failure("There's no I Spy game going right now.", 409);
 	const [[round]] = await pool.query("SELECT * FROM athena_gm_ispy_round WHERE uuid = ? AND mission_id = ?", [roundUuid, game.mission.id]);
 	if (!round || round.outcome) throw failure("That round is over.", 409);
@@ -440,7 +457,7 @@ async function retryGuess(actor, roundUuid, llm) {
 
 /** The spy says whether Athena's last guess was right. Three misses and the answer teaches her. */
 async function judge(actor, roundUuid, { right, hint }, llm) {
-	const game = await liveGame(actor);
+	const game = await liveGame(actor, true);
 	if (!game) throw failure("There's no I Spy game going right now.", 409);
 	const [[round]] = await pool.query("SELECT * FROM athena_gm_ispy_round WHERE uuid = ? AND mission_id = ?", [roundUuid, game.mission.id]);
 	if (!round || round.outcome) throw failure("That round is over.", 409);
@@ -480,7 +497,7 @@ async function judge(actor, roundUuid, { right, hint }, llm) {
  * look can be retried without losing the clue or skipping anyone's turn.
  */
 async function giveClue(actor, roundUuid, key, llm) {
-	const game = await liveGame(actor);
+	const game = await liveGame(actor, true);
 	if (!game) throw failure("There's no I Spy game going right now.", 409);
 	const [[round]] = await pool.query("SELECT * FROM athena_gm_ispy_round WHERE uuid = ? AND mission_id = ?", [roundUuid, game.mission.id]);
 	if (!round || round.outcome) throw failure("That round is over.", 409);
@@ -527,7 +544,7 @@ Answer with the card's key.` },
 
 /** A kid asks Athena for a clue on her round; she answers from the cards, and it's kept. */
 async function requestClue(actor, roundUuid, llm) {
-	const game = await liveGame(actor);
+	const game = await liveGame(actor, true);
 	if (!game) throw failure("There's no I Spy game going right now.", 409);
 	const [[round]] = await pool.query("SELECT * FROM athena_gm_ispy_round WHERE uuid = ? AND mission_id = ?", [roundUuid, game.mission.id]);
 	if (!round || round.outcome) throw failure("That round is over.", 409);
@@ -572,11 +589,10 @@ async function askPick(buf, type, llm) {
 
 /** Athena's turn: a kid snaps the room, she picks something in it and gives the clue. */
 async function athenaSpies(actor, { imageBase64, contentType }, llm) {
-	const game = await liveGame(actor);
+	const game = await liveGame(actor, true);
 	if (!game) throw failure("There's no I Spy game going right now.", 409);
 	const { all, open, done } = await openRound(game);
 	if (open) throw failure("Finish this round first.", 409);
-	if (done >= game.goal) throw failure("You already finished every round!", 409);
 	const roundNo = all.length + 1;
 	const spy = spyFor(game.players, roundNo);
 	if (spy.kind !== "assistant") throw failure(`It's ${firstName(spy)}'s turn to spy.`, 409);
@@ -591,7 +607,7 @@ async function athenaSpies(actor, { imageBase64, contentType }, llm) {
 
 /** A kid guesses on Athena's round. Code decides, from her answer and its other names. */
 async function guess(actor, roundUuid, text, llm) {
-	const game = await liveGame(actor);
+	const game = await liveGame(actor, true);
 	if (!game) throw failure("There's no I Spy game going right now.", 409);
 	const [[round]] = await pool.query("SELECT * FROM athena_gm_ispy_round WHERE uuid = ? AND mission_id = ?", [roundUuid, game.mission.id]);
 	if (!round || round.outcome) throw failure("That round is over.", 409);
@@ -615,7 +631,7 @@ async function guess(actor, roundUuid, text, llm) {
 
 /** Nobody can get Athena's: she says what it was, and the round still counts. */
 async function reveal(actor, roundUuid) {
-	const game = await liveGame(actor);
+	const game = await liveGame(actor, true);
 	if (!game) throw failure("There's no I Spy game going right now.", 409);
 	const [[round]] = await pool.query("SELECT * FROM athena_gm_ispy_round WHERE uuid = ? AND mission_id = ?", [roundUuid, game.mission.id]);
 	if (!round || round.outcome) throw failure("That round is over.", 409);
@@ -630,7 +646,7 @@ async function reveal(actor, roundUuid) {
 
 /** A round's photo for any player's tablet. */
 async function roundPhoto(actor, roundUuid) {
-	const game = await liveGame(actor);
+	const game = await liveGame(actor, true);
 	if (!game) throw failure("There's no I Spy game going right now.", 404);
 	const [[round]] = await pool.query("SELECT * FROM athena_gm_ispy_round WHERE uuid = ? AND mission_id = ?", [roundUuid, game.mission.id]);
 	if (!round?.photo_id) throw failure("That round has no photo.", 404);
@@ -680,4 +696,10 @@ function demoCheck({ guess: g, answer, aliases }) {
 	return { right: matches(words(g, 80), words(answer, 80), (Array.isArray(aliases) ? aliases : []).map((a) => words(a, 60)).slice(0, 4)) };
 }
 
-module.exports = { CAP, CLUES, norm, matches, spyFor, guesserFor, photographerFor, playStyle, clueOptions, cluesForPrompt, state, kidSpies, retryGuess, judge, giveClue, requestClue, athenaSpies, guess, reveal, roundPhoto, demoGuess, demoPick, demoCheck, demoClue };
+/** A finished I Spy this kid can play again (owner, 11-25): Base shows Play I Spy again. */
+async function canReplay(actor) {
+	const game = await liveGame(actor, true).catch(() => null);
+	return Boolean(game && game.mission.status === "completed");
+}
+
+module.exports = { canReplay, CAP, CLUES, norm, matches, spyFor, guesserFor, photographerFor, playStyle, clueOptions, cluesForPrompt, state, kidSpies, retryGuess, judge, giveClue, requestClue, athenaSpies, guess, reveal, roundPhoto, demoGuess, demoPick, demoCheck, demoClue };

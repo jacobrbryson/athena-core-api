@@ -193,6 +193,49 @@ describe("I Spy", () => {
 		} finally { actors.mockRestore(); pool.query.mockReset(); }
 	});
 
+	test("after the twelfth round the kids can play again: round 13 is game 2, with no badge, step or finale of its own", async () => {
+		const pool = require("../../helpers/db");
+		const missions = require("./index");
+		const scout = require("./scout");
+		const thomas = { id: 3, kind: "kid", family_id: 1, display_name: "Thomas" };
+		const skylar = { id: 4, kind: "kid", family_id: 1, display_name: "Skylar" };
+		const athena = { id: 9, kind: "assistant", family_id: 1, display_name: "Athena" };
+		const spies = [3, 4, 9];
+		const rows = Array.from({ length: 12 }, (_, i) => ({ id: i + 1, uuid: `r${i + 1}`, mission_id: 7, round_no: i + 1, spy_actor_id: spies[i % 3], clue: "something", answer: `thing ${i + 1}`, guesses: "[]", outcome: "guessed", solved_by_actor_id: spies[i % 3] === 9 ? 3 : 9 }));
+		const actors = jest.spyOn(missions, "actorByKey").mockImplementation(async (_f, key) => ({ thomas, skylar, athena })[key]);
+		const store = jest.spyOn(scout, "storeProofPhoto").mockResolvedValue({ path: "gs://b/p.jpg" });
+		const complete = jest.spyOn(missions, "completeStep").mockResolvedValue();
+		const llm = { generateJson: jest.fn().mockResolvedValue({ data: { guess: "ball" } }) };
+		pool.query.mockReset();
+		pool.query.mockImplementation(async (sql, args) => {
+			if (/FROM athena_gm_mission m/.test(sql)) return [[{ id: 7, uuid: "m", family_id: 1, title: "I Spy", status: "completed", phase: "debrief", plan: { game: { kind: "ispy", rounds: 12, players: ["thomas", "skylar", "athena"] } } }]];
+			if (/FROM athena_gm_mission_step/.test(sql)) return [[{ id: 8, uuid: "s8", assigned_actor_id: 3, status: "done", proof_required: "game" }]];
+			if (/FROM athena_gm_ispy_round WHERE mission_id/.test(sql)) return [rows.map((r) => ({ ...r }))];
+			if (/FROM athena_gm_badge WHERE mission_id/.test(sql)) return [[{ id: 6, badge_key: "first-sight", name: "First Sight", story: "s", art: null }]];
+			if (/FROM athena_gm_badge_award/.test(sql)) return [[{ actor_id: 3 }, { actor_id: 4 }, { actor_id: 9 }]];
+			if (/^INSERT INTO athena_gm_photo/.test(sql)) return [{ insertId: 50 }];
+			if (/^INSERT INTO athena_gm_ispy_round/.test(sql)) { rows.push({ id: 13, uuid: "r13", mission_id: 7, round_no: args[3], spy_actor_id: args[4], photo_id: 50, clue: args[7], answer: args[8], guesses: "[]", hints: "[]", outcome: null }); return [{}]; }
+			if (/FROM athena_gm_ispy_round WHERE uuid/.test(sql)) return [[rows.find((r) => r.uuid === "r13")]];
+			if (/FROM athena_gm_ispy_round WHERE id/.test(sql)) return [[rows.find((r) => r.id === args[0]) || rows[12]]];
+			if (/^UPDATE athena_gm_ispy_round/.test(sql)) { const r = rows.find((x) => x.id === args.at(-1)); if (r) r.guesses = args[0]; return [{}]; }
+			if (/athena_gm_test_result|athena_gm_capability|athena_gm_log/.test(sql)) return [[]];
+			return [[]];
+		});
+		try {
+			expect(await ispy.canReplay(thomas)).toBe(true);
+			const ended = await ispy.state(thomas);
+			expect(ended).toMatchObject({ gameNo: 1, done: 12, turn: { name: "Thomas", me: true } });
+			expect(ended.finale.rounds).toHaveLength(12);
+			const again = await ispy.kidSpies(thomas, { imageBase64: Buffer.alloc(2000, 1).toString("base64"), contentType: "image/jpeg", clue: "something red", answer: "ball" }, llm);
+			expect(again).toMatchObject({ gameNo: 2, done: 0, round: { roundNo: 1, spy: { name: "Thomas" } } });
+			expect(again.recent).toEqual([]);
+			expect(again.finale.rounds).toHaveLength(12);
+			expect(rows[12].round_no).toBe(13);
+			expect(complete).not.toHaveBeenCalled();
+			expect(pool.query.mock.calls.some(([sql]) => /athena_gm_badge_award/.test(sql) && /^INSERT/.test(sql))).toBe(false);
+		} finally { actors.mockRestore(); store.mockRestore(); complete.mockRestore(); pool.query.mockReset(); }
+	});
+
 	test("a failed first look can be retried only by its spy, without another photo or round", async () => {
 		const pool = require("../../helpers/db");
 		const missions = require("./index");
