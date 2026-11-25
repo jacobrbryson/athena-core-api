@@ -187,6 +187,10 @@ Save and Clear.
   as a locked card under Coming up.
 - **The countdown hit zero and nothing started**: the countdown is only the plan;
   a grown-up still has to press Go.
+- **The camera won't open**: **Take the photo** opens the camera inside the
+  page, with **Snap!**, **Cancel** and **Choose a photo instead**. If it says the
+  camera is turned off, a grown-up needs to allow the camera for the tablet's
+  browser (or for the kid's profile in the tablet's parental controls).
 
 ## Limits
 
