@@ -162,11 +162,9 @@ show that story and the badge, locked, until it's earned.
 
 ## Where to find it
 
-Sign in to Companion with the kid's own account. On a Fire tablet (Silk
-browser) the sign-in page shows a plain **Continue with Google** button that
-goes to Google's own sign-in page and back, because Google's usual button
-gets stuck there; in other browsers, **Button not working? Sign in on
-Google's page** under the Google button does the same. Base opens by itself. The
+Sign in to Companion with the kid's own account: **Continue with Google**
+goes to Google's own sign-in page and back, which also works on the Fire
+tablets' Silk browser. Base opens by itself. The
 rail on the left switches tabs; on a narrow or upright screen it moves to the
 bottom. Each page has its own address, so it can be bookmarked or reopened:
 Base is the home page, then /missions, /team, /me, and /chat for Athena.
