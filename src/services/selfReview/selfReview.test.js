@@ -440,6 +440,26 @@ describe("ruleFindings", () => {
 		expect(f.find((x) => x.severity === "high" && x.area === "initiative").title).toMatch(/67% of alerts expired before anyone saw them/);
 	});
 
+	test("alerts unseen by someone who never turned pushes on are not a push failure", () => {
+		// 11-28: 8/11 'unseen', 6 of them for a profile with no initiative pref.
+		const f = ruleFindings({
+			metrics: nudges({ nearby_incident: trig({ sent: 11, unseen: 8, ignored: 2, engaged: 1, unseenNoPush: 6, sentNoPush: 6 }) }),
+			evals: {},
+			config: { orcwoodCount: 1 },
+		});
+		expect(f.some((x) => x.severity === "high" && x.area === "initiative")).toBe(false);
+		expect(f.find((x) => x.area === "initiative" && x.severity === "low").evidence).toMatch(/6 went unseen by people who haven't turned on pushes/);
+	});
+
+	test("opted-in people missing most alerts is still a high finding", () => {
+		const f = ruleFindings({
+			metrics: nudges({ nearby_incident: trig({ sent: 12, unseen: 9, ignored: 1, unseenNoPush: 3, sentNoPush: 3 }) }),
+			evals: {},
+			config: { orcwoodCount: 1 },
+		});
+		expect(f.find((x) => x.severity === "high" && x.area === "initiative").title).toMatch(/67% of alerts expired before anyone saw them/);
+	});
+
 	test("a plan item repeated three nights running becomes a stuck finding and an owner question", () => {
 		const item = (title, area) => ({ title, area });
 		const planHistory = [

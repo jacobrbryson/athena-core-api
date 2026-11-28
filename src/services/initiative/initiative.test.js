@@ -147,6 +147,19 @@ describe("quiet hours", () => {
 		expect(initiative.inQuietHours(pref({ timezone: "UTC" }), at(3))).toBe(true);
 		expect(initiative.inQuietHours(p, at(16))).toBe(false);
 	});
+
+	test("quietEndsAt finds the end of the window, in their zone", () => {
+		// 07:00 UTC is 2am in New York; a 22 -> 6 window ends at 6am = 11:00 UTC.
+		const p = pref({ timezone: "America/New_York", quiet_from: 22, quiet_to: 6 });
+		expect(initiative.quietEndsAt(p, new Date(Date.UTC(2026, 10, 25, 7, 2))).toISOString()).toBe("2026-11-25T11:02:00.000Z");
+		expect(initiative.inQuietHours(p, initiative.quietEndsAt(p, new Date(Date.UTC(2026, 10, 25, 7, 2))))).toBe(false);
+	});
+
+	test("quietEndsAt is now when it is not quiet, and never loops on an always-off window", () => {
+		const now = at(14);
+		expect(initiative.quietEndsAt(pref(), now).getTime()).toBe(now.getTime());
+		expect(initiative.quietEndsAt(pref({ quiet_from: 0, quiet_to: 0 }), at(3)).getTime()).toBe(at(3).getTime());
+	});
 });
 
 // ---------------------------------------------------------------------------

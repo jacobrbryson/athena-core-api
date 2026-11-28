@@ -253,23 +253,30 @@ async function extractionMetrics(hours) {
 async function initiativeMetrics() {
 	return section(async () => {
 		const [rows] = await pool.query(
-			`SELECT trigger_id,
+			`SELECT n.trigger_id AS trigger_id,
 				COUNT(*) AS sent,
-				COALESCE(SUM(delivered_at IS NOT NULL), 0) AS seen,
-				COALESCE(SUM(status = 'engaged'), 0) AS engaged,
-				COALESCE(SUM(status = 'dismissed'), 0) AS dismissed,
-				COALESCE(SUM(pushed_at IS NOT NULL), 0) AS pushed,
+				COALESCE(SUM(n.delivered_at IS NOT NULL), 0) AS seen,
+				COALESCE(SUM(n.status = 'engaged'), 0) AS engaged,
+				COALESCE(SUM(n.status = 'dismissed'), 0) AS dismissed,
+				COALESCE(SUM(n.pushed_at IS NOT NULL), 0) AS pushed,
 				-- Unseen means nobody could have seen it by ANY route. A nudge
 				-- that was pushed reached a lock screen even if the app was
 				-- never opened, so counting it as unseen would understate her
 				-- reach and teach the review the wrong lesson about TTLs.
-				COALESCE(SUM(status = 'expired' AND delivered_at IS NULL AND pushed_at IS NULL), 0) AS unseen,
+				COALESCE(SUM(n.status = 'expired' AND n.delivered_at IS NULL AND n.pushed_at IS NULL), 0) AS unseen,
 				-- The other half of expired: it reached someone and got silence.
 				-- Same reading as the nudgeAppraisal sweep's "ignored".
-				COALESCE(SUM(status = 'expired' AND (delivered_at IS NOT NULL OR pushed_at IS NOT NULL)), 0) AS ignored
-			 FROM athena_nudge
-			 WHERE created_at >= NOW() - INTERVAL 7 DAY
-			 GROUP BY trigger_id;`
+				COALESCE(SUM(n.status = 'expired' AND (n.delivered_at IS NOT NULL OR n.pushed_at IS NOT NULL)), 0) AS ignored,
+				-- Unseen by someone who never turned pushes on (no pref row, or
+				-- initiative/push off). Not pushing to them is the opt-in working,
+				-- so the review must not read these as a broken push path.
+				COALESCE(SUM(n.status = 'expired' AND n.delivered_at IS NULL AND n.pushed_at IS NULL
+					AND NOT (COALESCE(p.enabled, 0) = 1 AND COALESCE(p.push_enabled, 0) = 1)), 0) AS unseen_no_push,
+				COALESCE(SUM(NOT (COALESCE(p.enabled, 0) = 1 AND COALESCE(p.push_enabled, 0) = 1)), 0) AS sent_no_push
+			 FROM athena_nudge n
+			 LEFT JOIN athena_initiative_pref p ON p.profile_id = n.profile_id
+			 WHERE n.created_at >= NOW() - INTERVAL 7 DAY
+			 GROUP BY n.trigger_id;`
 		);
 		// What she has taught herself. A trigger she suppressed is one that
 		// stopped firing without anyone editing code, which is exactly the kind
@@ -321,6 +328,8 @@ async function initiativeMetrics() {
 				engaged,
 				dismissed,
 				unseen: Number(r.unseen),
+				unseenNoPush: Number(r.unseen_no_push) || 0,
+				sentNoPush: Number(r.sent_no_push) || 0,
 				ignored: Number(r.ignored),
 				mutedBy: mutedBy[r.trigger_id] || 0,
 				learned: learnedBy[r.trigger_id] || null,

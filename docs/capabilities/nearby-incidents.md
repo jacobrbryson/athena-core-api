@@ -45,7 +45,10 @@ sources feed this:
 
 Two or more calls at once, or any serious one, is urgent: it breaks quiet
 hours, goes to every device you've set up, and I'll lead our conversation with
-it. A single routine call waits for morning. When an urgent situation ends, I
+it. A single routine call waits for morning, and it still reaches you then:
+it stays fresh for three hours from the end of quiet hours rather than from
+when it came in, so a 2am call is pushed at the end of your quiet hours instead
+of expiring overnight. When an urgent situation ends, I
 say it's all clear.
 
 On screen, the alert banner across the top shows every call with its distance

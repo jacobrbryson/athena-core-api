@@ -771,13 +771,17 @@ async function alreadyTold(profileId) {
 	return seen;
 }
 
-async function quietNow(profileId) {
+/**
+ * When this person's quiet window ends, or null when it is not quiet now
+ * (or the preference cannot be read, which must never hold an alert back).
+ */
+async function quietUntil(profileId) {
 	try {
 		const initiative = require("../initiative");
 		const pref = await initiative.getPref(profileId);
-		return initiative.inQuietHours(pref);
+		return initiative.inQuietHours(pref) ? initiative.quietEndsAt(pref) : null;
 	} catch {
-		return false;
+		return null;
 	}
 }
 
@@ -804,8 +808,25 @@ async function tell(profileId, { dedupeKey, text, urgent, facts }) {
 		]
 	);
 	if (!result.affectedRows) return { written: false, pushed: { sent: 0, skipped: "already told" } };
-	if (!urgent && (await quietNow(profileId))) {
-		return { written: true, pushed: { sent: 0, skipped: "held for quiet hours" } };
+	const releaseAt = urgent ? null : await quietUntil(profileId);
+	if (releaseAt) {
+		// Held, not dropped (owner, 2026-11-28): the alert's three hours start
+		// when the window ends, so initiative.releaseHeld can still push it in
+		// the morning. Before this a 2am call expired at 5am, unseen. If the
+		// update fails the alert is pushed now rather than risk losing it.
+		const kept = await pool
+			.query(
+				`UPDATE athena_nudge
+				 SET expires_at = GREATEST(expires_at, DATE_ADD(?, INTERVAL ? SECOND))
+				 WHERE uuid = ?`,
+				[releaseAt, NUDGE_TTL_S, uuid]
+			)
+			.then(() => true)
+			.catch((error) => {
+				console.warn("[watch] could not extend a held alert; pushing it now:", error.message);
+				return false;
+			});
+		if (kept) return { written: true, pushed: { sent: 0, skipped: "held for quiet hours" } };
 	}
 	const push = require("../push");
 	const pushed = await push
@@ -1623,6 +1644,8 @@ async function promptBlock(profileId) {
 
 module.exports = {
 	TRIGGER_ID,
+	// Exposed for tests: the quiet-hours hold (watchQuietHold.test.js).
+	_tell: tell,
 	PULSEPOINT_PACKAGE: phoneAlerts.PULSEPOINT_PACKAGE,
 	runOnce,
 	checkProfile,

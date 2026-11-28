@@ -329,9 +329,16 @@ function ruleFindings({ metrics, evals, config, evalHistory = [], maintenance = 
 				// Judged on reach, never on replies — and never a reason to send fewer.
 				const reached = (t.ignored || 0) + t.engaged + t.dismissed;
 				const acks = init.alertAcks7d == null ? "acknowledgements unknown" : `${init.alertAcks7d} person(s) tapped "Got it" on an alert this week`;
-				add("low", "initiative", `${id} is an alert: judged on reach, not replies`, `${t.sent} sent, ${reached} reached someone, ${t.unseen} expired unseen over 7 days; ${acks}. No reply is expected, so an unanswered alert is not an ignored one`);
-				if (t.sent >= 5 && t.unseen / t.sent > THRESHOLDS.initiativeUnseen) {
-					add("high", "initiative", `${id}: ${((t.unseen / t.sent) * 100).toFixed(0)}% of alerts expired before anyone saw them`, `${t.unseen}/${t.sent} in 7 days — an emergency alert nobody saw is the failure this trigger exists to prevent; check push delivery`);
+				// An alert written for someone who never turned pushes on can only be seen
+				// in the app. That is the opt-in working, not a broken push path, so the
+				// delivery check below is judged on the people a push could have reached.
+				const noPush = t.unseenNoPush || 0;
+				const pushable = t.sent - (t.sentNoPush || 0);
+				const missed = t.unseen - noPush;
+				const optedOut = noPush ? `; ${noPush} went unseen by people who haven't turned on pushes (in-app only, by their choice)` : "";
+				add("low", "initiative", `${id} is an alert: judged on reach, not replies`, `${t.sent} sent, ${reached} reached someone, ${t.unseen} expired unseen over 7 days${optedOut}; ${acks}. No reply is expected, so an unanswered alert is not an ignored one`);
+				if (pushable >= 5 && missed / pushable > THRESHOLDS.initiativeUnseen) {
+					add("high", "initiative", `${id}: ${((missed / pushable) * 100).toFixed(0)}% of alerts expired before anyone saw them`, `${missed}/${pushable} in 7 days among people with pushes on — an emergency alert nobody saw is the failure this trigger exists to prevent; check push delivery`);
 				}
 				if (t.mutedBy > 0) add("medium", "initiative", `${id} has been muted by ${t.mutedBy} person(s)`, "someone turned emergency alerts off entirely");
 				continue;

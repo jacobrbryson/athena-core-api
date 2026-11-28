@@ -89,6 +89,22 @@ steps:
             echo "==> $$job is not deployed in this project; skipping"
           fi
         done
+        # athena-nightly evaluates the desktop model, so it needs the
+        # service's model routing and the tailnet that reaches the desk
+        # (owner, 2026-11-28). Without these it only ever tested Gemini, the
+        # router never had evidence to let the desk lead, and every report
+        # said "everything ran on the frontier". Set here, not by hand, so
+        # they cannot drift from the service's. The command is the whole
+        # line and args are empty, so an execution's --args=--only,dream
+        # still reaches nightly.js. After the loop, so a failure here cannot
+        # stop the other jobs getting the new image.
+        if gcloud run jobs describe athena-nightly --region "$_REGION" >/dev/null 2>&1; then
+          echo "==> athena-nightly: tailnet + model routing"
+          gcloud run jobs update athena-nightly --region "$_REGION" \
+            --command "sh,/app/tailscale-start.sh,node,src/jobs/nightly.js" --args "" \
+            --update-secrets "TAILSCALE_AUTHKEY=TAILSCALE_AUTHKEY:latest" \
+            --update-env-vars '^|^TAILSCALE_HOSTNAME=athena-nightly|LLM_POLICY=$_LLM_POLICY|LLM_TAILSCALE_HTTP_PROXY=$_LLM_TAILSCALE_HTTP_PROXY|LLM_ORCWOOD_ENDPOINTS=$_LLM_ORCWOOD_ENDPOINTS|OPENAI_ENABLED=$_OPENAI_ENABLED|OPENAI_CHAT_MODEL=$_OPENAI_CHAT_MODEL'
+        fi
 
 # The final image tag is saved in the Artifact Registry
 images:

@@ -51,7 +51,11 @@
  * lost. Now the nudge is still written and still waiting in the morning; only
  * the PUSH is held, so nobody is woken. `releaseHeld` pushes them once the
  * quiet window ends. A nudge whose own TTL expires overnight still expires —
- * that is the trigger's statement about its own shelf life, not a budget.
+ * that is the trigger's statement about its own shelf life, not a budget —
+ * except an emergency alert (nearby_incident): the owner chose on 2026-11-28
+ * that a held alert keeps its full TTL counted from the end of the window
+ * (`quietEndsAt`, used by pulsepoint/watch.js), so a 2am call is still pushed
+ * at 6am instead of expiring unseen at 5am.
  *
  * One exception, chosen by the owner on 2026-10-20: a trigger marked
  * `piercesQuiet` (only freeze_risk) is pushed during quiet hours, because the
@@ -300,6 +304,25 @@ function inQuietHours(pref, now = new Date()) {
 	const { quiet_from: from, quiet_to: to } = pref;
 	if (from === to) return false; // no quiet window at all
 	return from > to ? h >= from || h < to : h >= from && h < to;
+}
+
+/**
+ * When does the quiet window this instant sits in end? `now` itself when it
+ * is not quiet. Walked forward in five-minute steps through inQuietHours
+ * rather than computed, so it can never disagree with the test that decides
+ * whether a push is held — and a DST change in the night cannot shift it.
+ *
+ * Exists so an alert held overnight can keep its full shelf life from the
+ * moment it is released (owner, 2026-11-28): a 3-hour alert written at 2am
+ * used to expire at 5am, an hour before a 6am release could push it.
+ */
+function quietEndsAt(pref, now = new Date()) {
+	const STEP = 5 * 60 * 1000;
+	let t = new Date(now.getTime());
+	for (let i = 0; i <= (24 * 60) / 5 && inQuietHours(pref, t); i += 1) {
+		t = new Date(t.getTime() + STEP);
+	}
+	return t;
 }
 
 /**
@@ -852,6 +875,7 @@ module.exports = {
 	mute,
 	unmute,
 	inQuietHours,
+	quietEndsAt,
 	budgetCheck,
 	diagnose,
 	evaluateProfile,
