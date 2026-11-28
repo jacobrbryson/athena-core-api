@@ -167,6 +167,24 @@ async function choose(message, candidates, recent) {
 }
 
 /**
+ * The remembered person a confirmed alias in this message points at, or null.
+ * Aliases are stored as lowercase words (services/entities aliasKey); one
+ * matches when its words appear in the message in order. Only aliases that
+ * point at one of `everyone` (memory rows) count here.
+ */
+async function confirmedIn(profileId, message, everyone) {
+	const [rows] = await pool.query("SELECT alias, person_key FROM athena_entity_alias WHERE profile_id = ?", [profileId]);
+	if (!rows.length) return null;
+	const said = ` ${words(message).join(" ")} `;
+	const hits = rows
+		.filter((r) => r.alias && said.includes(` ${r.alias} `))
+		.map((r) => everyone.find((p) => p.uuid === r.person_key))
+		.filter(Boolean);
+	const unique = [...new Set(hits)];
+	return unique.length === 1 ? unique[0] : null;
+}
+
+/**
  * Who this message is an update about.
  *   null                                    — not an update, or nothing to go on
  *   { person, how: "named" | "chosen" }     — one person
@@ -178,6 +196,10 @@ async function resolve(message, { profileId, guessed, recent = [] } = {}) {
 	try {
 		const everyone = await people(profileId);
 		if (!everyone.length) return null;
+		// A name the person confirmed ("uncle Mark is Mark Watson", stored by
+		// services/entities) is decisive: no search, no model choice.
+		const confirmed = await confirmedIn(profileId, message, everyone).catch(() => null);
+		if (confirmed) return { person: confirmed, how: "named" };
 		const matches = search(message, everyone);
 		const found = matches.map((m) => m.p);
 		// One clear match: that is who. A name (score ≥ 2) that out-scores every

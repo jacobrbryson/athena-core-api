@@ -611,6 +611,12 @@ async function processAiResponse(session, message, clients, ctx = {}) {
           // Weather alerts they've set (frost, heat, rain, wind...), so she
           // knows what she has been asked to watch for and where it's managed.
           safeBlock("weather alerts", () => weatherAlerts.promptBlock(profileId)),
+          // Their collections (services/collections): the lists and trackers
+          // she keeps for them, and how to start one. Read-only; changes go
+          // through define_collection / add_item / update_item / remove_item.
+          safeBlock("collections", () =>
+            require("../services/collections").promptBlock(profileId),
+          ),
           // What she organized while dreaming (her own tables, this person's
           // rows only) and any question she wants to ask them. A child's
           // memories never reach athena_mind. Time-boxed.
@@ -1013,6 +1019,16 @@ async function processAiResponse(session, message, clients, ctx = {}) {
         memoryEnabled: memoryCtx.memoryEnabled,
         focus: personUpdate.focusOf(personUpdated),
       });
+    }
+
+    // Anything that message said that belongs on one of their collections
+    // (a gift idea for someone on the Christmas list) becomes a suggestion
+    // they can keep. Adults only — the same gate as proposing — background,
+    // never blocks or breaks the reply (services/collections/capture).
+    if (mayPropose && !fellBack && session.profile_id) {
+      require("../services/collections/capture")
+        .fromChat(session.profile_id, message)
+        .catch(() => undefined);
     }
 
     // Did that message answer something Athena raised herself? If so, read

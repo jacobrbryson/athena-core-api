@@ -144,6 +144,9 @@ async function maintenance({ dryRun }) {
 	// Trading: measure what each day's signals went on to do (outcome columns
 	// only — assessments are never rewritten), refresh daily summaries, prune.
 	await step("tradingOutcomes", () => require("../services/trading/outcomes").nightly(), results);
+	// Collections past their last day (a Christmas list after Dec 26) leave
+	// Home and go to the archive. Reads already hide them; this makes it stick.
+	await step("collectionsSweep", () => require("../services/collections").sweep(), results);
 	await dreamSteps(results);
 	return results;
 }

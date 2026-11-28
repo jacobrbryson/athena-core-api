@@ -233,6 +233,15 @@ router.post('/dashboard/family/person/:key/interests', requireAuth, express.json
 router.delete('/dashboard/family/person/:key/interests/:uuid', requireAuth, personPageCtl.removeInterest);
 router.post('/dashboard/family/person/:key/related', requireAuth, express.json({ limit: '1kb' }), personPageCtl.addRelated);
 router.delete('/dashboard/family/person/:key/related/:uuid', requireAuth, personPageCtl.removeRelated);
+// Collections (owner, 2026-11-28): lists and trackers defined as data.
+const collectionsCtl = require('../controllers/collections');
+router.get('/dashboard/collections', requireAuth, collectionsCtl.overview);
+router.get('/dashboard/collections/person/:key', requireAuth, collectionsCtl.forPerson);
+router.post('/dashboard/collections/subjects/:uuid/done', requireAuth, express.json({ limit: '1kb' }), collectionsCtl.setDone);
+router.patch('/dashboard/collections/items/:uuid', requireAuth, express.json({ limit: '2kb' }), collectionsCtl.updateItem);
+router.delete('/dashboard/collections/items/:uuid', requireAuth, collectionsCtl.removeItem);
+router.post('/dashboard/collections/items/:uuid/restore', requireAuth, collectionsCtl.restoreItem);
+router.get('/dashboard/collections/:uuid', requireAuth, collectionsCtl.detail);
 
 // Public: the on-device model manifest carries no secrets, and devices poll it
 // before (and after) pairing.

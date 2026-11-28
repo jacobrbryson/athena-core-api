@@ -388,6 +388,10 @@ const ACTIONS = [
 	...require('../workItems/actions'),
 	// Bill scan (owner-authorized 2026-10-28): billActions.js says how narrow these are.
 	...require('./billActions'),
+	// Collections (owner-authorized 2026-11-28): define_collection, add_item,
+	// update_item, remove_item, archive_collection — Athena's own records only.
+	// collections/actions.js says what each accepts and which may be standing.
+	...require('../collections/actions'),
 	{
 		id: "update_grocery_list",
 		label: "Update the grocery list",
@@ -3510,6 +3514,30 @@ const PARAM_TYPES = {
 	session_step_done: { type: "boolean" },
 	feeling_better: { type: "boolean" },
 	email_triage_uuids: { type: "array", items: { type: "string" } },
+	// Collections (owner-authorized 2026-11-28).
+	collection_per_person: { type: "boolean" },
+	collection_people: { type: "array", items: { type: "string" } },
+	collection_statuses: { type: "array", items: { type: "string" } },
+	collection_fields: {
+		type: "array",
+		items: {
+			type: "object",
+			properties: {
+				name: { type: "string" },
+				type: { type: "string", enum: ["text", "number", "money", "date", "yes_no", "choice", "link"] },
+				choices: { type: "array", items: { type: "string" } },
+				required: { type: "boolean" },
+			},
+		},
+	},
+	collection_home: { type: "string", enum: ["top", "after", "off"] },
+	collection_item_values: {
+		type: "array",
+		items: { type: "object", properties: { field: { type: "string" }, value: { type: "string" } } },
+	},
+	collection_item_also: { type: "array", items: { type: "string" } },
+	collection_person_done: { type: "boolean" },
+	collection_restore: { type: "boolean" },
 	items: {
 		type: "array",
 		items: {
