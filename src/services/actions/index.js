@@ -606,6 +606,21 @@ async function confirm(profileId, uuid, ctx = {}) {
 }
 
 /**
+ * A person asked for it out loud, in a live conversation (services/live).
+ *
+ * Authorized by the owner on 2026-11-28: "Me telling her to do something is
+ * approval." Saying it is the press of Approve, so this is the same execute
+ * path as confirm() — gates 1-4 all run, the proposal row and audit rows are
+ * written — and the row records `approval = 'verbal'`, so a spoken approval is
+ * never mistaken for a tap or a standing one. It grants nothing for next time:
+ * every action still needs its own request.
+ */
+async function confirmVerbal(profileId, uuid, ctx = {}) {
+	await audit(profileId, "action_verbal_approval", uuid);
+	return runPending(profileId, uuid, { approval: "verbal", ctx });
+}
+
+/**
  * Execute a pending proposal. The only path to a provider call.
  *
  * The claim is a guarded UPDATE with `status = 'pending'` in the WHERE clause
@@ -891,6 +906,7 @@ module.exports = {
 	listPending,
 	listRecent,
 	confirm,
+	confirmVerbal,
 	decline,
 	expireStale,
 	listAuthorities,

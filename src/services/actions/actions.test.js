@@ -624,6 +624,26 @@ describe("confirm", () => {
 		expect(claim[1]).toContain(PROFILE);
 	});
 
+	test("a spoken approval runs the same gates and is recorded as verbal", async () => {
+		happyPath();
+		googleCalendar.createEvent.mockResolvedValue({ ref: "evt_1" });
+		await actions.confirmVerbal(PROFILE, UUID);
+		const claim = pool.query.mock.calls.find((c) => c[0].includes("SET status = 'executing'"));
+		expect(claim[0]).toContain("status = 'pending'");
+		expect(claim[1][0]).toBe("verbal");
+		expect(access.assertModelAccess).toHaveBeenCalled();
+		const audited = pool.query.mock.calls.some((c) => c[0].includes("athena_access_audit") && c[1].includes("action_verbal_approval"));
+		expect(audited).toBe(true);
+		expect(googleCalendar.createEvent).toHaveBeenCalledTimes(1);
+	});
+
+	test("a spoken approval still loses to access being revoked", async () => {
+		access.assertModelAccess.mockRejectedValue(Object.assign(new Error("Guardian access or owner approval required"), { status: 403 }));
+		happyPath();
+		await expect(actions.confirmVerbal(PROFILE, UUID)).rejects.toThrow(/access/i);
+		expect(googleCalendar.createEvent).not.toHaveBeenCalled();
+	});
+
 	test("a second press loses the race and executes nothing", async () => {
 		// affectedRows 0 is what the database says when another request already
 		// moved the row out of pending.

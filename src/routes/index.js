@@ -61,6 +61,9 @@ module.exports = (clients) => {
 	// Authenticated Guardian-only neural voice. The proxy forwards the Guardian
 	// session JWT in x-user-authorization while keeping the Gemini key private.
 	router.post("/speech", generateSpeech);
+	// Live conversation (Gemini Live): a locked one-use voice token, her
+	// look_up tool, and saving each finished exchange. services/live.
+	router.use("/live", require("./live"));
 
 	// Image generation (OpenAI). Behind the same access boundary as every other
 	// model call — accessBoundary above has already required Guardian access or

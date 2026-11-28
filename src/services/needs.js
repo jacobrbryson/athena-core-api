@@ -135,7 +135,7 @@ function promptBlock(ids, { final = false } = {}) {
 }
 
 /** Model-written needs, cleaned: known, available, unread, at most MAX_PER_ROUND. */
-function clean(raw, ids, done = new Set()) {
+function clean(raw, ids, done = new Set(), { max = MAX_PER_ROUND } = {}) {
 	if (!Array.isArray(raw)) return [];
 	const out = [];
 	for (const need of raw) {
@@ -165,7 +165,7 @@ function clean(raw, ids, done = new Set()) {
 		const key = keyOf(n);
 		if (done.has(key) || out.some((o) => keyOf(o) === key)) continue;
 		out.push(n);
-		if (out.length >= MAX_PER_ROUND) break;
+		if (out.length >= max) break;
 	}
 	return out;
 }

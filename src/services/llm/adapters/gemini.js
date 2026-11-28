@@ -234,4 +234,37 @@ async function speech(endpoint, text, { sing = false } = {}) {
 	};
 }
 
-module.exports = { generate, raw, search, embed, speech, EMBED_DIMS, _setClient: (c) => (client = c) };
+/**
+ * A one-use, short-lived token for a Gemini Live voice session the browser
+ * opens itself (services/live). The key never leaves the server, and the
+ * token is locked to `model` and `config` — the system instruction, voice and
+ * tools — so the page can't change who she is or what she can call.
+ *
+ * Same rule as every other dispatch: the access check runs here, at the
+ * provider boundary, before Google is asked for anything.
+ */
+const LIVE_TOKEN_MS = 30 * 60_000;
+const LIVE_START_MS = 60_000;
+let liveClient = null;
+async function liveToken({ model, config }) {
+	await assertModelAccess();
+	if (!liveClient) liveClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY, httpOptions: { apiVersion: "v1alpha" } });
+	const now = Date.now();
+	const token = await liveClient.authTokens.create({
+		config: {
+			uses: 1,
+			expireTime: new Date(now + LIVE_TOKEN_MS).toISOString(),
+			newSessionExpireTime: new Date(now + LIVE_START_MS).toISOString(),
+			liveConnectConstraints: { model, config },
+			// No lockAdditionalFields: unset means the whole config is locked and
+			// the page's own setup fields are ignored. (`[]`, "lock only the set
+			// fields", builds a field mask the API rejects with
+			// "field_mask is invalid for BidiGenerateContentSetup" — 2026-11-28.)
+			httpOptions: { apiVersion: "v1alpha" },
+		},
+	});
+	if (!token?.name) throw new Error("Gemini returned no Live token.");
+	return { token: token.name, expiresAt: new Date(now + LIVE_TOKEN_MS).toISOString() };
+}
+
+module.exports = { generate, raw, search, embed, speech, liveToken, EMBED_DIMS, _setClient: (c) => (client = c), _setLiveClient: (c) => (liveClient = c) };

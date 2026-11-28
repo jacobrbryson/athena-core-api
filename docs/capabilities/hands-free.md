@@ -13,12 +13,19 @@ triggers: [hands free, hands-free, wake word, hey athena, say your name, always 
 
 In the Android app you can turn on hands-free. Then you just talk to me —
 "Athena, what time is it?" in one breath works, or say "Athena", wait for the
-chime, and then ask. The screen can be off and the phone in your pocket. I answer out loud, into your earbuds if they're in, and turn your music
-down while I talk. After I answer you get one follow-up without saying my name
-again ("and tomorrow?"); after that I go back to waiting for my name.
+chime, and then ask. The screen can be off and the phone in your pocket.
 
-It's built for being on the move — a run, a ride — so my answers are short and
-spoken: no lists, nothing you'd need to look at.
+Saying my name starts a live conversation: we just talk, back and forth,
+without saying my name again, and you can cut in while I'm talking. Your music
+pauses while we talk. It ends when you say goodbye or "that's all", or after ten
+seconds with nobody talking, and then I go back to waiting for my name. While
+we talk I can look things up and do things you ask for — asking is approving.
+With **Only my voice** on, I only do things when it's your voice asking.
+"Athena, skip" and the other music words still work instantly, without a
+conversation.
+
+It's built for being on the move — a run, a ride — so I talk, I don't show:
+no lists, nothing you'd need to look at.
 
 When your question needs your calendar, WHOOP, email or heart rate, I
 say so straight away — "Let me check your calendar." — while I read it,
@@ -27,10 +34,9 @@ before gets "Let me think back.", and a question that needs several lookups
 gets "Just a moment." The first time a particular line comes up it's silent while the
 phone saves my voice for it; after that it plays instantly.
 
-The listening happens on the phone. Until it hears my name nothing is sent
-anywhere, and after it only the words you said go to me — never the sound.
-Recognising my name, and turning what you say next into words, both happen on
-the phone.
+Listening for my name happens on the phone: until it hears my name nothing is
+sent anywhere. Once it does, the live conversation sends what the microphone
+hears, as sound, to Google (Gemini Live), until the conversation ends.
 
 While it's on, Android shows a notification saying I'm listening, the whole
 time. That's how you always know. If you leave it on and it stops — the phone
@@ -78,6 +84,15 @@ same conversation.
   (see heart-rate). They're spoken whether or not hands-free is on.
 
 ## Under the hood
+
+- Live (2026-11-28, owner): `converse()` hands a wake to `LiveSession.java`
+  (Gemini Live over `TinyWebSocket.java`, its own RFC 6455 client; mic 16 kHz
+  through `openMic()`/EchoCancel, voice 24 kHz on `CarAudio.playback()`;
+  `HandsFreeClient.live()` → `/api/v1/live/session|tool|turn`; ends on
+  `end_conversation` after the goodbye or `LIVE_IDLE_MS` 10 s quiet; `act`
+  refused on the phone when `Voiceprint.check` drops the last utterance).
+  One-breath music words keep the old instant path. Pref `live` (default true)
+  in `athena_hands_free` switches back to the old turn-by-turn path.
 
 - Native: `../../../native-runtime/AndroidCompanion~/AthenaDashboard.androidlib/java/com/orcwood/athena/dashboard/HandsFreeService.java`
   (microphone foreground service: energy gate → Vosk grammar `athena`/`hey athena`
